@@ -13,7 +13,7 @@ import numpy as np
 from ks.config import AppConfig
 from ks.device.base import Device
 from ks.executor import execute
-from ks.models import GatherCandidate, NothingToDo
+from ks.models import GatherCandidate, NothingToDo, Tap
 from ks.policy.gather import propose_gather
 from ks.vision.ocr import ocr_region, parse_march_time, parse_rss_amount
 
@@ -106,17 +106,38 @@ def gather_once(
 
     nav_taps = cfg.navigation.taps
     if nav_taps:
+        nav_actions = tuple(Tap(t.x, t.y) for t in nav_taps)
         if cfg.dry_run:
             print(f"dry-run: would navigate with {len(nav_taps)} tap(s)")
         else:
-            for tap in nav_taps:
-                device.tap(tap.x, tap.y)
+            # Paced navigation: go through executor so delay/jitter and tap
+            # budget are respected (fail closed via execute's own ValueError).
+            execute(
+                device,
+                nav_actions,
+                dry_run=False,
+                max_taps=cfg.executor.max_taps_per_proposal,
+                tap_delay_ms=cfg.executor.tap_delay_ms,
+                tap_jitter_ms=cfg.executor.tap_jitter_ms,
+            )
+
+    gather_actions = tuple(Tap(t.x, t.y) for t in cfg.navigation.gather_actions)
 
     candidates = collect_candidates(device, cfg)
 
-    result = propose_gather(candidates, cfg, actions=())
+    result = propose_gather(candidates, cfg, actions=gather_actions)
     if isinstance(result, NothingToDo):
         print(f"Nothing to do: {result.reason}")
+        return 2
+
+    # Fail closed: live execution with no configured gather_actions would do
+    # nothing; abort rather than silently skip the march.
+    if not cfg.dry_run and not result.actions:
+        print(
+            "Fail-closed: live execution requested but navigation.gather_actions "
+            "is empty — no gather taps would be sent.  Add gather_actions to "
+            "config/params.yaml or use dry_run: true."
+        )
         return 2
 
     print(f"Proposal: {result.rationale}")

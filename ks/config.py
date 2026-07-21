@@ -60,9 +60,16 @@ class CandidateRegion:
 
 @dataclass
 class NavigationConfig:
-    """Ordered tap sequence to navigate to the gather-search screen."""
+    """Ordered tap sequence to navigate to the gather-search screen.
+
+    ``taps`` brings the UI to the tile-search results screen.
+    ``gather_actions`` runs after a tile is selected (e.g. tap tile → Gather
+    button → Confirm/Send).  Both default to empty so existing configs without
+    those keys remain valid.
+    """
 
     taps: list[TapPoint] = field(default_factory=list)
+    gather_actions: list[TapPoint] = field(default_factory=list)
 
 
 @dataclass
@@ -90,7 +97,9 @@ def _parse_navigation(raw: Any) -> NavigationConfig:
         return NavigationConfig()
     taps_raw = raw.get("taps") or []
     taps = [TapPoint(x=int(t["x"]), y=int(t["y"])) for t in taps_raw]
-    return NavigationConfig(taps=taps)
+    gather_raw = raw.get("gather_actions") or []
+    gather_actions = [TapPoint(x=int(t["x"]), y=int(t["y"])) for t in gather_raw]
+    return NavigationConfig(taps=taps, gather_actions=gather_actions)
 
 
 def _parse_ocr_regions(raw: Any) -> OcrRegionsConfig:

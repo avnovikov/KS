@@ -25,6 +25,14 @@ vision:
 #   taps:
 #     - {x: 54,  y: 1820}   # world-map button
 #     - {x: 900, y: 100}    # search / find-resource button
+#
+# gather_actions: tap sequence executed after the best tile is confirmed
+#   (select tile → tap Gather button → tap Confirm/Send march).
+# Example (BlueStacks 1080x1920):
+#   gather_actions:
+#     - {x: 540, y: 960}    # tap tile to open tile panel
+#     - {x: 540, y: 1600}   # Gather button
+#     - {x: 700, y: 1750}   # Confirm / Send march
 navigation: {}
 
 # OCR crop boxes for reading resource amount and march time from the
