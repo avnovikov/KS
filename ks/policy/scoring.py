@@ -1,3 +1,5 @@
+import math
+
 from ks.models import GatherCandidate, ScoredGather
 
 
@@ -7,6 +9,16 @@ def score_gather(
     march_load: float,
     gather_rate_per_sec: float,
 ) -> ScoredGather:
+    if not math.isfinite(march_load):
+        raise ValueError(f"march_load must be finite; got {march_load}")
+    if not math.isfinite(gather_rate_per_sec):
+        raise ValueError(f"gather_rate_per_sec must be finite; got {gather_rate_per_sec}")
+    if not math.isfinite(candidate.tile_amount):
+        raise ValueError(f"tile_amount must be finite; got {candidate.tile_amount}")
+    if not math.isfinite(candidate.march_time_one_way_s):
+        raise ValueError(
+            f"march_time_one_way_s must be finite; got {candidate.march_time_one_way_s}"
+        )
     if march_load <= 0:
         raise ValueError(f"march_load must be > 0; got {march_load}")
     if gather_rate_per_sec <= 0:

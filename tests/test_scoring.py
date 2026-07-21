@@ -29,3 +29,20 @@ def test_rejects_non_positive_inputs():
         assert False, "expected ValueError"
     except ValueError:
         pass
+
+
+def test_rejects_non_finite_inputs():
+    valid = GatherCandidate("wood", 1000, 10.0, 0.9)
+    cases = [
+        ("march_load", lambda: score_gather(valid, march_load=float("nan"), gather_rate_per_sec=10.0)),
+        ("march_load", lambda: score_gather(valid, march_load=float("inf"), gather_rate_per_sec=10.0)),
+        ("gather_rate_per_sec", lambda: score_gather(valid, march_load=100.0, gather_rate_per_sec=float("nan"))),
+        ("tile_amount", lambda: score_gather(GatherCandidate("wood", float("nan"), 10.0, 0.9), march_load=100.0, gather_rate_per_sec=10.0)),
+        ("march_time_one_way_s", lambda: score_gather(GatherCandidate("wood", 1000, float("inf"), 0.9), march_load=100.0, gather_rate_per_sec=10.0)),
+    ]
+    for field_name, call in cases:
+        try:
+            call()
+            assert False, f"expected ValueError for non-finite {field_name}"
+        except ValueError as exc:
+            assert field_name in str(exc)
