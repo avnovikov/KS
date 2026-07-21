@@ -31,11 +31,14 @@ def execute(
         )
 
     taps_performed = 0
-    for action in actions:
+    for index, action in enumerate(actions):
         if isinstance(action, Tap):
             device.tap(action.x, action.y)
             taps_performed += 1
-            if tap_delay_ms > 0 or tap_jitter_ms > 0:
+            has_more_taps = any(
+                isinstance(following, Tap) for following in actions[index + 1 :]
+            )
+            if has_more_taps and (tap_delay_ms > 0 or tap_jitter_ms > 0):
                 jitter = random.randint(0, tap_jitter_ms) if tap_jitter_ms > 0 else 0
                 time.sleep((tap_delay_ms + jitter) / 1000)
         elif isinstance(action, Wait):
