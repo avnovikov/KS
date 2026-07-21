@@ -20,8 +20,6 @@ Run once after the emulator and Kingshot are installed and working.
 3. Take a screencap: `python scripts/adb_smoke.py` (re-runs and overwrites `artifacts/smoke.png`).
 4. Crop the march-slot UI region and save as:
    `assets/templates/march_slot_free.png`
-5. Record the bounding box (x, y, w, h) in `config/params.yaml` under
-   `vision.templates.march_slot_free`.
 
 ---
 
@@ -34,7 +32,6 @@ Run once after the emulator and Kingshot are installed and working.
 3. The resource-search panel opens.
 4. Screencap → crop the panel header or search icon.
 5. Save as: `assets/templates/map_search_panel.png`
-6. Record bbox in `config/params.yaml` → `vision.templates.map_search_panel`.
 
 ---
 
@@ -46,7 +43,6 @@ Run once after the emulator and Kingshot are installed and working.
 2. Verify the popup shows: resource type, amount, normal march time.
 3. Screencap → crop the popup content area (exclude close button).
 4. Save as: `assets/templates/tile_info_popup.png`
-5. Record bbox in `config/params.yaml` → `vision.templates.tile_info_popup`.
 
 ---
 
@@ -57,40 +53,54 @@ Run once after the emulator and Kingshot are installed and working.
 1. From a tile info popup, tap "Gather" to open the march-confirm screen.
 2. Screencap → crop just the confirm button (the green/prominent action button).
 3. Save as: `assets/templates/gather_confirm_btn.png`
-4. Record bbox in `config/params.yaml` → `vision.templates.gather_confirm_btn`.
 
 ---
 
-## 5. Update params.yaml
+## 5. Confirm all four PNGs exist
 
-Add / update the `vision.templates` block in `config/params.yaml`:
+Expected files under `assets/templates/`:
 
-```yaml
-vision:
-  match_threshold: 0.85
-  templates:
-    march_slot_free: assets/templates/march_slot_free.png
-    map_search_panel: assets/templates/map_search_panel.png
-    tile_info_popup:  assets/templates/tile_info_popup.png
-    gather_confirm_btn: assets/templates/gather_confirm_btn.png
-```
+| File | Screen |
+|------|--------|
+| `march_slot_free.png` | City view, free march slot |
+| `map_search_panel.png` | World map resource search panel |
+| `tile_info_popup.png` | Tile info popup |
+| `gather_confirm_btn.png` | Gather confirm button |
+
+**Do not edit `config/params.yaml` yet.** `VisionConfig` currently only accepts
+`match_threshold`; adding a `vision.templates` block will break `load_config`.
+YAML wiring for template paths is added in **Task 9**.
 
 ---
 
-## 6. Verify templates load
+## 6. Verify crops
+
+Open each PNG and confirm the crop looks right — tight framing, no partial pixels,
+recognisable UI element at your emulator resolution.
+
+Optional: if you still have the screencap from the same step, check it matches
+with `match_template`:
 
 ```bash
 source .venv/bin/activate
 python - <<'EOF'
-from ks.vision.templates import TemplateLibrary
-import yaml, pathlib
-p = yaml.safe_load(pathlib.Path("config/params.yaml").read_text())
-lib = TemplateLibrary(p["vision"]["templates"])
-print("Loaded templates:", list(lib.templates))
+import cv2
+from pathlib import Path
+from ks.vision.templates import match_template
+
+hay = cv2.imread("artifacts/smoke.png")
+assert hay is not None, "Run adb_smoke.py first"
+
+needle_path = Path("assets/templates/march_slot_free.png")  # repeat per template
+needle = cv2.imread(str(needle_path))
+assert needle is not None, f"Missing {needle_path}"
+
+m = match_template(hay, needle, threshold=0.85)
+print(f"{needle_path.name}: score={m.score if m else 'no match'}")
 EOF
 ```
 
-All four template names should appear in the output.
+Re-run `adb_smoke.py` on the matching screen before each optional check.
 
 ---
 
@@ -98,7 +108,7 @@ All four template names should appear in the output.
 
 - Keep crops tight — avoid surrounding UI chrome that changes between game updates.
 - Use PNG lossless; do not crop partial pixels (round to even dimensions).
-- If a template fails matching (threshold < `match_threshold`), re-capture at the same
+- If a template fails matching (threshold < `vision.match_threshold`), re-capture at the same
   emulator resolution used during normal operation.
 - Do **not** commit screenshots that reveal your city name, alliance, or account
   identity unless you are comfortable with that.
