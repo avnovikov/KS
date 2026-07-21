@@ -4,6 +4,9 @@ from typing import Any
 
 import yaml
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_CONFIG_PATH = _PROJECT_ROOT / "config" / "params.yaml"
+
 
 @dataclass
 class AccountConfig:
@@ -41,7 +44,7 @@ class AppConfig:
 
 
 def load_config(path: Path | None = None) -> AppConfig:
-    config_path = path if path is not None else Path("config/params.yaml")
+    config_path = path if path is not None else _DEFAULT_CONFIG_PATH
 
     with config_path.open(encoding="utf-8") as handle:
         data = yaml.safe_load(handle)
