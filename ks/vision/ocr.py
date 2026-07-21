@@ -6,7 +6,7 @@ import pytesseract
 _RSS_SUFFIX_PATTERN = re.compile(
     r"^\s*([0-9]+(?:\.[0-9]+)?)\s*([KkMm])\s*$",
 )
-_RSS_PLAIN_PATTERN = re.compile(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*$")
+_RSS_PLAIN_PATTERN = re.compile(r"^\s*([0-9]+)\s*$")
 
 _MARCH_HMS_PATTERN = re.compile(
     r"^\s*(\d{1,2}):(\d{2}):(\d{2})\s*$",
@@ -67,11 +67,16 @@ def ocr_region(image: np.ndarray, box: tuple[int, int, int, int]) -> str:
     if image.ndim not in (2, 3):
         raise ValueError("image must be a 2D or 3D array")
     x, y, width, height = box
+    if x < 0 or y < 0:
+        raise ValueError(f"box x and y must be >= 0; got {box}")
     if width <= 0 or height <= 0:
         raise ValueError(f"box width and height must be > 0; got {box}")
 
-    crop = image[y : y + height, x : x + width]
-    if crop.size == 0:
+    img_h, img_w = image.shape[:2]
+    if x + width > img_w or y + height > img_h:
         raise ValueError(f"box {box} is outside image bounds")
+
+    crop = image[y : y + height, x : x + width]
+    assert crop.size > 0, f"box {box} produced empty crop; image shape {image.shape}"
 
     return pytesseract.image_to_string(crop).strip()
