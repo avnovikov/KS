@@ -102,6 +102,14 @@ def main(argv: list[str] | None = None) -> int:
         print("Cancelled.")
         return 0
 
+    if not cfg.dry_run and not result.actions:
+        print(
+            "Error: proposal has no actions to execute. "
+            "Fixture mode is propose-only; set dry_run: true or provide actions.",
+            file=sys.stderr,
+        )
+        return 1
+
     device = FakeDevice()
     execute(
         device,

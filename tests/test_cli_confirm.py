@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from ks.cli import confirm_yes_no, main
+from ks.config import load_config
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +89,20 @@ def test_main_proposal_accepted_dry_run_exits_0(candidates_json: Path) -> None:
     with patch("ks.cli.confirm_yes_no", return_value=True):
         code = main(["--candidates-json", str(candidates_json)])
     assert code == 0
+
+
+def test_main_proposal_accepted_live_empty_actions_exits_1(
+    candidates_json: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """Live run with empty actions must fail closed, not pretend success."""
+    cfg = load_config()
+    cfg.dry_run = False
+    with patch("ks.cli.load_config", return_value=cfg):
+        with patch("ks.cli.confirm_yes_no", return_value=True):
+            code = main(["--candidates-json", str(candidates_json)])
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "no actions to execute" in err
 
 
 def test_main_bad_json_exits_1(tmp_path: Path) -> None:
