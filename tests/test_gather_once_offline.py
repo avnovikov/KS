@@ -5,9 +5,11 @@ emulator is required.
 """
 import pytest
 
+from ks.config import load_config
 from ks.device.fake import FakeDevice
 from ks.models import GatherCandidate
 from ks.pipeline.gather_once import gather_once
+from tests.test_gather_policy import _MIN_YAML
 
 
 def test_gather_once_dry_run_yes_performs_zero_taps(tmp_path, monkeypatch, capsys):
@@ -31,6 +33,34 @@ def test_gather_once_dry_run_yes_performs_zero_taps(tmp_path, monkeypatch, capsy
     assert code == 0
     assert "score=" in captured
     assert device.taps == []
+
+
+def test_gather_once_dry_run_does_not_navigate(tmp_path, monkeypatch, capsys):
+    yaml_with_nav = _MIN_YAML.replace(
+        "navigation: {}",
+        """navigation:
+  taps:
+    - {x: 54, y: 1820}
+    - {x: 900, y: 100}""",
+    )
+    p = tmp_path / "params.yaml"
+    p.write_text(yaml_with_nav, encoding="utf-8")
+    cfg = load_config(p)
+    assert cfg.dry_run is True
+    assert len(cfg.navigation.taps) == 2
+
+    device = FakeDevice()
+    monkeypatch.setattr("ks.pipeline.gather_once.detect_free_march", lambda d, c: True)
+    monkeypatch.setattr(
+        "ks.pipeline.gather_once.collect_candidates",
+        lambda d, c: [GatherCandidate("bread", 500_000, 60.0, 0.9)],
+    )
+
+    code = gather_once(device, cfg, input_fn=lambda _: "n")
+    assert code == 0
+    assert device.taps == []
+    out = capsys.readouterr().out
+    assert "dry-run: would navigate with 2 tap(s)" in out
 
 
 def test_gather_once_no_free_march_returns_2(tmp_path, monkeypatch):

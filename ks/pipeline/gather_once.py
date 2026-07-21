@@ -24,6 +24,7 @@ def detect_free_march(device: Device, cfg: AppConfig) -> bool:
     With no march-available template configured this returns True (bring-up
     shortcut).  A future task can add template matching here.
     """
+    print("detect_free_march: no template configured; assuming free march")
     return True
 
 
@@ -103,8 +104,13 @@ def gather_once(
         print("No free march slot detected; skipping gather.")
         return 2
 
-    for tap in cfg.navigation.taps:
-        device.tap(tap.x, tap.y)
+    nav_taps = cfg.navigation.taps
+    if nav_taps:
+        if cfg.dry_run:
+            print(f"dry-run: would navigate with {len(nav_taps)} tap(s)")
+        else:
+            for tap in nav_taps:
+                device.tap(tap.x, tap.y)
 
     candidates = collect_candidates(device, cfg)
 
