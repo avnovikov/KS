@@ -18,4 +18,21 @@ executor:
   tap_jitter_ms: 50
 vision:
   match_threshold: 0.85
+
+# Ordered taps to navigate to the gather-search screen.
+# Leave empty ({}) until you have measured coordinates on your device.
+# Example (BlueStacks 1080x1920):
+#   taps:
+#     - {x: 54,  y: 1820}   # world-map button
+#     - {x: 900, y: 100}    # search / find-resource button
 navigation: {}
+
+# OCR crop boxes for reading resource amount and march time from the
+# gather-candidate list.  Each entry maps to one visible row on screen.
+# Leave empty ({}) until you have measured coordinates on your device.
+# Example:
+#   candidates:
+#     - resource: bread
+#       amount:     {x: 120, y: 400, w: 200, h: 45}
+#       march_time: {x: 430, y: 400, w: 160, h: 45}
+ocr_regions: {}

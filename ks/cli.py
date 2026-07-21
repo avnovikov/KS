@@ -3,10 +3,12 @@
 Usage:
     ks --candidates-json <path>           # fixture / CI mode
     ks --candidates-json <path> --config <path>
+    ks --live                             # live ADB mode (reads screen via OCR)
+    ks --live --assume-free-march         # skip march-slot detection (bring-up)
 
 Exit codes:
     0  – ok (executed or user declined)
-    1  – error (bad args, bad JSON, config load failure)
+    1  – error (bad args, bad JSON, config load failure, ADB failure)
     2  – nothing to do (no viable candidates)
 """
 import argparse
@@ -60,6 +62,19 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="JSON file with a list of GatherCandidate dicts (fixture / CI mode).",
     )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        default=False,
+        help="Live ADB mode: screencap + OCR instead of a fixture JSON file.",
+    )
+    parser.add_argument(
+        "--assume-free-march",
+        action="store_true",
+        dest="assume_free_march",
+        default=False,
+        help="Skip march-slot detection (useful during bring-up).",
+    )
     return parser
 
 
@@ -68,10 +83,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_arg_parser()
     args = parser.parse_args(argv)
 
-    if args.candidates_json is None:
+    if not args.live and args.candidates_json is None:
         print(
-            "Error: --candidates-json is required for v1.  "
-            "Run: ks --candidates-json tests/fixtures/candidates.json",
+            "Error: --candidates-json is required for fixture mode.  "
+            "Run: ks --candidates-json tests/fixtures/candidates.json  "
+            "or use --live for ADB mode.",
             file=sys.stderr,
         )
         return 1
@@ -82,11 +98,34 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error loading config: {exc}", file=sys.stderr)
         return 1
 
+    if args.live:
+        return _run_live(cfg, assume_free_march=args.assume_free_march)
+
+    return _run_fixture(cfg, candidates_json=args.candidates_json)
+
+
+def _run_live(cfg, *, assume_free_march: bool) -> int:
+    """Connect to ADB device and run one gather cycle via gather_once."""
+    from ks.device.adb import AdbDevice
+    from ks.pipeline.gather_once import gather_once
+
     try:
-        raw = json.loads(args.candidates_json.read_text(encoding="utf-8"))
+        serial = cfg.adb.get("serial") if isinstance(cfg.adb, dict) else None
+        device = AdbDevice.connect(serial=serial)
+    except RuntimeError as exc:
+        print(f"Error connecting to ADB device: {exc}", file=sys.stderr)
+        return 1
+
+    return gather_once(device, cfg, assume_free_march=assume_free_march)
+
+
+def _run_fixture(cfg, *, candidates_json: Path) -> int:
+    """Fixture / CI mode: load candidates from JSON, propose, confirm, execute."""
+    try:
+        raw = json.loads(candidates_json.read_text(encoding="utf-8"))
         candidates = [GatherCandidate(**item) for item in raw]
     except Exception as exc:  # noqa: BLE001
-        print(f"Error loading candidates from {args.candidates_json}: {exc}", file=sys.stderr)
+        print(f"Error loading candidates from {candidates_json}: {exc}", file=sys.stderr)
         return 1
 
     result = propose_gather(candidates, cfg, actions=())

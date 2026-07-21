@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +32,47 @@ class VisionConfig:
 
 
 @dataclass
+class TapPoint:
+    """A single screen tap coordinate loaded from YAML."""
+
+    x: int
+    y: int
+
+
+@dataclass
+class OcrBox:
+    """A pixel-space crop box (top-left origin) for OCR, loaded from YAML."""
+
+    x: int
+    y: int
+    w: int
+    h: int
+
+
+@dataclass
+class CandidateRegion:
+    """OCR regions for one gather candidate row on screen."""
+
+    resource: str
+    amount: OcrBox
+    march_time: OcrBox
+
+
+@dataclass
+class NavigationConfig:
+    """Ordered tap sequence to navigate to the gather-search screen."""
+
+    taps: list[TapPoint] = field(default_factory=list)
+
+
+@dataclass
+class OcrRegionsConfig:
+    """Screen regions to OCR when collecting gather candidates."""
+
+    candidates: list[CandidateRegion] = field(default_factory=list)
+
+
+@dataclass
 class AppConfig:
     dry_run: bool
     adb: dict[str, Any]
@@ -40,7 +81,30 @@ class AppConfig:
     resources: dict[str, Any]
     executor: ExecutorConfig
     vision: VisionConfig
-    navigation: dict[str, Any]
+    navigation: NavigationConfig
+    ocr_regions: OcrRegionsConfig
+
+
+def _parse_navigation(raw: Any) -> NavigationConfig:
+    if not isinstance(raw, dict):
+        return NavigationConfig()
+    taps_raw = raw.get("taps") or []
+    taps = [TapPoint(x=int(t["x"]), y=int(t["y"])) for t in taps_raw]
+    return NavigationConfig(taps=taps)
+
+
+def _parse_ocr_regions(raw: Any) -> OcrRegionsConfig:
+    if not isinstance(raw, dict):
+        return OcrRegionsConfig()
+    candidates_raw = raw.get("candidates") or []
+    candidates = []
+    for c in candidates_raw:
+        amount = OcrBox(**c["amount"])
+        march_time = OcrBox(**c["march_time"])
+        candidates.append(
+            CandidateRegion(resource=c["resource"], amount=amount, march_time=march_time)
+        )
+    return OcrRegionsConfig(candidates=candidates)
 
 
 def load_config(path: Path | None = None) -> AppConfig:
@@ -73,5 +137,6 @@ def load_config(path: Path | None = None) -> AppConfig:
         resources=data.get("resources", {}),
         executor=ExecutorConfig(**data["executor"]),
         vision=VisionConfig(**data["vision"]),
-        navigation=data.get("navigation", {}),
+        navigation=_parse_navigation(data.get("navigation")),
+        ocr_regions=_parse_ocr_regions(data.get("ocr_regions")),
     )
