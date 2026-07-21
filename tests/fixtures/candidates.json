@@ -1,0 +1,14 @@
+[
+  {
+    "resource": "bread",
+    "tile_amount": 500000,
+    "march_time_one_way_s": 30,
+    "vision_confidence": 0.95
+  },
+  {
+    "resource": "bread",
+    "tile_amount": 200000,
+    "march_time_one_way_s": 120,
+    "vision_confidence": 0.90
+  }
+]
