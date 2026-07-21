@@ -1,0 +1,72 @@
+# Kingshot resource-tile baseline data
+#
+# Source: kingshot.fun community table (as of 2026-07)
+# Purpose: DEFAULT reference only — not live truth.
+#          Use these values to sanity-check OCR reads and as fallback
+#          when a tile's info popup cannot be parsed.
+#
+# Schema per level:
+#   bread:   total resource units on a level-N bread tile (normal)
+#   wood:    total resource units on a level-N wood tile  (normal)
+#   stone:   total resource units on a level-N stone tile (normal)
+#   iron:    total resource units on a level-N iron tile  (normal)
+#   gather_minutes:  typical normal gather time in minutes (single-troop full load)
+#
+# All amounts are approximate community averages; exact values vary by server age.
+
+tile_baselines:
+  - level: 1
+    bread: 5_000
+    wood: 5_000
+    stone: 5_000
+    iron: 5_000
+    gather_minutes: 1
+
+  - level: 2
+    bread: 20_000
+    wood: 20_000
+    stone: 20_000
+    iron: 20_000
+    gather_minutes: 3
+
+  - level: 3
+    bread: 50_000
+    wood: 50_000
+    stone: 50_000
+    iron: 50_000
+    gather_minutes: 6
+
+  - level: 4
+    bread: 120_000
+    wood: 120_000
+    stone: 120_000
+    iron: 120_000
+    gather_minutes: 12
+
+  - level: 5
+    bread: 300_000
+    wood: 300_000
+    stone: 300_000
+    iron: 300_000
+    gather_minutes: 25
+
+  - level: 6
+    bread: 700_000
+    wood: 700_000
+    stone: 700_000
+    iron: 700_000
+    gather_minutes: 50
+
+  - level: 7
+    bread: 1_500_000
+    wood: 1_500_000
+    stone: 1_500_000
+    iron: 1_500_000
+    gather_minutes: 100
+
+  - level: 8
+    bread: 3_000_000
+    wood: 3_000_000
+    stone: 3_000_000
+    iron: 3_000_000
+    gather_minutes: 180
