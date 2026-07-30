@@ -5,10 +5,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from ks.cartograph.calibration import AffineCalibration
 from ks.cartograph.live_capture import CapturedFrame
 from ks.cartograph.mask import bluestacks_mask_config, mask_and_crop
 from ks.cartograph.mosaic import (
     calibrate_grid_pixel_steps,
+    calibrated_grid_steps,
     parse_grid_cell,
     stitch_grid_lattice,
 )
@@ -64,6 +66,24 @@ def test_calibrate_steps_from_controlled_neighbors():
     assert abs(pe[1]) > 100, pe
     # S step nonzero
     assert abs(ps[0]) + abs(ps[1]) > 200, ps
+
+
+def test_calibrated_grid_steps_use_independent_world_axes():
+    frames = {
+        (0, 0): _frame("c0_center", 100, 100, (40, 80, 40)),
+        (1, 0): _frame("g_1_0", 102, 100, (80, 40, 40)),
+        (0, 1): _frame("g_0_1", 100, 103, (40, 40, 80)),
+    }
+    calibration = AffineCalibration(
+        matrix=np.array([[90.0, -10.0, 12.0], [5.0, 70.0, -8.0]]),
+        accepted=(),
+        rejected=(),
+    )
+
+    pe, ps = calibrated_grid_steps(frames, calibration)
+
+    assert np.allclose(pe, (180.0, 10.0))
+    assert np.allclose(ps, (-30.0, 210.0))
 
 
 def test_lattice_stitch_places_east_right_of_center(tmp_path: Path):
