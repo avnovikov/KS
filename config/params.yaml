@@ -1,0 +1,36 @@
+dry_run: true
+adb:
+  serial: 127.0.0.1:5555
+cartograph:
+  radius: 30
+  step: 10
+  calibration: assets/reference/bear-trap/ocr-calibration.yaml
+  viewports: assets/reference/bear-trap/viewport-coords-batch3.yaml
+  lighting_reference: assets/reference/cartograph/lighting-reference.png
+  navigation:
+    # 1080x1920: Town bottom-nav World (opens local map + search bar)
+    world_from_town: [1005, 1850]
+    quit_cancel: [350, 1120]
+account:
+  march_load: 1000000
+  gather_rate_per_sec:
+    bread: 200.0
+    wood: 200.0
+    stone: 40.0
+    iron: 10.0
+scoring:
+  candidate_limit: 5
+resources:
+  preference_order:
+  - bread
+  - wood
+  - stone
+  - iron
+executor:
+  max_taps_per_proposal: 20
+  tap_delay_ms: 250
+  tap_jitter_ms: 50
+vision:
+  match_threshold: 0.85
+navigation: {}
+ocr_regions: {}
