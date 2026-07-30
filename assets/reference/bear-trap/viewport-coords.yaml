@@ -1,0 +1,69 @@
+viewport:
+  batch2/b2-01.png:
+    source: fallback
+    x: 707
+    y: 825
+  batch2/b2-02.png:
+    source: ocr
+    x: 697
+    y: 821
+  batch2/b2-03.png:
+    source: ocr
+    x: 700
+    y: 817
+  batch2/b2-04.png:
+    source: ocr
+    x: 703
+    y: 815
+  batch2/b2-05.png:
+    source: ocr
+    x: 703
+    y: 828
+  batch2/b2-06.png:
+    source: ocr
+    x: 697
+    y: 836
+  shot-01.png:
+    source: ocr
+    x: 701
+    y: 816
+  shot-02.png:
+    source: ocr
+    x: 707
+    y: 825
+  shot-03.png:
+    source: ocr
+    x: 700
+    y: 817
+  shot-04.png:
+    source: ocr
+    x: 696
+    y: 821
+  shot-05.png:
+    source: fallback
+    x: 691
+    y: 826
+  shot-06.png:
+    source: fallback
+    x: 687
+    y: 829
+  shot-07.png:
+    source: ocr
+    x: 703
+    y: 821
+  shot-08.png:
+    source: ocr
+    x: 701
+    y: 823
+  shot-09.png:
+    source: fallback
+    x: 697
+    y: 828
+  shot-10.png:
+    source: ocr
+    x: 694
+    y: 831
+  shot-11.png:
+    source: ocr
+    x: 690
+    y: 834

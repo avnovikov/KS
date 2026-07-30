@@ -1,0 +1,23 @@
+# Digitized from Google Photos albums (2026-07-30).
+# Operator correction: mills and banner are 1x1 footprints.
+#
+# Sources:
+# - https://photos.app.goo.gl/ps9JrRDJo258f1dx7
+# - https://photos.app.goo.gl/auSQUTM2SDB3tFmZ9
+
+anchor_trap2: {x: 698, y: 816}
+source_batch2: "https://photos.app.goo.gl/auSQUTM2SDB3tFmZ9"
+
+blocks:
+  # --- Confirmed popups (batch2); mills = 1x1 ---
+  - {id: alliance_banner, x: 695, y: 820, w: 1, h: 1, kind: building, note: "Banner popup 695,820 — 1x1"}
+  - {id: woodmill_near_trap, x: 702, y: 815, w: 1, h: 1, kind: building, note: "Woodmill popup 702,815 — 1x1"}
+  - {id: woodmill_north, x: 699, y: 823, w: 1, h: 1, kind: building, note: "Woodmill popup 699,823 — 1x1"}
+  - {id: iron_mine, x: 704, y: 830, w: 1, h: 1, kind: building, note: "Iron Mine popup 704,830 — 1x1"}
+  - {id: alliance_mill, x: 695, y: 834, w: 1, h: 1, kind: building, note: "Alliance Mill popup 695,834 — 1x1"}
+  - {id: plains_hq, x: 705, y: 823, w: 5, h: 5, kind: building, note: "Plains HQ ~707,825 — HQ size TBD"}
+
+  # --- Occupied cities ---
+  - {id: city_ace, x: 696, y: 814, w: 2, h: 2, kind: city, note: "25 [UTD] ACE near Trap 2"}
+  - {id: city_hazy, x: 706, y: 821, w: 2, h: 2, kind: city, note: "20 [UTD] Hazy near HQ"}
+  - {id: city_pinky, x: 708, y: 822, w: 2, h: 2, kind: city, note: "22 [UTD] Pinky near HQ"}

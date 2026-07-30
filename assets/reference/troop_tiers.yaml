@@ -1,0 +1,671 @@
+# Kingshot troop-tier baseline data
+#
+# Source: kingshotoptimizer.com Troops Calculator
+#   (assets/useTroopCalculatorPresets-*.js), cross-checked against
+#   kingshotcalculator.com troop-training-and-promotion-calculator
+#   (same time/power/points table). Scraped 2026-07-24.
+#
+# Purpose: DEFAULT reference for ks/calc troop training — not live truth.
+#          Recalibrate from in-game timers when they diverge.
+#
+# Timing formula used by source (and recommended here):
+#   effective_seconds = training_time_seconds / (1 + training_speed_pct / 100)
+# Promotion / train-from-stock:
+#   delta_field = target.field - current.field  (time, power, points, costs)
+#
+# Optional additive speed modifiers (source UI; fold into training_speed_pct
+# or apply separately before the formula):
+#   Chief Minister: +10%  (+15% with High King)
+#   Noble Advisor:   +50%  (+75% with High King)
+#   Mobilize / Kingdom Skill: +30%
+#   KvK Bonus: +25%
+#
+# Event point keys: sg (State Greatness), kvk, op, ab (Alliance Brawl), hog (HoG).
+# HoG values are much larger than kingshotguide.com — verify in-game before trusting scores.
+#
+# Cost troop types: infantry | cavalry | archer (source uses "archery" → mapped to archer).
+
+meta:
+  source: "kingshotoptimizer.com"
+  scraped: "2026-07-24"
+  time_unit: seconds_per_troop
+  speed_formula: "base / (1 + training_speed_pct / 100)"
+
+troop_tiers:
+  - id: T1
+    level: 1
+    display_name: "T1"
+    tier_group: regular
+    training_time_seconds: 12
+    power: 3
+    event_points:
+      sg: 1
+      kvk: 3
+      op: 1
+      ab: 1
+      hog: 90
+    costs:
+      infantry:
+        bread: 36
+        wood: 27
+        stone: 7
+        iron: 2
+      cavalry:
+        bread: 32
+        wood: 30
+        stone: 7
+        iron: 2
+      archer:
+        bread: 23
+        wood: 34
+        stone: 6
+        iron: 2
+
+  - id: T2
+    level: 2
+    display_name: "T2"
+    tier_group: regular
+    training_time_seconds: 17
+    power: 4
+    event_points:
+      sg: 2
+      kvk: 4
+      op: 2
+      ab: 1
+      hog: 120
+    costs:
+      infantry:
+        bread: 58
+        wood: 44
+        stone: 10
+        iron: 3
+      cavalry:
+        bread: 51
+        wood: 48
+        stone: 10
+        iron: 3
+      archer:
+        bread: 36
+        wood: 54
+        stone: 9
+        iron: 4
+
+  - id: T3
+    level: 3
+    display_name: "T3"
+    tier_group: regular
+    training_time_seconds: 24
+    power: 6
+    event_points:
+      sg: 3
+      kvk: 5
+      op: 3
+      ab: 2
+      hog: 180
+    costs:
+      infantry:
+        bread: 92
+        wood: 69
+        stone: 17
+        iron: 4
+      cavalry:
+        bread: 81
+        wood: 76
+        stone: 16
+        iron: 4
+      archer:
+        bread: 58
+        wood: 86
+        stone: 15
+        iron: 5
+
+  - id: T4
+    level: 4
+    display_name: "T4"
+    tier_group: regular
+    training_time_seconds: 32
+    power: 9
+    event_points:
+      sg: 5
+      kvk: 8
+      op: 4
+      ab: 3
+      hog: 265
+    costs:
+      infantry:
+        bread: 120
+        wood: 90
+        stone: 21
+        iron: 5
+      cavalry:
+        bread: 105
+        wood: 99
+        stone: 21
+        iron: 5
+      archer:
+        bread: 75
+        wood: 111
+        stone: 19
+        iron: 6
+
+  - id: T5
+    level: 5
+    display_name: "T5"
+    tier_group: regular
+    training_time_seconds: 44
+    power: 13
+    event_points:
+      sg: 7
+      kvk: 12
+      op: 6
+      ab: 4
+      hog: 385
+    costs:
+      infantry:
+        bread: 156
+        wood: 117
+        stone: 27
+        iron: 6
+      cavalry:
+        bread: 136
+        wood: 129
+        stone: 27
+        iron: 7
+      archer:
+        bread: 97
+        wood: 144
+        stone: 24
+        iron: 8
+
+  - id: T6
+    level: 6
+    display_name: "T6"
+    tier_group: regular
+    training_time_seconds: 60
+    power: 20
+    event_points:
+      sg: 11
+      kvk: 18
+      op: 9
+      ab: 7
+      hog: 595
+    costs:
+      infantry:
+        bread: 186
+        wood: 140
+        stone: 33
+        iron: 7
+      cavalry:
+        bread: 163
+        wood: 154
+        stone: 32
+        iron: 8
+      archer:
+        bread: 117
+        wood: 173
+        stone: 29
+        iron: 10
+
+  - id: T7
+    level: 7
+    display_name: "T7"
+    tier_group: regular
+    training_time_seconds: 83
+    power: 28
+    event_points:
+      sg: 16
+      kvk: 25
+      op: 12
+      ab: 10
+      hog: 830
+    costs:
+      infantry:
+        bread: 279
+        wood: 210
+        stone: 49
+        iron: 11
+      cavalry:
+        bread: 244
+        wood: 231
+        stone: 48
+        iron: 11
+      archer:
+        bread: 175
+        wood: 258
+        stone: 44
+        iron: 14
+
+  - id: T8
+    level: 8
+    display_name: "T8"
+    tier_group: regular
+    training_time_seconds: 113
+    power: 38
+    event_points:
+      sg: 23
+      kvk: 35
+      op: 17
+      ab: 14
+      hog: 1130
+    costs:
+      infantry:
+        bread: 558
+        wood: 419
+        stone: 98
+        iron: 21
+      cavalry:
+        bread: 488
+        wood: 461
+        stone: 95
+        iron: 22
+      archer:
+        bread: 349
+        wood: 516
+        stone: 87
+        iron: 28
+
+  - id: T9
+    level: 9
+    display_name: "T9"
+    tier_group: regular
+    training_time_seconds: 131
+    power: 50
+    event_points:
+      sg: 30
+      kvk: 45
+      op: 22
+      ab: 18
+      hog: 1485
+    costs:
+      infantry:
+        bread: 1394
+        wood: 1046
+        stone: 244
+        iron: 51
+      cavalry:
+        bread: 1220
+        wood: 1151
+        stone: 237
+        iron: 55
+      archer:
+        bread: 872
+        wood: 1290
+        stone: 217
+        iron: 70
+
+  - id: T10
+    level: 10
+    display_name: "T10"
+    tier_group: regular
+    training_time_seconds: 152
+    power: 66
+    event_points:
+      sg: 39
+      kvk: 60
+      op: 30
+      ab: 24
+      hog: 1960
+    costs:
+      infantry:
+        bread: 2788
+        wood: 2091
+        stone: 488
+        iron: 102
+      cavalry:
+        bread: 2440
+        wood: 2301
+        stone: 474
+        iron: 109
+      archer:
+        bread: 1740
+        wood: 2579
+        stone: 433
+        iron: 140
+
+  - id: TG1
+    level: 10
+    display_name: "T10 (TG1)"
+    tier_group: truegold
+    training_time_seconds: 152
+    power: 71
+    event_points:
+      sg: 39
+      kvk: 60
+      op: 30
+      ab: 24
+      hog: 1960
+    costs:
+      infantry:
+        bread: 2788
+        wood: 2091
+        stone: 488
+        iron: 102
+      cavalry:
+        bread: 2440
+        wood: 2301
+        stone: 474
+        iron: 109
+      archer:
+        bread: 1740
+        wood: 2579
+        stone: 433
+        iron: 140
+
+  - id: TG2
+    level: 10
+    display_name: "T10 (TG2)"
+    tier_group: truegold
+    training_time_seconds: 152
+    power: 76
+    event_points:
+      sg: 39
+      kvk: 60
+      op: 30
+      ab: 24
+      hog: 1960
+    costs:
+      infantry:
+        bread: 2788
+        wood: 2091
+        stone: 488
+        iron: 102
+      cavalry:
+        bread: 2440
+        wood: 2301
+        stone: 474
+        iron: 109
+      archer:
+        bread: 1740
+        wood: 2579
+        stone: 433
+        iron: 140
+
+  - id: TG3
+    level: 10
+    display_name: "T10 (TG3)"
+    tier_group: truegold
+    training_time_seconds: 152
+    power: 83
+    event_points:
+      sg: 39
+      kvk: 60
+      op: 30
+      ab: 24
+      hog: 1960
+    costs:
+      infantry:
+        bread: 2788
+        wood: 2091
+        stone: 488
+        iron: 102
+      cavalry:
+        bread: 2440
+        wood: 2301
+        stone: 474
+        iron: 109
+      archer:
+        bread: 1740
+        wood: 2579
+        stone: 433
+        iron: 140
+
+  - id: TG4
+    level: 10
+    display_name: "T10 (TG4)"
+    tier_group: truegold
+    training_time_seconds: 152
+    power: 88
+    event_points:
+      sg: 39
+      kvk: 60
+      op: 30
+      ab: 24
+      hog: 1960
+    costs:
+      infantry:
+        bread: 2788
+        wood: 2091
+        stone: 488
+        iron: 102
+      cavalry:
+        bread: 2440
+        wood: 2301
+        stone: 474
+        iron: 109
+      archer:
+        bread: 1740
+        wood: 2579
+        stone: 433
+        iron: 140
+
+  - id: TG5
+    level: 10
+    display_name: "T10 (TG5)"
+    tier_group: truegold
+    training_time_seconds: 152
+    power: 94
+    event_points:
+      sg: 39
+      kvk: 60
+      op: 30
+      ab: 24
+      hog: 1960
+    costs:
+      infantry:
+        bread: 2788
+        wood: 2091
+        stone: 488
+        iron: 102
+      cavalry:
+        bread: 2440
+        wood: 2301
+        stone: 474
+        iron: 109
+      archer:
+        bread: 1740
+        wood: 2579
+        stone: 433
+        iron: 140
+
+  - id: TG6
+    level: 10
+    display_name: "T10 (TG6)"
+    tier_group: truegold
+    training_time_seconds: 152
+    power: 99
+    event_points:
+      sg: 39
+      kvk: 60
+      op: 30
+      ab: 24
+      hog: 1960
+    costs:
+      infantry:
+        bread: 2788
+        wood: 2091
+        stone: 488
+        iron: 102
+      cavalry:
+        bread: 2440
+        wood: 2301
+        stone: 474
+        iron: 109
+      archer:
+        bread: 1740
+        wood: 2579
+        stone: 433
+        iron: 140
+
+  - id: TG7
+    level: 10
+    display_name: "T10 (TG7)"
+    tier_group: truegold
+    training_time_seconds: 152
+    power: 104
+    event_points:
+      sg: 39
+      kvk: 60
+      op: 30
+      ab: 24
+      hog: 1960
+    costs:
+      infantry:
+        bread: 2788
+        wood: 2091
+        stone: 488
+        iron: 102
+      cavalry:
+        bread: 2440
+        wood: 2301
+        stone: 474
+        iron: 109
+      archer:
+        bread: 1740
+        wood: 2579
+        stone: 433
+        iron: 140
+
+  - id: TG8
+    level: 10
+    display_name: "T10 (TG8)"
+    tier_group: truegold
+    training_time_seconds: 152
+    power: 110
+    event_points:
+      sg: 39
+      kvk: 60
+      op: 30
+      ab: 24
+      hog: 1960
+    costs:
+      infantry:
+        bread: 2788
+        wood: 2091
+        stone: 488
+        iron: 102
+      cavalry:
+        bread: 2440
+        wood: 2301
+        stone: 474
+        iron: 109
+      archer:
+        bread: 1740
+        wood: 2579
+        stone: 433
+        iron: 140
+
+  - id: T11
+    level: 11
+    display_name: "T11"
+    tier_group: t11
+    training_time_seconds: 180
+    power: 114
+    event_points:
+      sg: 49
+      kvk: 75
+      op: 37
+      ab: 30
+      hog: 0
+    costs:
+      infantry:
+        bread: 6970
+        wood: 5228
+        stone: 1220
+        iron: 253
+      cavalry:
+        bread: 6099
+        wood: 5751
+        stone: 1185
+        iron: 271
+      archer:
+        bread: 4357
+        wood: 6448
+        stone: 1081
+        iron: 349
+
+  - id: T11_TG6
+    level: 11
+    display_name: "T11 (TG6)"
+    tier_group: t11
+    training_time_seconds: 180
+    power: 120
+    event_points:
+      sg: 49
+      kvk: 75
+      op: 37
+      ab: 30
+      hog: 0
+    costs:
+      infantry:
+        bread: 6970
+        wood: 5228
+        stone: 1220
+        iron: 253
+      cavalry:
+        bread: 6099
+        wood: 5751
+        stone: 1185
+        iron: 271
+      archer:
+        bread: 4357
+        wood: 6448
+        stone: 1081
+        iron: 349
+
+  - id: T11_TG7
+    level: 11
+    display_name: "T11 (TG7)"
+    tier_group: t11
+    training_time_seconds: 180
+    power: 126
+    event_points:
+      sg: 49
+      kvk: 75
+      op: 37
+      ab: 30
+      hog: 0
+    costs:
+      infantry:
+        bread: 6970
+        wood: 5228
+        stone: 1220
+        iron: 253
+      cavalry:
+        bread: 6099
+        wood: 5751
+        stone: 1185
+        iron: 271
+      archer:
+        bread: 4357
+        wood: 6448
+        stone: 1081
+        iron: 349
+
+  - id: T11_TG8
+    level: 11
+    display_name: "T11 (TG8)"
+    tier_group: t11
+    training_time_seconds: 180
+    power: 135
+    event_points:
+      sg: 49
+      kvk: 75
+      op: 37
+      ab: 30
+      hog: 0
+    costs:
+      infantry:
+        bread: 6970
+        wood: 5228
+        stone: 1220
+        iron: 253
+      cavalry:
+        bread: 6099
+        wood: 5751
+        stone: 1185
+        iron: 271
+      archer:
+        bread: 4357
+        wood: 6448
+        stone: 1081
+        iron: 349

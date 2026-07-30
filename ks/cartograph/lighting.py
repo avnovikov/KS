@@ -140,6 +140,30 @@ def normalize_band_lighting(
     return _hsv_anchor(work, target_v=target_v, target_s=target_s)
 
 
+def normalize_background_lighting(
+    band: np.ndarray,
+    *,
+    reference: np.ndarray | None = None,
+    reference_path: str | None = None,
+    target_v: float = _TARGET_V,
+    target_s: float = _TARGET_S,
+    use_log_chrom: bool = True,
+) -> np.ndarray:
+    """Normalize terrain while retaining original structure and unit colors."""
+    normalized = normalize_band_lighting(
+        band,
+        reference=reference,
+        reference_path=reference_path,
+        target_v=target_v,
+        target_s=target_s,
+        use_log_chrom=use_log_chrom,
+    )
+    background = grass_mask(band)
+    output = band.copy()
+    output[background] = normalized[background]
+    return output
+
+
 def band_match_gray(band: np.ndarray) -> np.ndarray:
     """Lighting-robust float grayscale for NCC: structure edges, not grass tone."""
     norm = normalize_band_lighting(band)

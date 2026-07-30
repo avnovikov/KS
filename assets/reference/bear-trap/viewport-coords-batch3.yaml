@@ -1,0 +1,18 @@
+source: https://photos.app.goo.gl/3vU9naPvTLaNgkPq5
+captured: 2026-07-30T14:00
+notes:
+  - Same zoom sweep; native export via curl (=d) at 1080x2424
+  - Coords from search bar (#2339 X:… Y:…)
+viewport:
+  batch3/b3-01.png: {x: 697, y: 819, source: manual}
+  batch3/b3-02.png: {x: 693, y: 822, source: manual}
+  batch3/b3-03.png: {x: 690, y: 825, source: manual}
+  batch3/b3-04.png: {x: 698, y: 833, source: manual}
+  batch3/b3-05.png: {x: 700, y: 829, source: manual}
+  batch3/b3-06.png: {x: 703, y: 825, source: manual}
+  batch3/b3-07.png: {x: 707, y: 822, source: manual}
+  batch3/b3-08.png: {x: 711, y: 818, source: manual}
+  batch3/b3-09.png: {x: 703, y: 812, source: manual}
+  batch3/b3-10.png: {x: 698, y: 815, source: manual}
+  batch3/b3-11.png: {x: 694, y: 819, source: manual}
+  batch3/b3-12.png: {x: 689, y: 821, source: manual}

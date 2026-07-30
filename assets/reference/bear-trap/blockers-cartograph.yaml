@@ -1,0 +1,9 @@
+blocks:
+- id: mill_0_1091_133
+  x: 1091
+  y: 133
+  w: 1
+  h: 1
+  kind: mill
+  note: Alliance Mill
+source: cartograph
