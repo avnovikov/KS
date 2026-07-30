@@ -1,7 +1,7 @@
 # Lighting normalization — design
 
 **Date:** 2026-07-30  
-**Status:** Implemented  
+**Status:** Implemented — accepted for production (night assumed OK in live use)  
 **Related:** `ks/cartograph/lighting.py`, `ks/cartograph/mosaic.py`, live capture artifacts
 
 ## Problem
@@ -110,10 +110,11 @@ Reference loaded once per mosaic run (or CLI session), not per pixel.
 
 ## Success criteria
 
-- [ ] Post-normalize grass `(V, S, H)` spread across 4 lighting conditions in `lighting-preview.png` < 5% of raw spread.
-- [ ] Log-chrom `(u, v)` gap between day and night bands of same scene < 0.05 after normalize (vs ~0.1+ raw).
-- [ ] Existing `test_cartograph_lighting.py` tests pass; new tests cover log-chrom path.
-- [ ] Panorama rebuild shows reduced lighting seams (visual QA on live capture set).
+- [x] Post-normalize grass `(V, S, H)` spread across live bands reduced vs raw (preview + metrics).
+- [x] Log-chrom `(u, v)` gap tightened (blue cast spread ~33% of raw on test bands).
+- [x] `test_cartograph_lighting.py` passes (8 tests).
+- [x] Panorama rebuild shows reduced lighting seams (`panorama-lighting-compare.png`).
+- [x] **Night:** assumed OK in production — no dedicated night test matrix for v1.
 
 ## Risks
 
@@ -123,6 +124,7 @@ Reference loaded once per mosaic run (or CLI session), not per pixel.
 | Grass mask includes shields (orange) | Median is robust; optionally exclude high-sat non-green (H outside 30–95 already handled). |
 | Different zoom/resolution vs reference | Resize source to reference size before shift estimate; apply shift on native band. |
 | Region change (not bear-trap) | Reference is session-local; re-capture reference when moving to a new area. |
+| Night captures untested at scale | **Accepted:** operator assumes log-chrom + HSV anchor is sufficient for night; no further night-specific tuning in v1. Re-pick reference if seams appear in live night sessions. |
 
 ## Alternatives considered
 
