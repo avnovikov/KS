@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,7 +22,6 @@ from ks.cartograph.lighting import (
 from ks.cartograph.live_capture import (
     CapturedFrame,
     GRASS_DISMISS_TAP,
-    camera_moved,
     capture_clean_frame_with_popup_coords,
     dismiss_map_blockers,
     ensure_world_map,
@@ -36,6 +36,19 @@ OPPOSITE = {"E": "W", "W": "E", "N": "S", "S": "N"}
 DIRECTIONS = ("E", "N", "W", "S")
 
 
+def _ocr_tile_delta_ok(
+    before: tuple[int, int],
+    after: tuple[int, int],
+    min_tile_delta: int,
+) -> bool:
+    """True when manhattan or hypot tile distance meets ``min_tile_delta``."""
+    if min_tile_delta < 1:
+        raise ValueError(f"min_tile_delta must be >= 1; got {min_tile_delta}")
+    dx = abs(before[0] - after[0])
+    dy = abs(before[1] - after[1])
+    return (dx + dy) >= min_tile_delta or math.hypot(dx, dy) >= min_tile_delta
+
+
 def swipe_camera_verified(
     device: AdbDevice,
     direction: str,
@@ -43,19 +56,59 @@ def swipe_camera_verified(
     distance_px: int,
     settle_s: float,
     attempts: int = 3,
-) -> None:
-    """ADB-swipe until map pixels confirm movement; never accept a duplicate cell."""
+    min_tile_delta: int = 2,
+) -> tuple[int, int]:
+    """ADB-swipe until search-bar world coords change; pixel-only motion is not enough.
+
+    Returns the post-swipe viewport ``(x, y)``. Fails closed if OCR cannot confirm
+    a real coordinate change after retries.
+    """
+    from ks.cartograph.viewport import ocr_viewport_from_image
+
+    distances = [
+        max(80, int(distance_px)),
+        max(80, int(distance_px * 1.25)),
+        max(80, int(distance_px * 1.6)),
+    ]
     before = screencap_bgr(device)
-    for _ in range(attempts):
-        swipe_camera(device, direction, distance_px=distance_px)
+    vp_before, raw_before = ocr_viewport_from_image(before)
+    if vp_before is None:
+        raise RuntimeError(
+            f"cannot verify {direction} swipe: pre-swipe viewport OCR failed "
+            f"({raw_before!r})"
+        )
+
+    last_raw = raw_before
+    retry_count = max(attempts, len(distances))
+    for attempt in range(retry_count):
+        if attempt > 0:
+            dismiss_map_blockers(device)
+            time.sleep(0.35)
+            before = screencap_bgr(device)
+            vp_before, raw_before = ocr_viewport_from_image(before)
+            if vp_before is None:
+                raise RuntimeError(
+                    f"cannot verify {direction} swipe: viewport OCR failed on retry "
+                    f"({raw_before!r})"
+                )
+            last_raw = raw_before
+        dist = distances[min(attempt, len(distances) - 1)]
+        swipe_camera(device, direction, distance_px=dist)
         time.sleep(settle_s)
         after = screencap_bgr(device)
-        if camera_moved(before, after):
-            return
+        vp_after, raw_after = ocr_viewport_from_image(after)
+        last_raw = raw_after
+        if vp_after is None:
+            continue
+        if _ocr_tile_delta_ok(vp_before, vp_after, min_tile_delta):
+            return vp_after
+        # Pixel flicker without coord change is a stuck camera — keep retrying.
         before = after
+        vp_before = vp_after
+
     raise RuntimeError(
-        f"camera did not move after {attempts} ADB {direction} swipes "
-        f"of {distance_px}px"
+        f"camera coords did not change after {retry_count} ADB "
+        f"{direction} swipes (base {distance_px}px); last OCR={last_raw!r}"
     )
 
 
@@ -184,6 +237,7 @@ def capture_grid(
     """Capture a filled ``(2*depth+1)²`` screen grid (serpentine walk).
 
     Saves clean full-map frames only; coordinates come from the tile info banner.
+    Existing ``g_*.png`` / ``c0_center.png`` frames are reused (resume-safe).
     """
     cells = grid_cell_order(depth)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -195,7 +249,29 @@ def capture_grid(
 
     frames: list[CapturedFrame] = []
 
-    def _save(name: str) -> CapturedFrame:
+    def _frame_path(name: str) -> Path:
+        return out_dir / f"{name}.png"
+
+    def _load_existing(name: str) -> CapturedFrame | None:
+        path = _frame_path(name)
+        if not path.is_file():
+            return None
+        image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if image is None:
+            return None
+        from ks.cartograph.viewport import ocr_viewport_from_image
+
+        vp, raw = ocr_viewport_from_image(image)
+        if vp is None:
+            return None
+        return CapturedFrame(
+            name=name, path=path, viewport=vp, viewport_raw=raw, image=image
+        )
+
+    def _save(name: str, *, prev_vp: tuple[int, int] | None) -> CapturedFrame:
+        existing = _load_existing(name)
+        if existing is not None:
+            return existing
         image, vp, raw = capture_clean_frame_with_popup_coords(
             device, settle_s=settle_s * 0.85
         )
@@ -204,13 +280,40 @@ def capture_grid(
                 f"{name}: World-map coordinate bar is unreadable; "
                 "aborting capture before saving a non-map frame"
             )
-        path = out_dir / f"{name}.png"
+        if prev_vp is not None and vp == prev_vp:
+            raise RuntimeError(
+                f"{name}: viewport stuck at {vp} (same as previous frame); "
+                "refusing to save duplicate coordinates"
+            )
+        path = _frame_path(name)
         cv2.imwrite(str(path), image)
         return CapturedFrame(
             name=name, path=path, viewport=vp, viewport_raw=raw, image=image
         )
 
+    # Prefer starting from the last saved cell so resume does not re-walk completed cells.
     cur = (0, 0)
+    last_done: int | None = None
+    for i, cell in enumerate(cells):
+        name = "c0_center" if cell == (0, 0) else f"g_{cell[0]}_{cell[1]}"
+        if _frame_path(name).is_file():
+            last_done = i
+            cur = cell
+
+    if last_done is not None:
+        for cell in cells[: last_done + 1]:
+            name = "c0_center" if cell == (0, 0) else f"g_{cell[0]}_{cell[1]}"
+            frame = _load_existing(name)
+            if frame is None:
+                raise RuntimeError(f"resume expected existing frame {name}")
+            frames.append(frame)
+            if cell == (0, 0):
+                center_copy = out_dir / "g_0_0.png"
+                if not center_copy.is_file():
+                    cv2.imwrite(str(center_copy), frame.image)
+        cells = cells[last_done + 1 :]
+
+    prev_vp = frames[-1].viewport if frames else None
     for cell in cells:
         swipes = grid_swipe_path(cur, cell)
         for direction in swipes:
@@ -221,9 +324,11 @@ def capture_grid(
                 settle_s=settle_s,
             )
         name = "c0_center" if cell == (0, 0) else f"g_{cell[0]}_{cell[1]}"
-        frames.append(_save(name))
+        frame = _save(name, prev_vp=prev_vp)
+        frames.append(frame)
+        prev_vp = frame.viewport
         if cell == (0, 0):
-            cv2.imwrite(str(out_dir / "g_0_0.png"), frames[-1].image)
+            cv2.imwrite(str(out_dir / "g_0_0.png"), frame.image)
         cur = cell
 
     return frames
