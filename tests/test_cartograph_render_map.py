@@ -112,7 +112,7 @@ def test_legacy_panorama_overlay_preserves_exact_pre_task_3_geometry(
     assert "fill='#cfe8d4'" not in overlay
 
 
-def test_sparse_overlay_uses_lattice_step_and_filters_non_pin_kinds(
+def test_overlay_uses_one_tile_lattice_and_filters_non_pin_kinds(
     tmp_path: Path,
 ):
     mosaic = _diamond_mosaic(tmp_path)
@@ -122,13 +122,23 @@ def test_sparse_overlay_uses_lattice_step_and_filters_non_pin_kinds(
             MapEntity("rss", 12, 20, "Farm", level=3),
         ],
         mosaic=mosaic,
-        lattice_step=2,
     )
 
-    assert "sparse diamond grid (step 2)" in overlay
+    assert "diamond grid (1 tile = 1 diamond, step 1)" in overlay
     assert "Capital" in overlay
     assert "Farm" not in overlay
-    # Neighbor tile one step off the lattice should not be drawn.
+    # Foundation lattice draws every tile; neighbor of center is present.
+    assert "points='6.0,4.0 8.0,5.0 6.0,6.0 4.0,5.0'" in overlay
+
+
+def test_overlay_lattice_step_can_still_thin_grid(tmp_path: Path) -> None:
+    mosaic = _diamond_mosaic(tmp_path)
+    overlay = render_iso_overlay_unrotated(
+        [MapEntity("city", 10, 20, "Capital", w=2, h=2)],
+        mosaic=mosaic,
+        lattice_step=2,
+    )
+    assert "step 2" in overlay
     assert "points='6.0,4.0 8.0,5.0 6.0,6.0 4.0,5.0'" not in overlay
 
 
