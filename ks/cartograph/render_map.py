@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from ks.cartograph.registration import GlobalRegistration
 
 MAX_DIGITAL_MAP_TILE_CANDIDATES = 100_000
-DEFAULT_LATTICE_STEP = 2
+DEFAULT_LATTICE_STEP = 1  # one diamond = one world tile (foundation unit)
 
 
 @dataclass(frozen=True)
@@ -248,7 +248,8 @@ def render_isometric_work_svg(
         tile_w = max(8.0, tile_w * shrink)
         tile_h = max(5.0, tile_h * shrink)
     # Sparse minor grid when huge
-    grid_step = 1 if max(span_x, span_y) <= 70 else 2
+    # Foundation lattice: one diamond per world tile so footprint sizes read correctly.
+    grid_step = 1
 
     corners = [
         _iso(min_x, min_y, tile_w, tile_h),
@@ -536,7 +537,7 @@ def render_iso_overlay_unrotated(
     )
     parts.append(
         f"<text x='12' y='22' fill='#9fd0ff' font-size='14'>"
-        f"Kingdom #{escape(kingdom)} · sparse diamond grid (step {lattice_step}) · "
+        f"Kingdom #{escape(kingdom)} · diamond grid (1 tile = 1 diamond, step {lattice_step}) · "
         f"pins cities/alliance · center {cx},{cy}</text>"
     )
 
