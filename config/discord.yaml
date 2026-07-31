@@ -1,0 +1,16 @@
+# Discord bot settings for KS.
+# Secrets: set DISCORD_BOT_TOKEN in the environment (never commit the token).
+
+# Optional: restrict slash sync / use to one guild (faster command updates).
+# Set to your server snowflake id, or null for global commands.
+guild_id: null
+
+# Members with this Discord role may run write commands (/gather) and Approve.
+write_role: ks-ops
+
+# How long Approve/Reject buttons remain valid (seconds).
+proposal_ttl_seconds: 300
+
+# Fixture candidates for Discord /gather without ADB (null = live ADB propose).
+# Example: tests/fixtures/candidates.json
+candidates_json: null

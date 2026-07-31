@@ -1,0 +1,269 @@
+# Batch3 element matching — full pass 2026-07-30
+# Confidence: operator = you confirmed; high = unique name+coords; med = co-occurrence; low = guess
+#
+# World anchors (from blockers.yaml popups):
+#   trap2 698,816 | woodmill_trap 702,815 | woodmill_hq 699,823
+#   iron_mine 704,830 | alliance_mill 695,834 | banner 695,820 | hq ~705,823
+#   ACE 696,814 | Hazy 706,821 | Pinky 708,822
+
+viewport:
+  b3-01: {x: 697, y: 819}
+  b3-02: {x: 693, y: 822}
+  b3-03: {x: 690, y: 825}
+  b3-04: {x: 698, y: 833}
+  b3-05: {x: 700, y: 829}
+  b3-06: {x: 703, y: 825}
+  b3-07: {x: 707, y: 822}
+  b3-08: {x: 711, y: 818}
+  b3-09: {x: 703, y: 812}
+  b3-10: {x: 698, y: 815}
+  b3-11: {x: 694, y: 819}
+  b3-12: {x: 689, y: 821}
+
+# ============================================================
+# SAME-OBJECT GROUPS (each group = one world entity)
+# ============================================================
+matches:
+
+  # --- Operator-confirmed ---
+  - id: mill_lv6
+    label: "Lv6 mill / crane resource node"
+    kind: resource_node
+    shots: [b3-11, b3-12, b3-02]
+    confidence: operator   # 11+12 you; 02 added (same crane+6 near west cluster)
+    stitch: [b3-12, b3-11, b3-02]
+
+  - id: moose_great_3_near_woodmill
+    label: "3 Great Moose (near woodmill/trap)"
+    kind: mob
+    shots: [b3-09, b3-10]
+    confidence: operator
+    stitch: [b3-09, b3-10]
+
+  - id: woodmill_trap
+    label: "[UTD] Alliance Woodmill @ ~702,815 (near Trap 2)"
+    kind: building
+    shots: [b3-07, b3-09, b3-10]
+    confidence: operator
+    stitch: [b3-10, b3-09, b3-07]
+
+  - id: iron_mine
+    label: "[UTD] Alliance Iron Mine @ ~704,830"
+    kind: building
+    shots: [b3-06, b3-07, b3-08]
+    confidence: operator   # 07+08 you; 06 added (same building next to HQ)
+    stitch: [b3-06, b3-07, b3-08]
+
+  # --- High confidence (unique named + world coords) ---
+  - id: hunting_trap_2
+    label: "[UTD] Hunting Trap 2 @ 698,816"
+    kind: trap
+    shots: [b3-01, b3-10]
+    also_partial: [b3-06, b3-07]  # blue beam / moon only
+    confidence: high
+    stitch: [b3-01, b3-10]
+
+  - id: plains_hq
+    label: "[UTD] Plains HQ @ ~705,823"
+    kind: hq
+    shots: [b3-06, b3-07]
+    confidence: high
+    stitch: [b3-06, b3-07]
+
+  - id: woodmill_hq
+    label: "[UTD] Alliance Woodmill @ ~699,823 (near HQ / north of trap)"
+    kind: building
+    shots: [b3-01, b3-06, b3-11]
+    confidence: operator   # you: 11 same as 01/06; distinct from woodmill_trap
+    stitch: [b3-01, b3-06, b3-11]
+    note: "Distinct from woodmill_trap (07/09/10)"
+
+  - id: alliance_mill
+    label: "[UTD] Alliance Mill @ ~695,834 (yellow roof / windmill)"
+    kind: building
+    shots: [b3-01, b3-04, b3-11]
+    confidence: high
+    stitch: [b3-01, b3-04, b3-11]
+    note: "b3-04 sits ABOVE left band (with b3-05), along blue territory lines — not south of trap"
+
+  - id: city_ace
+    label: "25 [UTD] ACE @ ~696,814"
+    kind: city
+    shots: [b3-01, b3-10, b3-11]
+    confidence: high
+    stitch: [b3-01, b3-10, b3-11]
+
+  - id: city_pinky
+    label: "22 [UTD] Pinky @ ~708,822"
+    kind: city
+    shots: [b3-07]
+    also_partial: [b3-06]
+    confidence: high
+
+  - id: city_hazy
+    label: "20 [UTD] Hazy @ ~706,821"
+    kind: city
+    shots: [b3-07]
+    also_partial: [b3-06]
+    confidence: high
+
+  - id: city_pinoy2
+    label: "20 [UTD] Pinoy2"
+    kind: city
+    shots: [b3-06]
+    confidence: high
+
+  - id: city_ayeaa
+    label: "20 [UTD] ayeaa"
+    kind: city
+    shots: [b3-10]
+    confidence: high
+
+  - id: city_jin
+    label: "22 [UTD] …Jin"
+    kind: city
+    shots: [b3-06]
+    confidence: med
+
+  - id: alliance_quarry
+    label: "Alliance Quarry"
+    kind: building
+    shots: [b3-08]
+    confidence: high
+
+  # --- Mob clusters ---
+  - id: bull_11
+    label: "Lv11 Bull/Bison"
+    kind: mob
+    shots: [b3-01, b3-02, b3-11]
+    confidence: high   # always stacked with mammoth_17 west of trap
+    stitch: [b3-01, b3-02, b3-11]
+
+  - id: mammoth_17
+    label: "Lv17 Mammoth/Moose"
+    kind: mob
+    shots: [b3-01, b3-02, b3-11, b3-09]
+    confidence: high   # 09 has Lv17 moose near banner/border — same cluster
+    stitch: [b3-01, b3-02, b3-11, b3-09]
+
+  - id: great_moose_3
+    label: "3 Great Moose"
+    kind: mob
+    shots: [b3-03, b3-08, b3-09, b3-10, b3-12]
+    confidence: med    # 09+10 operator; others likely same roaming spawn
+    stitch: [b3-12, b3-03, b3-08, b3-09, b3-10]
+
+  - id: lynx_14
+    label: "Lv14 Lynx/Cheetah"
+    kind: mob
+    shots: [b3-02, b3-03, b3-12]
+    confidence: high
+    stitch: [b3-02, b3-03, b3-12]
+
+  - id: lynx_8
+    label: "Lv8 Lynx"
+    kind: mob
+    shots: [b3-11]
+    confidence: high   # distinct from lynx_14
+
+  - id: rhino_1
+    label: "1 Giant Rhino"
+    kind: mob
+    shots: [b3-05, b3-06]
+    confidence: high
+    stitch: [b3-05, b3-06]
+
+  - id: wolf_2
+    label: "Lv2 Wolf"
+    kind: mob
+    shots: [b3-04, b3-05]
+    confidence: high
+    stitch: [b3-04, b3-05]
+
+  - id: bison_10
+    label: "Lv10 Bison"
+    kind: mob
+    shots: [b3-04]
+    confidence: high
+
+  - id: wolf_1
+    label: "Lv1 Wolf"
+    kind: mob
+    shots: [b3-09]
+    confidence: high
+
+  - id: hyena_7
+    label: "Lv7 Hyena"
+    kind: mob
+    shots: [b3-08]
+    confidence: high
+
+  - id: hyena_5
+    label: "Lv5 Hyena"
+    kind: mob
+    shots: [b3-10]
+    confidence: high
+
+  # --- Banners: MANY distinct — do not collapse aggressively ---
+  # Treat each shot-sighting as separate unless clearly co-located with a unique neighbor.
+  - id: banners_many
+    label: "[UTD] Alliance Banner (multiple on map)"
+    kind: building
+    note: >
+      Operator: there are a lot of banners. Do not merge across shots unless
+      anchored by a unique neighbor (e.g. next to ACE, or next to bull11 cluster).
+    weak_groups:
+      - {id: banner_near_ace, shots: [b3-01, b3-10], confidence: med, note: "only if sitting between ACE and trap"}
+      - {id: banner_near_bull11, shots: [b3-01, b3-02, b3-11], confidence: low}
+      - {id: banner_other, shots: [b3-03, b3-04, b3-05, b3-08, b3-09, b3-12], confidence: unmerged}
+    stitch: []  # do not use banners as primary stitch anchors
+
+  # --- Small resource nodes (partial) ---
+  - id: node_lv5_03_04
+    label: "Lv5 mill/harvest node"
+    kind: resource_node
+    same_shots: [b3-03, b3-04]
+    note: "Operator confirmed 2026-07-30 — stitch anchor 03↔04"
+
+  - id: node_lv7_03_04
+    label: "Lv7 mill/harvest node"
+    kind: resource_node
+    same_shots: [b3-03, b3-04]
+    note: "Operator confirmed 2026-07-30 — stitch anchor 03↔04"
+
+  - id: node_lv5_near_mill6
+    label: "Lv5 resource near mill_lv6"
+    kind: resource_node
+    shots: [b3-11, b3-12, b3-02]
+    confidence: med
+
+# ============================================================
+# Recommended pairwise stitch order (using strongest anchors)
+# ============================================================
+stitch_chain:
+  rationale: |
+    Grow from trap/HQ core; use woodmills/iron/ACE/mobs — NOT banners (too many).
+    Operator: b3-02 and b3-03 are to the LEFT (west) of b3-01.
+  spatial_notes:
+    - "b3-02, b3-03 lie west/left of b3-01"
+    - "woodmill_hq links 01 ↔ 06 ↔ 11"
+  order:
+    - {pair: [b3-06, b3-07], anchors: [plains_hq, iron_mine]}
+    - {pair: [b3-07, b3-08], anchors: [iron_mine]}
+    - {pair: [b3-07, b3-09], anchors: [woodmill_trap]}
+    - {pair: [b3-09, b3-10], anchors: [woodmill_trap, moose_great_3_near_woodmill]}
+    - {pair: [b3-10, b3-01], anchors: [hunting_trap_2, city_ace]}
+    - {pair: [b3-01, b3-06], anchors: [woodmill_hq]}
+    - {pair: [b3-01, b3-11], anchors: [woodmill_hq, city_ace, alliance_mill, bull_11]}
+    - {pair: [b3-11, b3-12], anchors: [mill_lv6]}
+    - {pair: [b3-01, b3-02], anchors: [bull_11, mammoth_17], note: "02 left of 01"}
+    - {pair: [b3-02, b3-03], anchors: [lynx_14], note: "03 further left"}
+    - {pair: [b3-11, b3-02], anchors: [bull_11, mammoth_17, mill_lv6]}
+    - {pair: [b3-12, b3-03], anchors: [lynx_14, great_moose_3]}
+    - {pair: [b3-01, b3-04], anchors: [alliance_mill]}
+    - {pair: [b3-04, b3-05], anchors: [wolf_2]}
+    - {pair: [b3-05, b3-06], anchors: [rhino_1]}
+
+open_questions:
+  - "Is Great Moose 3 in 08/12 the same animal as 09/10?"
+  - "Is Alliance Mill in 01/04/11 definitely one building?"

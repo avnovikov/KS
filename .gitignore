@@ -7,3 +7,8 @@ __pycache__/
 dist/
 build/
 artifacts/
+.worktrees/
+.superpowers/
+.env
+.env.*
+assets/reference/bear-trap/stitching-debug/

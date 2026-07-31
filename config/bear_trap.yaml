@@ -1,0 +1,30 @@
+# Bear Trap placement — State #2339 [UTD]
+#
+# FUNDAMENTAL UNIT: player city = 2x2 tiles. All packing / seats use this.
+# Screenshots share the same zoom — use known 2x2 cities as the visual ruler.
+trap2:
+  x: 698
+  y: 816
+city_size: 2                   # MOST IMPORTANT — city footprint; packing step
+trap_size: 3                   # pitfall; verify vs city ruler if needed
+# March scored in Chebyshev tiles (calibrate seconds_per_tile later)
+radius_leader_tiles: 4          # one-way leader→trap (in tile units)
+radius_joiner_cycle_tiles: 14   # joiner→leader + leader→trap + trap→joiner
+leaders_per_trap: 15
+min_leaders_per_trap: 10
+d_min: 5
+d_max: 12
+lateral_offsets: [-1, 0, 1]
+directions: [E, W, N, S]
+preferred_directions: [E, W]   # worksheet-style side-by-side
+preferred_d: 7                 # V3 baseline: ~trap + two cities between (~3+2+2)
+weights:
+  balanced_leaders: 8.0
+  total_leaders: 1.5
+  flex: 0.35
+  joiners: 1.0
+  under_min_penalty: 50.0
+  side_by_side_bonus: 25.0
+  preferred_d_bonus: 12.0
+  preferred_d_slope: 2.0
+seconds_per_tile: null

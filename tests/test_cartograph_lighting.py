@@ -12,6 +12,7 @@ from ks.cartograph.lighting import (
     grass_mask,
     load_lighting_reference,
     log_chrominance,
+    normalize_background_lighting,
     normalize_band_lighting,
 )
 
@@ -109,3 +110,13 @@ def test_normalize_with_file_reference_reduces_log_chrom_spread():
     nn = normalize_band_lighting(night)
     norm = chrom_spread(nd, nn)
     assert norm < raw
+
+
+def test_background_normalization_retains_structure_color():
+    night = np.full((100, 100, 3), (22, 65, 25), dtype=np.uint8)
+    night[30:70, 30:70] = (190, 45, 35)
+
+    normalized = normalize_background_lighting(night, use_log_chrom=False)
+
+    assert normalized[10, 10].mean() > night[10, 10].mean()
+    assert np.array_equal(normalized[50, 50], night[50, 50])

@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Screenshot overlay check — UTD Bear Trap area</title>
+  <style>
+    :root {
+      --bg: #0f1410;
+      --card: #1a221c;
+      --text: #e8ffe8;
+      --muted: #9bb8d4;
+      --trap: #5ec8ff;
+      --wood: #c9a227;
+      --banner: #ff7b72;
+      --hq: #7dffb3;
+      --mill: #d4a574;
+      --iron: #b0b0b0;
+    }
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.4;
+    }
+    header {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid #2a3d30;
+      max-width: 1100px;
+    }
+    h1 { font-size: 1.2rem; margin: 0 0 0.4rem; }
+    .meta { color: var(--muted); font-size: 0.95rem; }
+    .legend {
+      display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem;
+    }
+    .legend span {
+      font-size: 12px; padding: 2px 8px; border-radius: 4px; border: 1px solid #0006;
+    }
+    main { padding: 1rem 1.25rem 3rem; max-width: 1100px; }
+    section {
+      background: var(--card);
+      border: 1px solid #2a3d30;
+      border-radius: 10px;
+      padding: 1rem;
+      margin-bottom: 1.25rem;
+    }
+    h2 { font-size: 1rem; margin: 0 0 0.5rem; }
+    .note { color: var(--muted); font-size: 0.9rem; margin-bottom: 0.75rem; }
+    .frame {
+      position: relative;
+      display: inline-block;
+      max-width: 100%;
+      border: 1px solid #334;
+      border-radius: 6px;
+      overflow: hidden;
+      background: #000;
+    }
+    .frame img {
+      display: block;
+      width: min(420px, 100%);
+      height: auto;
+    }
+    .mark {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 2;
+    }
+    .mark .dot {
+      width: 14px; height: 14px; border-radius: 50%;
+      border: 2px solid #fff; box-shadow: 0 0 0 2px #0008;
+    }
+    .mark .label {
+      position: absolute;
+      left: 16px; top: -6px;
+      white-space: nowrap;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: #111;
+      box-shadow: 0 1px 4px #0008;
+    }
+    .schematic {
+      width: 100%;
+      max-width: 640px;
+      background: #152418;
+      border-radius: 8px;
+    }
+    ul.check { margin: 0.5rem 0 0; padding-left: 1.2rem; color: var(--muted); }
+    code { color: #ffe08a; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Screenshot overlay — please check my labels</h1>
+    <p class="meta">
+      This is <strong>not</strong> the placement solver map. It only annotates your photos so we can agree
+      where Trap / Woodmill / Banner / HQ sit relative to each other on screen (isometric).
+      <strong>City = 2×2</strong> at this zoom is the ruler for all footprints. Tell me which markers are wrong.
+    </p>
+    <div class="legend">
+      <span style="background:var(--trap)">Trap 2</span>
+      <span style="background:var(--wood)">Woodmill</span>
+      <span style="background:var(--banner)">Banner</span>
+      <span style="background:var(--hq)">Plains HQ</span>
+      <span style="background:var(--mill)">Alliance Mill</span>
+      <span style="background:var(--iron)">Iron Mine</span>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <h2>A) Screen-relative schematic (from photos only)</h2>
+      <p class="note">Drawn from what appears in batch2 shots — not from the solver tile packer.</p>
+      <svg class="schematic" viewBox="0 0 640 360" xmlns="http://www.w3.org/2000/svg">
+        <rect width="640" height="360" fill="#152418"/>
+        <text x="16" y="24" fill="#9bb8d4" font-size="12">Screen up ≈ toward HQ · isometric diamonds</text>
+        <!-- soft iso hint -->
+        <g opacity="0.25" stroke="#3a5" fill="none">
+          <path d="M80 200 L200 140 L320 200 L200 260 Z"/>
+          <path d="M200 140 L320 80 L440 140 L320 200 Z"/>
+          <path d="M320 200 L440 140 L560 200 L440 260 Z"/>
+        </g>
+        <!-- HQ -->
+        <rect x="270" y="40" width="100" height="50" rx="6" fill="#7dffb3" opacity="0.85"/>
+        <text x="320" y="70" text-anchor="middle" font-size="12" font-weight="700">Plains HQ</text>
+        <text x="320" y="86" text-anchor="middle" font-size="10" fill="#063">~707,825</text>
+        <!-- Trap -->
+        <circle cx="300" cy="190" r="36" fill="none" stroke="#5ec8ff" stroke-width="4"/>
+        <circle cx="300" cy="190" r="28" fill="#0d2137"/>
+        <text x="300" y="186" text-anchor="middle" fill="#5ec8ff" font-size="13" font-weight="700">TRAP 2</text>
+        <text x="300" y="202" text-anchor="middle" fill="#9fd9ff" font-size="11">698, 816</text>
+        <!-- Woodmill (right of trap on b2-03 / b2-04) -->
+        <rect x="380" y="150" width="90" height="70" rx="6" fill="#c9a227"/>
+        <text x="425" y="180" text-anchor="middle" font-size="11" font-weight="700" fill="#111">Woodmill</text>
+        <text x="425" y="196" text-anchor="middle" font-size="10" fill="#333">702, 815 · 1×1</text>
+        <!-- Banner (leftish / between trap cluster and mill in b2-02) -->
+        <rect x="160" y="200" width="80" height="55" rx="6" fill="#ff7b72"/>
+        <text x="200" y="225" text-anchor="middle" font-size="11" font-weight="700" fill="#111">Banner</text>
+        <text x="200" y="241" text-anchor="middle" font-size="10" fill="#311">695, 820 · 1×1</text>
+        <!-- Mill -->
+        <rect x="200" y="280" width="90" height="50" rx="6" fill="#d4a574"/>
+        <text x="245" y="305" text-anchor="middle" font-size="11" font-weight="700" fill="#111">Mill</text>
+        <text x="245" y="320" text-anchor="middle" font-size="10" fill="#321">695, 834</text>
+        <!-- Iron -->
+        <rect x="470" y="90" width="90" height="50" rx="6" fill="#b0b0b0"/>
+        <text x="515" y="115" text-anchor="middle" font-size="11" font-weight="700" fill="#111">Iron Mine</text>
+        <text x="515" y="130" text-anchor="middle" font-size="10" fill="#222">704, 830</text>
+        <!-- arrows -->
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+            <path d="M0,0 L6,3 L0,6 Z" fill="#9bb8d4"/>
+          </marker>
+        </defs>
+        <line x1="300" y1="154" x2="320" y2="100" stroke="#9bb8d4" stroke-width="1.5" marker-end="url(#arrow)"/>
+        <line x1="330" y1="180" x2="375" y2="175" stroke="#9bb8d4" stroke-width="1.5" marker-end="url(#arrow)"/>
+        <line x1="270" y1="210" x2="245" y2="220" stroke="#9bb8d4" stroke-width="1.5" marker-end="url(#arrow)"/>
+      </svg>
+      <ul class="check">
+        <li>Is Woodmill correctly on the <strong>trap’s right</strong> (as in photo A/B)?</li>
+        <li>Is Banner on the <strong>trap’s lower-left</strong> side (photo C)?</li>
+        <li>City = <strong>2×2</strong> (same zoom everywhere — primary ruler). Mills + Banner = <strong>1×1</strong>. HQ footprint TBD.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Photo A — Trap 2 selected (<code>b2-03</code>)</h2>
+      <p class="note">Popup: Trap <code>698,816</code>. I marked HQ (above), Woodmill (right), Mill (lower-left).</p>
+      <div class="frame">
+        <img src="blockers-shots/batch2/b2-03.png" alt="Trap 2 selected" />
+        <!-- percentages of displayed image box -->
+        <div class="mark" style="left:50%; top:22%;">
+          <div class="dot" style="background:var(--hq)"></div>
+          <div class="label" style="background:var(--hq)">HQ?</div>
+        </div>
+        <div class="mark" style="left:48%; top:38%;">
+          <div class="dot" style="background:var(--trap)"></div>
+          <div class="label" style="background:var(--trap)">Trap 2 698,816</div>
+        </div>
+        <div class="mark" style="left:68%; top:40%;">
+          <div class="dot" style="background:var(--wood)"></div>
+          <div class="label" style="background:var(--wood)">Woodmill?</div>
+        </div>
+        <div class="mark" style="left:28%; top:52%;">
+          <div class="dot" style="background:var(--mill)"></div>
+          <div class="label" style="background:var(--mill)">Mill?</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Photo B — Woodmill selected (<code>b2-04</code>)</h2>
+      <p class="note">Popup: Woodmill <code>702,815</code>. Trap should be on the left edge; Iron Mine upper-right.</p>
+      <div class="frame">
+        <img src="blockers-shots/batch2/b2-04.png" alt="Woodmill selected" />
+        <div class="mark" style="left:22%; top:40%;">
+          <div class="dot" style="background:var(--trap)"></div>
+          <div class="label" style="background:var(--trap)">Trap 2?</div>
+        </div>
+        <div class="mark" style="left:42%; top:42%;">
+          <div class="dot" style="background:var(--wood)"></div>
+          <div class="label" style="background:var(--wood)">Woodmill 702,815</div>
+        </div>
+        <div class="mark" style="left:70%; top:28%;">
+          <div class="dot" style="background:var(--iron)"></div>
+          <div class="label" style="background:var(--iron)">Iron Mine?</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Photo C — Banner selected (<code>b2-02</code>)</h2>
+      <p class="note">Popup: Banner <code>695,820</code>. Mill inside territory toward bottom-right of the blue diamond.</p>
+      <div class="frame">
+        <img src="blockers-shots/batch2/b2-02.png" alt="Banner selected" />
+        <div class="mark" style="left:48%; top:28%;">
+          <div class="dot" style="background:var(--banner)"></div>
+          <div class="label" style="background:var(--banner)">Banner 695,820</div>
+        </div>
+        <div class="mark" style="left:58%; top:48%;">
+          <div class="dot" style="background:var(--mill)"></div>
+          <div class="label" style="background:var(--mill)">Mill?</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Photo D — Woodmill / Iron cluster (<code>b2-01</code>)</h2>
+      <p class="note">Popup on this shot was Woodmill <code>699,823</code> (may be a second mill or same cluster — please confirm).</p>
+      <div class="frame">
+        <img src="blockers-shots/batch2/b2-01.png" alt="Woodmill north cluster" />
+        <div class="mark" style="left:50%; top:40%;">
+          <div class="dot" style="background:var(--wood)"></div>
+          <div class="label" style="background:var(--wood)">Woodmill 699,823?</div>
+        </div>
+        <div class="mark" style="left:35%; top:28%;">
+          <div class="dot" style="background:var(--iron)"></div>
+          <div class="label" style="background:var(--iron)">Iron?</div>
+        </div>
+        <div class="mark" style="left:72%; top:42%;">
+          <div class="dot" style="background:var(--banner)"></div>
+          <div class="label" style="background:var(--banner)">Banner/flag?</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>What I need from you</h2>
+      <ul class="check">
+        <li>Which markers are in the wrong place? (e.g. “Photo A: Mill marker is actually Banner”)</li>
+        <li>Is there one woodmill or two (<code>702,815</code> vs <code>699,823</code>)?</li>
+        <li>For the blue diamond under Woodmill/Banner: closer to <strong>2×2</strong>, <strong>3×3</strong>, or <strong>4×4</strong> tiles?</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>

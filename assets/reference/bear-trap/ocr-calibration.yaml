@@ -1,0 +1,139 @@
+# Machine-readable handoff for bear-trap OCR / digitization.
+# Human summary: FINDINGS.md
+# Generated / frozen: 2026-07-30
+
+state: 2339
+alliance: UTD
+
+trap2: {x: 698, y: 816}
+city_size: 2
+trap_size: 3
+mill_banner_size: 1
+
+paths:
+  native_shots: assets/reference/bear-trap/blockers-shots/batch3
+  cropped_shots: assets/reference/bear-trap/blockers-shots/batch3-cropped
+  panorama: assets/reference/bear-trap/panorama-stitching-batch3.png
+  blockers: assets/reference/bear-trap/blockers.yaml
+  inventory: assets/reference/bear-trap/batch3-element-inventory.yaml
+  viewports: assets/reference/bear-trap/viewport-coords-batch3.yaml
+  iso_grid_cal: assets/reference/bear-trap/iso-grid-cal.json
+  findings: assets/reference/bear-trap/FINDINGS.md
+  config: config/bear_trap.yaml
+
+# Native export size before mask/crop
+native_size: {w: 1080, h: 2424}
+cropped_size: {w: 1080, h: 1667}
+panorama_size: {w: 3874, h: 3064}
+
+# UI mask + crop (fractions of native 1080x2424) — from user FIXED b3-07
+mask:
+  crop_top: 0.1787
+  crop_bottom: 0.8662
+  crop_left: 0.0
+  crop_right: 1.0
+  rects:
+    - {name: top_bar, x0: 0.0, y0: 0.0, x1: 1.0, y1: 0.1787}
+    - {name: left_march, x0: 0.0, y0: 0.1787, x1: 0.3355, y1: 0.2842}
+    - {name: left_tab, x0: 0.0, y0: 0.4463, x1: 0.0504, y1: 0.5137}
+    - {name: right_events, x0: 0.8772, y0: 0.1787, x1: 1.0, y1: 0.4443}
+    - {name: pip_phone, x0: 0.0, y0: 0.6963, x1: 0.2478, y1: 0.8662}
+    - {name: compass_mail, x0: 0.8728, y0: 0.7783, x1: 1.0, y1: 0.8662}
+    - {name: bottom_nav, x0: 0.0, y0: 0.8662, x1: 1.0, y1: 1.0}
+
+viewport:
+  b3-01: {x: 697, y: 819}
+  b3-02: {x: 693, y: 822}
+  b3-03: {x: 690, y: 825}
+  b3-04: {x: 698, y: 833}
+  b3-05: {x: 700, y: 829}
+  b3-06: {x: 703, y: 825}
+  b3-07: {x: 707, y: 822}
+  b3-08: {x: 711, y: 818}
+  b3-09: {x: 703, y: 812}
+  b3-10: {x: 698, y: 815}
+  b3-11: {x: 694, y: 819}
+  b3-12: {x: 689, y: 821}
+
+# Top-left of each cropped shot on stitch canvas, relative to b3-01 = (0,0)
+stitch:
+  method: orb_pairwise
+  script: scripts/stitch_batch3_orb.py
+  origin_shot: b3-01
+  canvas_min: {x: -1326, y: -1090}
+  placements:
+    b3-01: {ox: 0, oy: 0}
+    b3-02: {ox: -687, oy: -26}
+    b3-03: {ox: -1303, oy: -9}
+    b3-04: {ox: -1326, oy: -1090}
+    b3-05: {ox: -784, oy: -942}
+    b3-06: {ox: 13, oy: -921}
+    b3-07: {ox: 610, oy: -924}
+    b3-08: {ox: 1469, oy: -983}
+    b3-09: {ox: 1176, oy: 16}
+    b3-10: {ox: 469, oy: 92}
+    b3-11: {ox: -257, oy: 154}
+    b3-12: {ox: -983, oy: 306}
+  notes:
+    - "b3-02, b3-03 left/west of b3-01"
+    - "b3-04, b3-05 above-left along territory lines; do not stitch via 01→04"
+
+# pixel_delta = MAT @ world_delta  (from stitch Δpos vs viewport Δworld)
+world_to_pixel_mat:
+  # [[a, b], [c, d]]
+  - [95.70840124, -99.49624005]
+  - [-67.69089597, -68.09304851]
+  col0_len_px: 117.23   # |ΔX|=1
+  col1_len_px: 120.57   # |ΔY|=1
+  col0_ang_deg: -35.27
+  col1_ang_deg: -145.61
+  caution: "HQ residual was large in earlier checks; refine after OCR anchors"
+
+# Optional zigzag 1-tile measure on panorama (grid WIP — not required for OCR)
+zigzag_tile:
+  tip_px: [194.0, 304.0]
+  edge_px: [110.3, 109.1]
+  step_px: [105.9, 107.1]
+  cal_file: assets/reference/bear-trap/iso-grid-cal.json
+  status: paused_imperfect_phase
+
+ocr:
+  prefer: cropped_shots
+  skip: [animals, mobs, clearable_small_farms]
+  keep: [cities, alliance_buildings, blocking_rss, permanent_terrain]
+  anchor_groups_file: assets/reference/bear-trap/batch3-element-inventory.yaml
+  known_popup_blockers_file: assets/reference/bear-trap/blockers.yaml
+
+# High-confidence same-object groups (operator + inventory)
+anchors:
+  hunting_trap_2: {xy: [698, 816], shots: [b3-01, b3-10], partial: [b3-06, b3-07]}
+  plains_hq: {xy: [705, 823], shots: [b3-06, b3-07]}
+  iron_mine: {xy: [704, 830], shots: [b3-06, b3-07, b3-08]}
+  woodmill_trap: {xy: [702, 815], shots: [b3-07, b3-09, b3-10]}
+  woodmill_hq: {xy: [699, 823], shots: [b3-01, b3-06, b3-11]}
+  alliance_mill: {xy: [695, 834], shots: [b3-01, b3-04, b3-11]}
+  city_ace: {xy: [696, 814], shots: [b3-01, b3-10, b3-11], size: [2, 2]}
+  mill_lv6: {shots: [b3-11, b3-12]}
+  harvest_lv5_lv7: {shots: [b3-03, b3-04]}
+  banners: {note: "many distinct — do not merge aggressively"}
+
+# Lessons for a future reusable OCR module (see FINDINGS.md § Lessons learned)
+lessons_learned:
+  pipeline: [mask_ui, crop_map, viewport_ocr, label_ocr_on_cropped, project_world, dedupe, emit_blockers]
+  primary_ocr_surface: cropped_shots  # not raw UI; panorama is QA only
+  mask: fractional_rects_from_user_fixed_frame
+  viewport: required_per_shot_with_manual_fallback
+  zoom: must_be_constant_within_batch
+  axes_deg: "not 45; ~±35 on this zoom (world X/Y on screen)"
+  mat: bootstrap_from_stitch_x_viewport_then_refine_with_popup_anchors
+  mat_caution: global_fit_can_have_large_residual_refine_locally
+  grid_phase: do_not_block_ocr_on_perfect_border_lock
+  footprints_from_kind: {city: [2, 2], mill_banner: [1, 1], trap: [3, 3], hq: TBD}
+  dedupe: inventory_match_graph_plus_operator_confirm
+  never_auto_merge: [alliance_banners]
+  skip_classes: [animals, mobs, clearable_small_farms, ui_chrome, march_arrows]
+  stitch: orb_translation_graph_beats_scans_alone
+  stitch_pairs: landmark_confirmed_not_viewport_only
+  capture: same_zoom_overlap_30pct_popup_for_critical_xy
+  module_units: [mask_crop, viewport_ocr, label_ocr, world_project, dedupe, footprint, emit]
+  findings_doc: assets/reference/bear-trap/FINDINGS.md
