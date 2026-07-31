@@ -10,8 +10,10 @@ from ks.cartograph.labels import (
     extract_labels,
     extract_labels_with_confidence,
     infer_kind,
+    normalize_ocr_label,
     preprocess_label_band,
 )
+from ks.cartograph.models import FOOTPRINTS, footprint_for
 
 
 def _city_banner_image(text: str = "8 [ROY]lord385755050") -> np.ndarray:
@@ -75,3 +77,45 @@ def test_extract_labels_with_confidence_returns_four_tuples(
 
     legacy = extract_labels(_city_banner_image())
     assert legacy[0][0] == label
+
+
+@pytest.mark.parametrize(
+    ("raw", "kind", "size"),
+    [
+        ("Alliance Woodmill", "mill", (2, 2)),
+        ("All1ance Wooami", "mill", (2, 2)),
+        ("Alliance Quarry", "building", (2, 2)),
+        ("Alliance Quarny", "building", (2, 2)),
+        ("Alliance Iron Mine", "building", (2, 2)),
+        ("Alliance Banner", "banner", (2, 2)),
+        ("8 [ROY]lord123", "city", (2, 2)),
+        ("Plains HQ", "hq", (5, 5)),
+        ("Hunting Trap 2", "trap", (3, 3)),
+    ],
+)
+def test_normalize_and_footprint_for_named_structures(
+    raw: str, kind: str, size: tuple[int, int]
+) -> None:
+    cleaned = normalize_ocr_label(raw)
+    assert infer_kind(cleaned) == kind
+    assert footprint_for(kind, cleaned) == size
+
+
+def test_resource_and_beast_footprints_are_one_by_one() -> None:
+    for kind in ("rss", "beast", "wood", "bread", "stone", "iron"):
+        assert FOOTPRINTS[kind] == (1, 1)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "23 [79]Y:287",
+        "1 [20]5K",
+        "3 [00]:12:10",
+        "1 [09]512",
+        "0 [PRS]: 0.0",
+    ],
+)
+def test_ui_chrome_is_not_inferred_as_city(raw: str) -> None:
+    assert infer_kind(raw) is None
+    assert infer_kind(normalize_ocr_label(raw)) is None

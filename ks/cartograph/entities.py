@@ -11,8 +11,8 @@ import cv2
 import numpy as np
 
 from ks.cartograph.labels import infer_kind, parse_level
-from ks.cartograph.landmarks import normalize_landmark_name
-from ks.cartograph.models import FOOTPRINTS
+from ks.cartograph.landmarks import is_registration_landmark_name, normalize_landmark_name
+from ks.cartograph.models import FOOTPRINTS, footprint_for
 from ks.cartograph.project import AffineProjection, round_tile
 
 PROVENANCE_PRIORITY = {
@@ -23,6 +23,17 @@ PROVENANCE_PRIORITY = {
 }
 
 _LORD_ID = re.compile(r"lord\s*(\d{4,})", re.I)
+
+
+def entity_identity(label: str, kind: str) -> str | None:
+    """Stable catalog identity — excludes ambiguous repeated alliance buildings."""
+    key = normalize_landmark_name(label)
+    if key and is_registration_landmark_name(key):
+        return key
+    if kind == "city":
+        if m := _LORD_ID.search(label or ""):
+            return f"lord{m.group(1)}"
+    return None
 
 
 @dataclass(frozen=True)
@@ -125,11 +136,11 @@ def detect_frame_observations(
     observations: list[EntityObservation] = []
     labeled_centers: list[tuple[float, float]] = []
     for label, px, py, conf in labels_with_confidence or ():
-        kind = infer_kind(label) or "unknown"
-        identity = normalize_landmark_name(label)
-        if identity is None and kind == "city":
-            if m := _LORD_ID.search(label):
-                identity = f"lord{m.group(1)}"
+        kind = infer_kind(label)
+        if kind is None:
+            # OCR string survived extraction but failed kind heuristics — drop it.
+            continue
+        identity = entity_identity(label, kind)
         observations.append(
             EntityObservation(
                 frame=frame,
@@ -188,7 +199,12 @@ def merge_entity_observations(
     max_world_delta: float = 0.75,
     matrix: tuple[tuple[float, float], tuple[float, float]] | None = None,
 ) -> list[EntityCatalogEntry]:
-    """Merge cross-frame observations by identity/proximity with provenance priority."""
+    """Merge cross-frame observations by identity/proximity with provenance priority.
+
+    Same identity with large coordinate disagreement is not merged into one
+    entry (OCR nameplates float around 2×2 footprints). Duplicate identities
+    are collapsed afterward by keeping the higher-confidence catalog row.
+    """
     if max_world_delta <= 0:
         raise ValueError(f"max_world_delta must be positive; got {max_world_delta}")
     projected = [item for item in observations if item.world_x is not None]
@@ -209,7 +225,28 @@ def merge_entity_observations(
     catalog: list[EntityCatalogEntry] = []
     for group in groups:
         catalog.append(_catalog_entry_from_group(group, matrix=matrix))
-    return catalog
+    return _collapse_duplicate_identities(catalog)
+
+
+def _collapse_duplicate_identities(
+    catalog: Sequence[EntityCatalogEntry],
+) -> list[EntityCatalogEntry]:
+    """Keep the strongest row when the same identity survived as multiple groups."""
+    best: dict[str, EntityCatalogEntry] = {}
+    anonymous: list[EntityCatalogEntry] = []
+    for entry in catalog:
+        if not entry.identity:
+            anonymous.append(entry)
+            continue
+        prev = best.get(entry.identity)
+        if prev is None:
+            best[entry.identity] = entry
+            continue
+        prev_score = (PROVENANCE_PRIORITY[prev.provenance], prev.confidence)
+        cur_score = (PROVENANCE_PRIORITY[entry.provenance], entry.confidence)
+        if cur_score > prev_score:
+            best[entry.identity] = entry
+    return list(best.values()) + anonymous
 
 
 def _same_entity(
@@ -221,20 +258,24 @@ def _same_entity(
     assert left.world_x is not None and left.world_y is not None
     assert right.world_x is not None and right.world_y is not None
     distance = math.hypot(left.world_x - right.world_x, left.world_y - right.world_y)
+    # Nameplates for 2×2 cities / alliance buildings can drift ~1–2 tiles.
+    identity_delta = max(max_world_delta, 2.0)
     if left.identity and right.identity:
         if left.identity == right.identity:
-            if distance > max_world_delta:
-                raise ValueError(
-                    f"coordinate disagreement for {left.identity}: "
-                    f"{distance:.3f} world units exceeds {max_world_delta}"
-                )
-            return True
+            return distance <= identity_delta
         return False
     # Named OCR/popup can absorb nearby unlabeled visual candidates.
     if bool(left.identity) != bool(right.identity):
-        return distance <= max_world_delta
+        absorb_delta = identity_delta if "city" in {left.kind, right.kind} else max_world_delta
+        return distance <= absorb_delta
     if left.kind != right.kind and "unknown" not in {left.kind, right.kind}:
         return False
+    # Multiple OCR spellings of the same 2×2 city sit within ~one footprint.
+    if left.kind == "city" and right.kind == "city":
+        return distance <= max(max_world_delta, 1.25)
+    # Alliance resources are also ~2×2 — merge nearby same-kind OCR hits.
+    if left.kind == right.kind and left.kind in {"mill", "building", "banner"}:
+        return distance <= max(max_world_delta, 1.25)
     return distance <= max_world_delta
 
 
@@ -254,9 +295,9 @@ def _catalog_entry_from_group(
     primary = ranked[0]
     assert primary.world_x is not None and primary.world_y is not None
     assert primary.tile_x is not None and primary.tile_y is not None
-    footprint = FOOTPRINTS.get(primary.kind, (1, 1))
     residual = _coordinate_residual_px(group, primary, matrix=matrix)
     label = next((item.label for item in ranked if item.label), primary.label)
+    footprint = footprint_for(primary.kind, label or "")
     identity = next((item.identity for item in ranked if item.identity), None)
     level = next((item.level for item in ranked if item.level is not None), None)
     popup_path = next((item.popup_path for item in ranked if item.popup_path), None)

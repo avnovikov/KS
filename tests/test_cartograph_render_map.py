@@ -108,10 +108,8 @@ def test_legacy_panorama_overlay_preserves_exact_pre_task_3_geometry(
     assert "points='4.0,4.0 15.5,24.0 -1.8,54.0 -13.2,34.0'" in overlay
     assert '<use href="#uicon-city" x="-2.0" y="35.0"/>' in overlay
     assert "<text x='14.0' y='73.0' text-anchor='middle'>Legacy City</text>" in overlay
-    assert (
-        "<text x='14.0' y='87.0' text-anchor='middle' "
-        "font-size='11' fill='#cfe8d4'>10,20</text>"
-    ) in overlay
+    assert "y='87.0'" not in overlay
+    assert "fill='#cfe8d4'" not in overlay
 
 
 def test_sparse_overlay_uses_lattice_step_and_filters_non_pin_kinds(
