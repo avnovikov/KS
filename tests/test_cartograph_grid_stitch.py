@@ -68,6 +68,29 @@ def test_calibrate_steps_from_controlled_neighbors():
     assert abs(ps[0]) + abs(ps[1]) > 200, ps
 
 
+def test_calibrate_keeps_isometric_east_when_tile_delta_under_six():
+    """Median E ≈ (4,-4) must not collapse pe to horizontal (e_len < 6)."""
+    frames = [
+        _frame("c0_center", 100, 100, (40, 80, 40)),
+        _frame("g_1_0", 104, 96, (80, 40, 40)),  # +4, -4 → e_len ≈ 5.66
+        _frame("g_0_1", 96, 96, (80, 80, 40)),  # -4, -4 isometric South
+    ]
+    band_w, band_h, overlap = 756, 1076, 0.55
+    pe, ps = calibrate_grid_pixel_steps(
+        frames, band_w=band_w, band_h=band_h, overlap=overlap, refine=False
+    )
+    target_e = overlap * band_w
+    assert abs(float(np.hypot(pe[0], pe[1])) - target_e) < 1.0, pe
+    # Significant |pe_y| — not axis-aligned (pe_y ≈ 0)
+    assert abs(pe[1]) > 0.3 * target_e, pe
+    assert pe[0] > 0 and pe[1] < 0, pe
+    # South keeps measured diagonal direction (no unconditional +Y flip)
+    target_s = overlap * band_h
+    assert abs(float(np.hypot(ps[0], ps[1])) - target_s) < 1.0, ps
+    assert abs(ps[0]) > 0.3 * target_s, ps
+    assert ps[0] < 0 and ps[1] < 0, ps
+
+
 def test_calibrated_grid_steps_use_independent_world_axes():
     frames = {
         (0, 0): _frame("c0_center", 100, 100, (40, 80, 40)),

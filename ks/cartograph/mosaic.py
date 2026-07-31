@@ -309,6 +309,39 @@ def parse_grid_cell(name: str) -> tuple[int, int] | None:
     return None
 
 
+def _overlap_step_from_tile_delta(
+    dw: float, dh: float, target_len: float
+) -> tuple[float, float] | None:
+    """Scale OCR tile Δ to ``target_len`` pixels, preserving direction.
+
+    Any nonzero median (including isometric e_len ≈ 5.66 < 6) keeps its
+    diagonal direction — never collapse to an axis-aligned default.
+    """
+    length = float(np.hypot(dw, dh))
+    if length <= 0.0:
+        return None
+    scale = target_len / length
+    return (dw * scale, dh * scale)
+
+
+def _south_step_from_tile_delta(
+    sw: float, sh: float, target_len: float
+) -> tuple[float, float] | None:
+    """South pixel step from OCR Δ; flip image-Y only for near-vertical South.
+
+    Isometric South is usually diagonal — keep the measured sign. Force
+    image-down (+Y) only when OCR South is nearly pure vertical (small |ΔX|
+    vs |ΔY|), matching the historical axis-aligned invariant.
+    """
+    step = _overlap_step_from_tile_delta(sw, sh, target_len)
+    if step is None:
+        return None
+    sx, sy = step
+    if abs(sw) < abs(sh) * 0.25 and sy < 0.0:
+        return (sx, -sy)
+    return (sx, sy)
+
+
 def calibrate_grid_pixel_steps(
     frames: list[CapturedFrame],
     band_w: int,
@@ -319,11 +352,10 @@ def calibrate_grid_pixel_steps(
 ) -> tuple[tuple[float, float], tuple[float, float]]:
     """Pixel step for +1 screen East and +1 screen South from controlled neighbors.
 
-    Seed from OCR tile deltas (overlap-scaled), then optionally refine with
-    local NCC around that seed so terrain lines up for nearby merges.
-
-    Small swipes (tile Δ ≈ 1) make OCR scale unstable — fall back to a pure
-    overlap fraction of the band size on that axis.
+    Seed from OCR tile-delta *direction* scaled to ``overlap * band_*`` length
+    (diamond-aware even when tile Δ length < 6), then optionally refine with
+    local NCC around that seed. Axis-aligned defaults apply only when no
+    usable neighbor median exists (length 0 / missing edges).
     """
     if not (0.3 <= overlap <= 0.8):
         raise ValueError(f"overlap must be 0.3..0.8; got {overlap}")
@@ -358,22 +390,14 @@ def calibrate_grid_pixel_steps(
 
     if e_wx:
         ew, eh = float(np.median(e_wx)), float(np.median(e_wy))
-        e_len = float(np.hypot(ew, eh))
-        # Tiny tile steps (small swipe) → keep overlap default; only use OCR
-        # scale when the camera clearly moved several tiles.
-        if e_len >= 6.0:
-            scale = (overlap * band_w) / e_len
-            pe = (ew * scale, eh * scale)
+        seeded = _overlap_step_from_tile_delta(ew, eh, overlap * band_w)
+        if seeded is not None:
+            pe = seeded
     if s_wx:
         sw, sh = float(np.median(s_wx)), float(np.median(s_wy))
-        s_len = float(np.hypot(sw, sh))
-        if s_len >= 6.0:
-            scale = (overlap * band_h) / s_len
-            # Image +Y is down; south screen content is below center.
-            step = (sw * scale, sh * scale)
-            if step[1] < 0:
-                step = (step[0], -step[1])
-            ps = step
+        seeded = _south_step_from_tile_delta(sw, sh, overlap * band_h)
+        if seeded is not None:
+            ps = seeded
 
     if refine:
         pe_r, ps_r = _refine_steps_ncc(by_cell, pe, ps, band_w, band_h)
@@ -433,7 +457,14 @@ def _refine_steps_ncc(
     step: int = 15,
     min_score: float = 0.18,
 ) -> tuple[tuple[float, float] | None, tuple[float, float] | None]:
-    """Refine lattice steps by NCC on masked bands around the OCR seed."""
+    """Refine lattice steps by NCC on masked bands around the OCR seed.
+
+    Radius 220 is a *local* search around the diamond-aware seed from
+    ``calibrate_grid_pixel_steps``. Axis-aligned seeds used to sit ~300px
+    from true isometric offsets and missed the peak; with direction-preserving
+    OCR seeds the true match stays inside this window (keep radius modest so
+    tests stay fast).
+    """
     mask_cfg = bluestacks_mask_config()
     fill = np.array(mask_cfg.fill, dtype=np.uint8)
 

@@ -48,9 +48,9 @@
 - Modify: `ks/cartograph/mosaic.py`
 - Test: `tests/test_cartograph_mosaic.py` / calibration tests
 
-- [ ] Diamond-aware default seed when `e_len < 6` (do not collapse East to horizontal).
-- [ ] Gate or remove unconditional `ps[1]` flip; expand NCC search around diagonal seeds.
-- [ ] Regression test: median E ≈ `(4,-4)` must not yield `pe_y ≈ 0`.
+- [x] Diamond-aware default seed when `e_len < 6` (do not collapse East to horizontal).
+- [x] Gate or remove unconditional `ps[1]` flip; expand NCC search around diagonal seeds.
+- [x] Regression test: median E ≈ `(4,-4)` must not yield `pe_y ≈ 0`.
 
 ### Task 4: OCR coord-gated swipe + save
 
