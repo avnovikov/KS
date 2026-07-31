@@ -334,10 +334,6 @@ def render_isometric_work_svg(
             f"<text x='{sx + ox:.1f}' y='{sy + oy + 18:.1f}' text-anchor='middle' "
             f"font-size='10' fill='#ffe9c8'>{escape(e.label)}{lvl}</text>"
         )
-        parts.append(
-            f"<text x='{sx + ox:.1f}' y='{sy + oy + 30:.1f}' text-anchor='middle' "
-            f"font-size='9' fill='#cfe8d4'>{e.x},{e.y}</text>"
-        )
 
     parts.append("</svg>")
     matrix = None
@@ -603,10 +599,6 @@ def render_iso_overlay_unrotated(
         parts.append(
             f"<text x='{px:.1f}' y='{label_y:.1f}' text-anchor='middle'>"
             f"{escape(e.label)}{lvl}</text>"
-        )
-        parts.append(
-            f"<text x='{px:.1f}' y='{label_y + 14:.1f}' text-anchor='middle' "
-            f"font-size='11' fill='#cfe8d4'>{e.x},{e.y}</text>"
         )
 
     parts.append("</svg>")

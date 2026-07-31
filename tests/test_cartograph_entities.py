@@ -80,7 +80,9 @@ def test_detect_frame_observations_keeps_ocr_confidence_and_parsed_level() -> No
     assert city.level == 8
     assert city.confidence == pytest.approx(0.91)
     assert city.provenance == "ocr_projected"
-    assert mill.identity.startswith("ambig:") or mill.kind == "mill"
+    assert mill.kind == "mill"
+    assert mill.identity is None  # ambiguous alliance buildings are not unique ids
+    assert mill.confidence == pytest.approx(0.55)
     assert mill.level is None
 
 
@@ -161,7 +163,8 @@ def test_merge_prefers_popup_exact_and_records_provenance() -> None:
     assert entry.coordinate_residual_px is not None
 
 
-def test_merge_rejects_same_identity_with_disagreement() -> None:
+def test_merge_collapses_same_identity_far_apart() -> None:
+    """Nameplates can OCR far from the footprint; keep the stronger row."""
     a = EntityObservation(
         frame="c0_center",
         pixel_x=10.0,
@@ -174,7 +177,7 @@ def test_merge_rejects_same_identity_with_disagreement() -> None:
         world_y=286.0,
         tile_x=1118,
         tile_y=286,
-        confidence=0.9,
+        confidence=0.95,
         provenance="ocr_projected",
     )
     b = EntityObservation(
@@ -189,9 +192,11 @@ def test_merge_rejects_same_identity_with_disagreement() -> None:
         world_y=295.0,
         tile_x=1125,
         tile_y=295,
-        confidence=0.9,
+        confidence=0.40,
         provenance="ocr_projected",
     )
 
-    with pytest.raises(ValueError, match="coordinate disagreement"):
-        merge_entity_observations([a, b], max_world_delta=0.75)
+    catalog = merge_entity_observations([a, b], max_world_delta=0.75)
+    assert len(catalog) == 1
+    assert catalog[0].tile_x == 1118
+    assert catalog[0].confidence == 0.95
