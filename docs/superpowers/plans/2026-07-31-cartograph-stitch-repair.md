@@ -26,9 +26,9 @@
 - Test: `tests/test_cartograph_mosaic.py` (or new `tests/test_cartograph_viewport_audit.py`)
 - Artifact out: `artifacts/cartograph-grid17x17/keep_frames.yaml` (optional CLI/script)
 
-- [ ] Drop OCR outliers vs median / robust linear residual.
-- [ ] Drop exact and near-duplicate viewports (keep one representative).
-- [ ] Tests for synthetic dup/outlier cases.
+- [x] Drop OCR outliers vs median / robust linear residual.
+- [x] Drop exact and near-duplicate viewports (keep one representative).
+- [x] Tests for synthetic dup/outlier cases.
 
 ### Task 2: World-affine restitch path
 
@@ -37,10 +37,19 @@
 - Modify: `ks/cartograph/project.py` if fitting helpers belong there
 - Test: `tests/test_cartograph_mosaic.py`
 
-- [ ] Fit 2×2 `M` from kept `(world, pixel)` or place at `M @ (vp - center)` with calibrated `M`.
-- [ ] Default folder restitch uses world placement (not cell lattice alone).
-- [ ] Always set `MosaicResult.world_to_pixel_matrix`.
+- [x] Fit 2×2 `M` from kept `(world, pixel)` or place at `M @ (vp - center)` with calibrated `M`.
+- [x] Default folder restitch uses world placement (not cell lattice alone).
+- [x] Always set `MosaicResult.world_to_pixel_matrix`.
 - [ ] Offline regenerate `panorama.png` + `map.html` for `artifacts/cartograph-grid17x17/`.
+
+**Restitch note (offline):** after Tasks 1–2 land, regenerate from an existing capture folder with:
+
+```bash
+source .venv/bin/activate
+python -m ks.cartograph.cli map --capture-dir artifacts/cartograph-grid17x17
+```
+
+(`stitch_viewport_mosaic` now audits + world-affine places `g_*` frames and publishes `world_to_pixel_matrix`.)
 
 ### Task 3: Harden `calibrate_grid_pixel_steps`
 
