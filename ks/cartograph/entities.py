@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass, replace
-from typing import Sequence
+from typing import Callable, Sequence
 
 import cv2
 import numpy as np
@@ -114,6 +114,7 @@ def detect_frame_observations(
     *,
     frame: str,
     labels_with_confidence: Sequence[tuple[str, float, float, float]] | None = None,
+    sprite_matcher: Callable[..., list[EntityObservation]] | None = None,
 ) -> list[EntityObservation]:
     """Detect OCR and conservative visual object candidates in one band."""
     if band.ndim != 3 or band.shape[2] != 3:
@@ -143,6 +144,24 @@ def detect_frame_observations(
             )
         )
         labeled_centers.append((float(px), float(py)))
+
+    matcher = sprite_matcher
+    if matcher is None:
+        try:
+            from ks.cartograph.sprites import match_sprite_observations
+
+            matcher = match_sprite_observations
+        except ImportError:
+            matcher = None
+    if matcher is not None:
+        for sprite in matcher(band, frame=frame):
+            if any(
+                (sprite.pixel_x - lx) ** 2 + (sprite.pixel_y - ly) ** 2 < 45**2
+                for lx, ly in labeled_centers
+            ):
+                continue
+            observations.append(sprite)
+            labeled_centers.append((sprite.pixel_x, sprite.pixel_y))
 
     for px, py, conf in _badge_candidates(band):
         if any((px - lx) ** 2 + (py - ly) ** 2 < 45**2 for lx, ly in labeled_centers):
