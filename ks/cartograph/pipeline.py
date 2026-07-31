@@ -17,7 +17,11 @@ from ks.cartograph.entities import (
     merge_entity_observations,
     project_observation,
 )
-from ks.cartograph.labels import extract_labels, hits_from_label_boxes
+from ks.cartograph.labels import (
+    extract_labels,
+    extract_labels_with_confidence,
+    hits_from_label_boxes,
+)
 from ks.cartograph.landmarks import extract_name_landmarks
 from ks.cartograph.live_capture import CapturedFrame
 from ks.cartograph.mask import MaskConfig, mask_and_crop
@@ -589,8 +593,8 @@ def _load_grid_frames(
 def _labels_with_confidence(
     band: np.ndarray,
 ) -> list[tuple[str, float, float, float]]:
-    """OCR labels with a conservative default confidence for entity detection."""
-    return [(label, px, py, 0.7) for label, px, py in extract_labels(band)]
+    """OCR labels with per-line confidence for entity detection."""
+    return extract_labels_with_confidence(band)
 
 
 def _digitize_entities(

@@ -27,6 +27,9 @@ _KEEP = re.compile(
     re.I,
 )
 
+DEFAULT_OCR_SCALE = 3.0
+MIN_WORD_CONF = 35
+
 
 def parse_level(label: str) -> int | None:
     """Extract a visible object level from OCR text when present."""
@@ -56,33 +59,69 @@ def infer_kind(label: str) -> str | None:
     return None
 
 
+def preprocess_label_band(image: np.ndarray, *, scale: float = DEFAULT_OCR_SCALE) -> np.ndarray:
+    """Return contrast-enhanced upscaled grayscale for OCR."""
+    if image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError(f"image must be HxWx3; got {image.shape}")
+    if scale < 1.0:
+        raise ValueError(f"scale must be >= 1; got {scale}")
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+    if scale != 1.0:
+        enhanced = cv2.resize(
+            enhanced,
+            None,
+            fx=scale,
+            fy=scale,
+            interpolation=cv2.INTER_CUBIC,
+        )
+    return enhanced
+
+
 def extract_labels_stub(_image: np.ndarray) -> list[tuple[str, float, float]]:
     return []
 
 
 def extract_labels(image: np.ndarray) -> list[tuple[str, float, float]]:
     """OCR map band → list of (label, px, py) centers."""
+    return [(label, px, py) for label, px, py, _conf in extract_labels_with_confidence(image)]
+
+
+def extract_labels_with_confidence(
+    image: np.ndarray,
+    *,
+    scale: float = DEFAULT_OCR_SCALE,
+) -> list[tuple[str, float, float, float]]:
+    """OCR map band → list of (label, px, py, confidence in (0, 1])."""
     try:
         import pytesseract
     except ImportError:
-        return extract_labels_stub(image)
+        return []
 
     cmd = tesseract_cmd()
     if cmd:
         pytesseract.pytesseract.tesseract_cmd = cmd
 
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    up = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-    data = pytesseract.image_to_data(up, output_type=pytesseract.Output.DICT, config="--psm 11")
+    up = preprocess_label_band(image, scale=scale)
+    data = pytesseract.image_to_data(
+        up,
+        output_type=pytesseract.Output.DICT,
+        config="--psm 11",
+    )
 
-    # Group words into lines by block/par/line ids.
-    lines: dict[tuple[int, int, int], list[tuple[str, int, int, int, int]]] = {}
+    lines: dict[tuple[int, int, int], list[tuple[str, int, int, int, int, float]]] = {}
     n = len(data["text"])
     for i in range(n):
         text = (data["text"][i] or "").strip()
-        if not text or int(data["conf"][i]) < 40:
+        conf_raw = float(data["conf"][i])
+        if not text or conf_raw < MIN_WORD_CONF:
             continue
-        key = (int(data["block_num"][i]), int(data["par_num"][i]), int(data["line_num"][i]))
+        key = (
+            int(data["block_num"][i]),
+            int(data["par_num"][i]),
+            int(data["line_num"][i]),
+        )
         lines.setdefault(key, []).append(
             (
                 text,
@@ -90,11 +129,11 @@ def extract_labels(image: np.ndarray) -> list[tuple[str, float, float]]:
                 int(data["top"][i]),
                 int(data["width"][i]),
                 int(data["height"][i]),
+                conf_raw / 100.0,
             )
         )
 
-    boxes: list[tuple[str, float, float]] = []
-    scale = 2.0
+    boxes: list[tuple[str, float, float, float]] = []
     for words in lines.values():
         label = " ".join(w[0] for w in words)
         if not _KEEP.search(label) and infer_kind(label) is None:
@@ -105,7 +144,9 @@ def extract_labels(image: np.ndarray) -> list[tuple[str, float, float]]:
         ys1 = max(w[2] + w[4] for w in words)
         cx = (xs0 + xs1) / 2.0 / scale
         cy = (ys0 + ys1) / 2.0 / scale
-        boxes.append((label, cx, cy))
+        conf = float(sum(w[5] for w in words) / len(words))
+        conf = min(1.0, max(1e-3, conf))
+        boxes.append((label, cx, cy, conf))
     return boxes
 
 
