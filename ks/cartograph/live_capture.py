@@ -507,15 +507,16 @@ def capture_clean_frame_with_popup_coords(
 
 
 def swipe_camera(device: AdbDevice, direction: str, distance_px: int = 200) -> None:
-    """Drag anywhere on the map to pan the camera toward ``direction`` (E/N/W/S).
+    """Drag on the open map band to pan the camera toward ``direction`` (E/N/W/S).
 
     Finger starts near mid-screen (open map) and moves opposite the look
-    direction — same as a human click-and-drag.
+    direction — same as a human click-and-drag. Uses a fixed map-band anchor
+    (not grass heuristics) so city/structure hit-tests do not eat the drag.
     """
     d = max(80, int(distance_px))
     image = screencap_bgr(device)
-    clear_grass = _find_clear_grass_tap(image)
-    cx, cy = clear_grass or (540, 1200)
+    # Fixed drag origin in the clear map band (1080×1920 BlueStacks layout).
+    cx, cy = 540, 980
     half = d // 2
     cx = int(np.clip(cx, 120 + half, image.shape[1] - 120 - half))
     cy = int(np.clip(cy, 280 + half, min(1500, image.shape[0] - 300) - half))
@@ -529,7 +530,7 @@ def swipe_camera(device: AdbDevice, direction: str, distance_px: int = 200) -> N
     if direction not in paths:
         raise ValueError(f"direction must be E/N/W/S; got {direction!r}")
     x1, y1, x2, y2 = paths[direction]
-    device.swipe(x1, y1, x2, y2, duration_ms=280)
+    device.swipe(x1, y1, x2, y2, duration_ms=420)
 
 
 def capture_around(

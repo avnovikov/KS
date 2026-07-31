@@ -68,9 +68,9 @@ python -m ks.cartograph.cli map --capture-dir artifacts/cartograph-grid17x17
 - Modify: `ks/cartograph/live_capture.py` if `camera_moved` API changes
 - Test: `tests/test_live_capture_safe_actions.py` / mosaic capture tests
 
-- [ ] Require OCR tile delta ≥ threshold before accepting a swipe.
-- [ ] Refuse saving a frame whose viewport equals previous saved viewport.
-- [ ] Tests prove pixel-only flicker is rejected.
+- [x] Require OCR tile delta ≥ threshold before accepting a swipe.
+- [x] Refuse saving a frame whose viewport equals previous saved viewport.
+- [x] Tests prove pixel-only flicker is rejected.
 
 ### Task 5: Mask / feather polish (after geometry)
 
