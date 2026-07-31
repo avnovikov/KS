@@ -294,6 +294,125 @@ def test_filter_viewport_frames_drops_outliers():
     assert names == {"c0_center", "g_1_0", "g_-1_0"}
 
 
+def test_filter_viewport_frames_drops_near_duplicates():
+    from ks.cartograph.mosaic import filter_viewport_frames
+
+    frames = [
+        _frame("c0_center", 700, 800, (40, 80, 40)),
+        _frame("g_1_0", 704, 796, (80, 40, 40)),
+        _frame("g_2_0", 704, 796, (40, 40, 80)),  # exact dup of g_1_0
+        _frame("g_0_1", 698, 804, (80, 80, 40)),
+        _frame("g_-1_0", 697, 804, (40, 80, 80)),  # near-dup of g_0_1
+    ]
+    kept = filter_viewport_frames(
+        frames, max_dev=80, dup_tol=1.0, max_residual=None
+    )
+    names = {f.name for f in kept}
+    assert "c0_center" in names
+    assert "g_1_0" in names or "g_2_0" in names
+    assert not ({"g_1_0", "g_2_0"} <= names)
+    assert not ({"g_0_1", "g_-1_0"} <= names)
+    assert len(kept) == 3
+
+
+def test_filter_viewport_frames_drops_linear_residual_outliers():
+    from ks.cartograph.mosaic import filter_viewport_frames
+
+    # Coherent lattice around (700,800) with one OCR bomb that still passes median.
+    frames = [
+        _frame("c0_center", 700, 800, (40, 80, 40)),
+        _frame("g_1_0", 704, 796, (80, 40, 40)),
+        _frame("g_-1_0", 696, 804, (40, 40, 80)),
+        _frame("g_0_1", 704, 804, (80, 80, 40)),
+        _frame("g_0_-1", 696, 796, (40, 80, 80)),
+        _frame("g_2_1", 760, 820, (90, 90, 40)),  # residual vs cell fit
+    ]
+    kept = filter_viewport_frames(frames, max_dev=80, max_residual=12.0)
+    names = {f.name for f in kept}
+    assert "g_2_1" not in names
+    assert {"c0_center", "g_1_0", "g_-1_0", "g_0_1", "g_0_-1"} <= names
+
+
+def test_grid_stitch_filters_viewport_outliers(tmp_path: Path, monkeypatch):
+    """Grid path must audit frames (filter was previously non-grid only)."""
+    import ks.cartograph.mosaic as mosaic_module
+
+    frames = [
+        _frame("c0_center", 700, 800, (40, 80, 40)),
+        _frame("g_1_0", 704, 796, (80, 40, 40)),
+        _frame("g_0_1", 704, 804, (40, 40, 80)),
+        _frame("g_-1_0", 16, 800, (80, 80, 40)),  # kingdom bleed
+    ]
+    seen: list[int] = []
+
+    real_filter = mosaic_module.filter_viewport_frames
+
+    def tracking_filter(frames_in, **kwargs):
+        kept = real_filter(frames_in, **kwargs)
+        seen.append(len(kept))
+        return kept
+
+    monkeypatch.setattr(mosaic_module, "filter_viewport_frames", tracking_filter)
+    mosaic = stitch_viewport_mosaic(frames, tmp_path / "panorama.png")
+    assert seen and seen[0] == 3
+    assert mosaic.world_to_pixel_matrix is not None
+
+
+def test_place_frames_by_world_affine_relative_offsets():
+    from ks.cartograph.mosaic import place_frames_by_world_affine
+
+    frames = [
+        _frame("c0_center", 100, 200, (40, 80, 40)),
+        _frame("g_1_0", 104, 196, (80, 40, 40)),
+    ]
+    # M maps (dx, dy) -> (10*dx - 8*dy, 6*dx + 5*dy)
+    matrix = ((10.0, -8.0), (6.0, 5.0))
+    placed = place_frames_by_world_affine(frames, matrix, center=(100.0, 200.0))
+    assert placed["c0_center"] == pytest.approx((0.0, 0.0))
+    # world delta (4, -4) → (10*4 -8*(-4), 6*4 + 5*(-4)) = (72, 4)
+    assert placed["g_1_0"] == pytest.approx((72.0, 4.0))
+
+
+def test_world_affine_grid_restitch_publishes_matrix_and_offsets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import ks.cartograph.mosaic as mosaic_module
+
+    frames = [
+        _frame("c0_center", 100, 100, (40, 80, 40)),
+        _frame("g_1_0", 104, 96, (80, 40, 40)),
+        _frame("g_0_1", 104, 104, (40, 40, 80)),
+        _frame("g_-1_0", 96, 104, (80, 80, 40)),
+        _frame("g_0_-1", 96, 96, (40, 80, 80)),
+    ]
+    pasted: list[tuple[int, int]] = []
+
+    def record_paste(*args, x0: int, y0: int, **kwargs):
+        pasted.append((x0, y0))
+
+    monkeypatch.setattr(mosaic_module, "_paste_band_structure_aware", record_paste)
+    monkeypatch.setattr(
+        mosaic_module,
+        "place_grid_by_landmarks",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("default grid restitch must not use landmark lattice")
+        ),
+    )
+
+    mosaic = stitch_viewport_mosaic(frames, tmp_path / "panorama.png")
+    assert mosaic.world_to_pixel_matrix is not None
+    assert len(pasted) == 5
+
+    # Relative offset of g_1_0 vs center must match M @ (vp - center).
+    m = np.asarray(mosaic.world_to_pixel_matrix, dtype=float)
+    expected = m @ np.array([4.0, -4.0])
+    # Recover paste origins relative to center paste (order is structure-sorted).
+    # Use projection instead: world→panorama delta equals M @ world_delta.
+    px0, py0 = world_to_panorama(100, 100, mosaic)
+    px1, py1 = world_to_panorama(104, 96, mosaic)
+    assert (px1 - px0, py1 - py0) == pytest.approx(tuple(expected), abs=1.0)
+
+
 def test_stitch_places_east_frame_to_the_right(tmp_path: Path):
     frames = [
         _frame("c0_center", 100, 100, (40, 80, 40)),
