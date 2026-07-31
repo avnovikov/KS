@@ -132,6 +132,72 @@ def test_find_clear_grass_tap_avoids_popup_and_structures():
     assert tuple(image[y, x]) == (45, 120, 55)
 
 
+def test_swipe_camera_starts_and_ends_on_clear_grass(monkeypatch):
+    import numpy as np
+    import ks.cartograph.live_capture as live_capture
+
+    image = np.full((1920, 1080, 3), (45, 120, 55), dtype=np.uint8)
+    image[700:1000, 400:700] = (180, 40, 30)
+
+    class FakeDevice:
+        swipe_call = None
+
+        def swipe(self, *args, **kwargs):
+            self.swipe_call = (*args, kwargs["duration_ms"])
+
+    device = FakeDevice()
+    monkeypatch.setattr(live_capture, "screencap_bgr", lambda _device: image)
+
+    live_capture.swipe_camera(device, "E", distance_px=120)
+
+    x1, y1, x2, y2, _duration = device.swipe_call
+    assert tuple(image[y1, x1]) == (45, 120, 55)
+    assert tuple(image[y2, x2]) == (45, 120, 55)
+
+
+def test_find_popup_corner_close_detects_right_x():
+    import cv2
+    import numpy as np
+    from ks.cartograph.live_capture import find_popup_corner_close
+
+    image = np.full((1920, 1080, 3), (45, 120, 55), dtype=np.uint8)
+    image[300:1200, 100:980] = (230, 230, 235)
+    cv2.line(image, (920, 330), (960, 370), (45, 45, 45), 8)
+    cv2.line(image, (960, 330), (920, 370), (45, 45, 45), 8)
+
+    close = find_popup_corner_close(image)
+
+    assert close is not None
+    assert abs(close[0] - 940) < 20
+    assert abs(close[1] - 350) < 20
+
+
+def test_find_popup_corner_close_rejects_bottom_navigation_x():
+    import cv2
+    import numpy as np
+    from ks.cartograph.live_capture import find_popup_corner_close
+
+    image = np.full((1920, 1080, 3), (45, 120, 55), dtype=np.uint8)
+    image[450:1250, 150:930] = (230, 230, 235)
+    image[1760:1920, 0:1080] = (230, 230, 235)
+    cv2.line(image, (25, 1785), (75, 1835), (45, 45, 45), 8)
+    cv2.line(image, (75, 1785), (25, 1835), (45, 45, 45), 8)
+
+    assert find_popup_corner_close(image) is None
+
+
+def test_camera_moved_rejects_duplicate_and_accepts_shift():
+    import numpy as np
+    from ks.cartograph.live_capture import camera_moved
+
+    before = np.full((1920, 1080, 3), (45, 120, 55), dtype=np.uint8)
+    before[600:900, 350:650] = (180, 40, 30)
+    shifted = np.roll(before, 90, axis=1)
+
+    assert camera_moved(before, before.copy()) is False
+    assert camera_moved(before, shifted) is True
+
+
 def test_overlay_detection_on_saved_rays_frames():
     from pathlib import Path
 

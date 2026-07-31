@@ -9,6 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from ks.cartograph.calibration import AffineCalibration
 from ks.cartograph.landmarks import (
     extract_name_landmarks,
     landmark_pair_offsets,
@@ -20,6 +21,7 @@ from ks.cartograph.lighting import (
 from ks.cartograph.live_capture import (
     CapturedFrame,
     GRASS_DISMISS_TAP,
+    camera_moved,
     capture_clean_frame_with_popup_coords,
     dismiss_map_blockers,
     ensure_world_map,
@@ -27,10 +29,34 @@ from ks.cartograph.live_capture import (
     swipe_camera,
 )
 from ks.cartograph.mask import MaskConfig, bluestacks_mask_config, mask_and_crop
+from ks.cartograph.project import AffineProjection, Matrix2x2
 from ks.device.adb import AdbDevice
 
 OPPOSITE = {"E": "W", "W": "E", "N": "S", "S": "N"}
 DIRECTIONS = ("E", "N", "W", "S")
+
+
+def swipe_camera_verified(
+    device: AdbDevice,
+    direction: str,
+    *,
+    distance_px: int,
+    settle_s: float,
+    attempts: int = 3,
+) -> None:
+    """ADB-swipe until map pixels confirm movement; never accept a duplicate cell."""
+    before = screencap_bgr(device)
+    for _ in range(attempts):
+        swipe_camera(device, direction, distance_px=distance_px)
+        time.sleep(settle_s)
+        after = screencap_bgr(device)
+        if camera_moved(before, after):
+            return
+        before = after
+    raise RuntimeError(
+        f"camera did not move after {attempts} ADB {direction} swipes "
+        f"of {distance_px}px"
+    )
 
 
 def grid_cell_order(depth: int) -> list[tuple[int, int]]:
@@ -76,6 +102,17 @@ class MosaicResult:
     origin_y: float
     band_w: int
     band_h: int
+    world_to_pixel_matrix: Matrix2x2 | None = None
+
+    def __post_init__(self) -> None:
+        if self.world_to_pixel_matrix is None:
+            return
+        validated = AffineProjection(
+            center=(0.0, 0.0),
+            pixel_origin=(0.0, 0.0),
+            matrix=self.world_to_pixel_matrix,
+        )
+        object.__setattr__(self, "world_to_pixel_matrix", validated.matrix)
 
 
 def capture_rays(
@@ -107,6 +144,11 @@ def capture_rays(
         image, vp, raw = capture_clean_frame_with_popup_coords(
             device, settle_s=settle_s * 0.85
         )
+        if vp is None:
+            raise RuntimeError(
+                f"{name}: World-map coordinate bar is unreadable; "
+                "aborting capture before saving a non-map frame"
+            )
         path = out_dir / f"{name}.png"
         cv2.imwrite(str(path), image)
         return CapturedFrame(
@@ -157,21 +199,27 @@ def capture_grid(
         image, vp, raw = capture_clean_frame_with_popup_coords(
             device, settle_s=settle_s * 0.85
         )
+        if vp is None:
+            raise RuntimeError(
+                f"{name}: World-map coordinate bar is unreadable; "
+                "aborting capture before saving a non-map frame"
+            )
         path = out_dir / f"{name}.png"
         cv2.imwrite(str(path), image)
         return CapturedFrame(
             name=name, path=path, viewport=vp, viewport_raw=raw, image=image
         )
 
-    device.tap(*GRASS_DISMISS_TAP)
-    time.sleep(settle_s * 0.5)
-
     cur = (0, 0)
     for cell in cells:
         swipes = grid_swipe_path(cur, cell)
         for direction in swipes:
-            swipe_camera(device, direction, distance_px=swipe_px)
-            time.sleep(settle_s)
+            swipe_camera_verified(
+                device,
+                direction,
+                distance_px=swipe_px,
+                settle_s=settle_s,
+            )
         name = "c0_center" if cell == (0, 0) else f"g_{cell[0]}_{cell[1]}"
         frames.append(_save(name))
         if cell == (0, 0):
@@ -333,6 +381,44 @@ def calibrate_grid_pixel_steps(
             pe = pe_r
         if ps_r is not None:
             ps = ps_r
+    return pe, ps
+
+
+def calibrated_grid_steps(
+    by_cell: dict[tuple[int, int], CapturedFrame],
+    calibration: AffineCalibration,
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Derive one-screen X/Y pixel steps from an exact world-to-pixel fit."""
+    center = by_cell.get((0, 0))
+    if center is None or center.viewport is None:
+        raise ValueError("calibrated grid steps require a center viewport")
+    linear = np.asarray(calibration.matrix, dtype=float)[:, :2]
+    if linear.shape != (2, 2):
+        raise ValueError(
+            f"calibration matrix must be 2x3; got {calibration.matrix.shape}"
+        )
+
+    grid_deltas: list[tuple[float, float]] = []
+    pixel_deltas: list[np.ndarray] = []
+    center_world = np.asarray(center.viewport, dtype=float)
+    for cell, frame in by_cell.items():
+        if cell == (0, 0) or frame.viewport is None:
+            continue
+        grid_deltas.append((float(cell[0]), float(cell[1])))
+        world_delta = np.asarray(frame.viewport, dtype=float) - center_world
+        pixel_deltas.append(linear @ world_delta)
+    if len(grid_deltas) < 2:
+        raise ValueError("calibrated grid steps require both grid axes")
+
+    coefficients, _, rank, _ = np.linalg.lstsq(
+        np.asarray(grid_deltas, dtype=float),
+        np.asarray(pixel_deltas, dtype=float),
+        rcond=None,
+    )
+    if rank < 2:
+        raise ValueError("calibrated grid steps require both grid axes")
+    pe = (float(coefficients[0, 0]), float(coefficients[0, 1]))
+    ps = (float(coefficients[1, 0]), float(coefficients[1, 1]))
     return pe, ps
 
 
@@ -509,8 +595,7 @@ def place_grid_by_landmarks(
     name_cons = [
         cons
         for cons in name_cons_all
-        if _adjacent_cells(cons[0], cons[1])
-        and _landmark_offset_plausible(cons, pe, ps, band_w, band_h)
+        if _landmark_offset_plausible(cons, pe, ps, band_w, band_h)
     ]
     pos = _place_from_landmark_bfs(name_cons, seed=(0, 0))
     missing = [c for c in by_cell if c not in pos]
@@ -1009,13 +1094,32 @@ def stitch_grid_lattice(
     overlap: float = 0.55,
     debug_dir: Path | None = None,
     use_landmarks: bool = True,
+    calibration: AffineCalibration | None = None,
+    frame_offsets: dict[str, tuple[float, float]] | None = None,
+    world_to_pixel_matrix: Matrix2x2 | None = None,
 ) -> MosaicResult:
     """Stitch by screen-grid placement (landmark graph when available).
 
     Prefer shared player/alliance name offsets + neighbor NCC over a single
     global lattice so middle gaps align while leftmost/rightmost columns stay
     coherent. Falls back to ``ex*pe + ey*ps`` when landmarks are disabled.
+
+    ``frame_offsets`` is the sole placement authority when provided. Pass the
+    seed ``world_to_pixel_matrix`` alongside it so panorama projection stays
+    diamond-correct; do not also pass ``calibration``.
     """
+    if calibration is not None and frame_offsets is not None:
+        raise ValueError(
+            "calibration and frame_offsets are competing placement authorities"
+        )
+    if world_to_pixel_matrix is not None and calibration is not None:
+        raise ValueError(
+            "world_to_pixel_matrix and calibration are competing projection authorities"
+        )
+    if world_to_pixel_matrix is not None and frame_offsets is None:
+        raise ValueError(
+            "world_to_pixel_matrix requires frame_offsets as placement authority"
+        )
     mask_cfg = mask_cfg or bluestacks_mask_config()
     by_cell: dict[tuple[int, int], CapturedFrame] = {}
     for f in frames:
@@ -1029,19 +1133,48 @@ def stitch_grid_lattice(
     center_f = by_cell[(0, 0)]
     band0 = mask_and_crop(center_f.image, mask_cfg)
     bh, bw = band0.shape[:2]
-    pe, ps = calibrate_grid_pixel_steps(
-        list(by_cell.values()), bw, bh, overlap=overlap
-    )
-
-    if use_landmarks:
-        cell_pos = place_grid_by_landmarks(
-            by_cell, pe, ps, bw, bh, mask_cfg=mask_cfg
-        )
-    else:
+    if frame_offsets is not None:
+        missing_offsets = [
+            frame.name for frame in by_cell.values() if frame.name not in frame_offsets
+        ]
+        if missing_offsets:
+            raise ValueError(
+                f"exact-object frame offsets missing for {sorted(missing_offsets)}"
+            )
         cell_pos = {
-            (ex, ey): (ex * pe[0] + ey * ps[0], ex * pe[1] + ey * ps[1])
-            for (ex, ey) in by_cell
+            cell: frame_offsets[frame.name] for cell, frame in by_cell.items()
         }
+    elif calibration is not None:
+        linear = np.asarray(calibration.matrix, dtype=float)[:, :2]
+        AffineProjection(
+            center=(0.0, 0.0),
+            pixel_origin=(0.0, 0.0),
+            matrix=linear,
+        )
+        if any(frame.viewport is None for frame in by_cell.values()):
+            raise ValueError(
+                "calibrated grid placement requires every frame viewport"
+            )
+        center_world = np.asarray(center_f.viewport, dtype=float)
+        cell_pos = {
+            cell: tuple(
+                linear @ (np.asarray(frame.viewport, dtype=float) - center_world)
+            )
+            for cell, frame in by_cell.items()
+        }
+    else:
+        pe, ps = calibrate_grid_pixel_steps(
+            list(by_cell.values()), bw, bh, overlap=overlap
+        )
+        if use_landmarks:
+            cell_pos = place_grid_by_landmarks(
+                by_cell, pe, ps, bw, bh, mask_cfg=mask_cfg
+            )
+        else:
+            cell_pos = {
+                (ex, ey): (ex * pe[0] + ey * ps[0], ex * pe[1] + ey * ps[1])
+                for (ex, ey) in by_cell
+            }
 
     if debug_dir is not None:
         debug_dir.mkdir(parents=True, exist_ok=True)
@@ -1129,9 +1262,31 @@ def stitch_grid_lattice(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(out_path), canvas)
     center_vp = center_f.viewport or (0, 0)
-    # World px/tile ≈ lattice step / median tile step (~11 E, ~14 S).
-    scale_x = float(np.hypot(*pe) / 11.0)
-    scale_y = float(np.hypot(*ps) / 14.0)
+    published_matrix: Matrix2x2 | None = None
+    if calibration is not None:
+        linear = np.asarray(calibration.matrix, dtype=float)[:, :2]
+        scale_x = float(np.linalg.norm(linear[:, 0]))
+        scale_y = float(np.linalg.norm(linear[:, 1]))
+        published_matrix = (
+            (float(linear[0, 0]), float(linear[0, 1])),
+            (float(linear[1, 0]), float(linear[1, 1])),
+        )
+    elif world_to_pixel_matrix is not None:
+        published_matrix = AffineProjection(
+            center=(0.0, 0.0),
+            pixel_origin=(0.0, 0.0),
+            matrix=world_to_pixel_matrix,
+        ).matrix
+        linear = np.asarray(published_matrix, dtype=float)
+        scale_x = float(np.linalg.norm(linear[:, 0]))
+        scale_y = float(np.linalg.norm(linear[:, 1]))
+    elif frame_offsets is not None:
+        # Placement is exact; scale metadata is unavailable without world matrix.
+        scale_x = scale_y = 55.0
+    else:
+        # World px/tile ≈ lattice step / median tile step (~11 E, ~14 S).
+        scale_x = float(np.hypot(*pe) / 11.0)
+        scale_y = float(np.hypot(*ps) / 14.0)
     return MosaicResult(
         image=canvas,
         path=out_path,
@@ -1142,6 +1297,7 @@ def stitch_grid_lattice(
         origin_y=origin_y,
         band_w=bw,
         band_h=bh,
+        world_to_pixel_matrix=published_matrix,
     )
 
 
@@ -1281,15 +1437,33 @@ def stitch_viewport_mosaic(
     )
 
 
+def mosaic_projection(mosaic: MosaicResult) -> AffineProjection:
+    """Return the mosaic's affine world-to-panorama projection."""
+    matrix = mosaic.world_to_pixel_matrix
+    if matrix is None:
+        matrix = ((mosaic.scale_x, 0.0), (0.0, mosaic.scale_y))
+    return AffineProjection(
+        center=mosaic.center,
+        pixel_origin=(mosaic.origin_x, mosaic.origin_y),
+        matrix=matrix,
+    )
+
+
+def panorama_world_bounds(
+    mosaic: MosaicResult,
+) -> tuple[float, float, float, float]:
+    """Return world bounds covering all four panorama image corners."""
+    height, width = mosaic.image.shape[:2]
+    return mosaic_projection(mosaic).world_bounds_for_image(width, height)
+
+
 def world_to_panorama(
     wx: float,
     wy: float,
     mosaic: MosaicResult,
 ) -> tuple[float, float]:
     """Map world tile to panorama pixel (band-center convention)."""
-    px = mosaic.origin_x + (wx - mosaic.center[0]) * mosaic.scale_x
-    py = mosaic.origin_y + (wy - mosaic.center[1]) * mosaic.scale_y
-    return px, py
+    return mosaic_projection(mosaic).pixel_from_world(wx, wy)
 
 
 def warp_mosaic_to_isometric(
@@ -1336,12 +1510,9 @@ def warp_mosaic_to_isometric(
     v = (yy - oy) / th2
     world_x = (v + u) / 2.0
     world_y = (v - u) / 2.0
-    pan_x = (
-        mosaic.origin_x + (world_x - mosaic.center[0]) * mosaic.scale_x
-    ).astype(np.float32)
-    pan_y = (
-        mosaic.origin_y + (world_y - mosaic.center[1]) * mosaic.scale_y
-    ).astype(np.float32)
+    pan_x, pan_y = mosaic_projection(mosaic).pixel_from_world(world_x, world_y)
+    pan_x = np.asarray(pan_x, dtype=np.float32)
+    pan_y = np.asarray(pan_y, dtype=np.float32)
 
     iso_img = cv2.remap(
         mosaic.image,

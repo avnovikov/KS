@@ -73,6 +73,32 @@ def screencap_bgr(device: AdbDevice) -> np.ndarray:
     return img
 
 
+def camera_moved(before: np.ndarray, after: np.ndarray, *, min_mean_delta: float = 1.5) -> bool:
+    """Return whether the map content changed enough to accept a swipe."""
+    if before.shape != after.shape or before.ndim != 3:
+        raise ValueError(
+            f"camera frames must have equal HxWx3 shapes; got {before.shape} and {after.shape}"
+        )
+    h, w = before.shape[:2]
+    region = (
+        slice(int(h * 0.15), int(h * 0.75)),
+        slice(int(w * 0.12), int(w * 0.88)),
+    )
+    first = cv2.cvtColor(before[region], cv2.COLOR_BGR2GRAY)
+    second = cv2.cvtColor(after[region], cv2.COLOR_BGR2GRAY)
+    size = (max(64, first.shape[1] // 4), max(64, first.shape[0] // 4))
+    first = cv2.resize(first, size, interpolation=cv2.INTER_AREA)
+    second = cv2.resize(second, size, interpolation=cv2.INTER_AREA)
+    shift, response = cv2.phaseCorrelate(
+        first.astype(np.float32),
+        second.astype(np.float32),
+    )
+    if response >= 0.05 and float(np.hypot(*shift)) >= 4.0:
+        return True
+    mean_delta = float(cv2.absdiff(first, second).mean())
+    return mean_delta >= min_mean_delta
+
+
 def _ocr_center_text(img: np.ndarray) -> str:
     """OCR the middle band where modal dialogs appear."""
     try:
@@ -220,6 +246,57 @@ def alliance_invite_visible(img: np.ndarray) -> bool:
     return find_alliance_invite_close(img) is not None
 
 
+def find_popup_corner_close(img: np.ndarray) -> tuple[int, int] | None:
+    """Find a low-saturation X button in either top corner of a pale popup."""
+    if img.ndim != 3 or img.shape[0] < 100:
+        return None
+    height = img.shape[0]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    pale = cv2.inRange(hsv, (0, 0, 175), (50, 75, 255))
+    contours, _ = cv2.findContours(pale, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for contour in sorted(contours, key=cv2.contourArea, reverse=True):
+        if cv2.contourArea(contour) < 30_000:
+            continue
+        x, y, width, height = cv2.boundingRect(contour)
+        if width < 250 or height < 100:
+            continue
+        for center_x in (x + 50, x + width - 50):
+            center_y = y + 50
+            if center_y >= int(height * 0.82):
+                continue
+            x0, x1 = max(0, center_x - 45), min(img.shape[1], center_x + 45)
+            y0, y1 = max(0, center_y - 45), min(img.shape[0], center_y + 45)
+            patch = img[y0:y1, x0:x1]
+            patch_hsv = hsv[y0:y1, x0:x1]
+            if patch.size == 0 or float((patch_hsv[:, :, 1] > 100).mean()) > 0.18:
+                continue
+            gray = cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY)
+            lines = cv2.HoughLinesP(
+                cv2.Canny(gray, 60, 160),
+                1,
+                np.pi / 180,
+                threshold=12,
+                minLineLength=18,
+                maxLineGap=8,
+            )
+            if lines is None:
+                continue
+            positive = False
+            negative = False
+            for x_start, y_start, x_end, y_end in lines[:, 0]:
+                dx = int(x_end) - int(x_start)
+                dy = int(y_end) - int(y_start)
+                if abs(dx) < 10 or abs(dy) < 10:
+                    continue
+                if dx * dy > 0:
+                    positive = True
+                else:
+                    negative = True
+            if positive and negative:
+                return center_x, center_y
+    return None
+
+
 def mail_modal_visible(img: np.ndarray) -> bool:
     """True when the full-screen Mail reader is open."""
     text = _ocr_center_text(img)
@@ -342,6 +419,12 @@ def dismiss_tile_popup(
     for _ in range(10):
         if not map_overlay_visible(img):
             return img
+        close = find_alliance_invite_close(img) or find_popup_corner_close(img)
+        if close is not None:
+            device.tap(*close)
+            time.sleep(settle_s)
+            img = screencap_bgr(device)
+            continue
         if march_ui_visible(img):
             device.tap(*MARCH_BACK_TAP)
             time.sleep(settle_s + 0.3)
@@ -354,13 +437,6 @@ def dismiss_tile_popup(
         if mail_modal_visible(img):
             device.tap(*MAIL_CLOSE_TAP)
             time.sleep(settle_s + 0.3)
-            img = screencap_bgr(device)
-            continue
-        # Invite first — grass taps never close its red X.
-        close = find_alliance_invite_close(img)
-        if close is not None:
-            device.tap(*close)
-            time.sleep(settle_s)
             img = screencap_bgr(device)
             continue
         if tile_popup_visible(img):
@@ -436,9 +512,13 @@ def swipe_camera(device: AdbDevice, direction: str, distance_px: int = 200) -> N
     Finger starts near mid-screen (open map) and moves opposite the look
     direction — same as a human click-and-drag.
     """
-    # Mid-map, clear of top HUD and bottom chrome.
-    cx, cy = 540, 860
     d = max(80, int(distance_px))
+    image = screencap_bgr(device)
+    clear_grass = _find_clear_grass_tap(image)
+    cx, cy = clear_grass or (540, 1200)
+    half = d // 2
+    cx = int(np.clip(cx, 120 + half, image.shape[1] - 120 - half))
+    cy = int(np.clip(cy, 280 + half, min(1500, image.shape[0] - 300) - half))
     # Finger moves opposite to desired camera look direction (map follows finger).
     paths = {
         "E": (cx + d // 2, cy, cx - d // 2, cy),  # finger left → see east
@@ -477,6 +557,11 @@ def capture_around(
         image, vp, raw = capture_clean_frame_with_popup_coords(
             device, settle_s=settle_s * 0.85
         )
+        if vp is None:
+            raise RuntimeError(
+                f"{name}: World-map coordinate bar is unreadable; "
+                "aborting capture before saving a non-map frame"
+            )
         path = out_dir / f"{name}.png"
         cv2.imwrite(str(path), image)
         return CapturedFrame(

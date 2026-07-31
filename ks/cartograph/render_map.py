@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from dataclasses import dataclass
 from html import escape
 from io import StringIO
@@ -11,11 +12,17 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from ks.cartograph.h3_index import UI_PIN_KINDS
 from ks.cartograph.icons import ICON_SVG, legend_items
 from ks.cartograph.models import FOOTPRINTS, StructureHit
 
 if TYPE_CHECKING:
+    from ks.cartograph.entities import EntityCatalogEntry
     from ks.cartograph.mosaic import MosaicResult
+    from ks.cartograph.registration import GlobalRegistration
+
+MAX_DIGITAL_MAP_TILE_CANDIDATES = 100_000
+DEFAULT_LATTICE_STEP = 2
 
 
 @dataclass(frozen=True)
@@ -27,6 +34,12 @@ class MapEntity:
     level: int | None = None
     w: int = 1
     h: int = 1
+    identity: str | None = None
+    confidence: float | None = None
+    provenance: str | None = None
+    source_frames: tuple[str, ...] = ()
+    coordinate_residual_px: float | None = None
+    popup_path: str | None = None
 
     @staticmethod
     def from_hit(hit: StructureHit, level: int | None = None) -> MapEntity:
@@ -40,6 +53,28 @@ class MapEntity:
             h=hit.h,
         )
 
+    @staticmethod
+    def from_catalog_entry(entry: EntityCatalogEntry) -> MapEntity:
+        from ks.cartograph.entities import EntityCatalogEntry as _Entry
+
+        if not isinstance(entry, _Entry):
+            raise TypeError("entry must be an EntityCatalogEntry")
+        return MapEntity(
+            kind=entry.kind,
+            x=entry.tile_x,
+            y=entry.tile_y,
+            label=entry.label or (entry.identity or entry.kind),
+            level=entry.level,
+            w=entry.w,
+            h=entry.h,
+            identity=entry.identity,
+            confidence=entry.confidence,
+            provenance=entry.provenance,
+            source_frames=entry.source_frames,
+            coordinate_residual_px=entry.coordinate_residual_px,
+            popup_path=entry.popup_path,
+        )
+
 
 def _iso(x: float, y: float, tile_w: float, tile_h: float) -> tuple[float, float]:
     return (x - y) * (tile_w / 2.0), (x + y) * (tile_h / 2.0)
@@ -48,21 +83,97 @@ def _iso(x: float, y: float, tile_w: float, tile_h: float) -> tuple[float, float
 def _diamond(
     x: int, y: int, w: int, h: int, tile_w: float, tile_h: float, ox: float, oy: float
 ) -> str:
-    corners = [(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
     pts = []
-    for cx, cy in corners:
+    for cx, cy in _footprint_world_corners(x, y, w, h):
         sx, sy = _iso(cx, cy, tile_w, tile_h)
         pts.append(f"{sx + ox:.1f},{sy + oy:.1f}")
     return " ".join(pts)
 
 
+def _footprint_world_corners(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+) -> tuple[tuple[float, float], ...]:
+    left = x - 0.5
+    top = y - 0.5
+    right = x + w - 0.5
+    bottom = y + h - 0.5
+    return ((left, top), (right, top), (right, bottom), (left, bottom))
+
+
+def _legacy_footprint_world_corners(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+) -> tuple[tuple[float, float], ...]:
+    return ((x, y), (x + w, y), (x + w, y + h), (x, y + h))
+
+
+def _footprint_world_center(
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+) -> tuple[float, float]:
+    return x + (w - 1.0) / 2.0, y + (h - 1.0) / 2.0
+
+
 def _bounds(entities: list[MapEntity], center: tuple[int, int], pad: int) -> tuple[int, int, int, int]:
-    xs = [center[0], center[0] + 1]
-    ys = [center[1], center[1] + 1]
+    xs = [center[0]]
+    ys = [center[1]]
     for e in entities:
-        xs += [e.x, e.x + e.w]
-        ys += [e.y, e.y + e.h]
+        xs += [e.x, e.x + e.w - 1]
+        ys += [e.y, e.y + e.h - 1]
     return min(xs) - pad, max(xs) + pad, min(ys) - pad, max(ys) + pad
+
+
+def _validate_center_matches_mosaic(
+    center: tuple[int, int],
+    mosaic: MosaicResult,
+) -> None:
+    if tuple(center) != tuple(mosaic.center):
+        raise ValueError(
+            f"center must match mosaic center; got {center} vs {mosaic.center}"
+        )
+
+
+def _mosaic_world_bounds(
+    mosaic: MosaicResult,
+) -> tuple[float, float, float, float]:
+    from ks.cartograph.mosaic import panorama_world_bounds
+
+    world_bounds = panorama_world_bounds(mosaic)
+    numeric_bounds = np.asarray(world_bounds, dtype=float)
+    if not np.isfinite(numeric_bounds).all():
+        raise ValueError("panorama world bounds must contain finite values")
+    return world_bounds
+
+
+def _integer_mosaic_bounds(mosaic: MosaicResult) -> tuple[int, int, int, int]:
+    min_x, min_y, max_x, max_y = _mosaic_world_bounds(mosaic)
+    return (
+        int(np.floor(min_x)),
+        int(np.ceil(max_x)),
+        int(np.floor(min_y)),
+        int(np.ceil(max_y)),
+    )
+
+
+def _bounded_tile_centers(mosaic: MosaicResult) -> tuple[range, range]:
+    min_x, min_y, max_x, max_y = _mosaic_world_bounds(mosaic)
+    first_x, last_x = int(np.ceil(min_x)), int(np.floor(max_x))
+    first_y, last_y = int(np.ceil(min_y)), int(np.floor(max_y))
+    x_count = max(0, last_x - first_x + 1)
+    y_count = max(0, last_y - first_y + 1)
+    if x_count * y_count > MAX_DIGITAL_MAP_TILE_CANDIDATES:
+        raise ValueError(
+            "tile bounds exceed safe export limit; "
+            f"candidate grid is {x_count}x{y_count}"
+        )
+    return range(first_x, last_x + 1), range(first_y, last_y + 1)
 
 
 def _affine_pan_to_iso(
@@ -118,33 +229,14 @@ def render_isometric_work_svg(
     """Isometric diamond working grid. Bounds follow mosaic coverage when given."""
     min_x, max_x, min_y, max_y = _bounds(entities, center, pad_tiles)
     if mosaic is not None:
-        # Full mosaic world footprint (so schematic covers the capture)
-        min_x = min(
-            min_x,
-            int(np.floor(mosaic.center[0] - mosaic.origin_x / mosaic.scale_x)),
+        _validate_center_matches_mosaic(center, mosaic)
+        mosaic_min_x, mosaic_max_x, mosaic_min_y, mosaic_max_y = (
+            _integer_mosaic_bounds(mosaic)
         )
-        max_x = max(
-            max_x,
-            int(
-                np.ceil(
-                    mosaic.center[0]
-                    + (mosaic.image.shape[1] - mosaic.origin_x) / mosaic.scale_x
-                )
-            ),
-        )
-        min_y = min(
-            min_y,
-            int(np.floor(mosaic.center[1] - mosaic.origin_y / mosaic.scale_y)),
-        )
-        max_y = max(
-            max_y,
-            int(
-                np.ceil(
-                    mosaic.center[1]
-                    + (mosaic.image.shape[0] - mosaic.origin_y) / mosaic.scale_y
-                )
-            ),
-        )
+        min_x = min(min_x, mosaic_min_x)
+        max_x = max(max_x, mosaic_max_x)
+        min_y = min(min_y, mosaic_min_y)
+        max_y = max(max_y, mosaic_max_y)
 
     span_x = max(1, max_x - min_x + 1)
     span_y = max(1, max_y - min_y + 1)
@@ -231,7 +323,8 @@ def render_isometric_work_svg(
             f"<polygon points='{poly}' fill='#0b120c' fill-opacity='0.2' "
             f"stroke='#ffe9c8' stroke-width='1.6'/>"
         )
-        sx, sy = _iso(e.x + e.w / 2, e.y + e.h / 2, tile_w, tile_h)
+        entity_center = _footprint_world_center(e.x, e.y, e.w, e.h)
+        sx, sy = _iso(*entity_center, tile_w, tile_h)
         kind = e.kind if e.kind in ICON_SVG else "rss"
         parts.append(
             f'<use href="#wicon-{kind}" x="{sx + ox - 16:.1f}" y="{sy + oy - 20:.1f}"/>'
@@ -291,10 +384,48 @@ def render_excel_grid_csv(
 def render_entities_csv(entities: list[MapEntity], *, center: tuple[int, int], kingdom: str) -> str:
     buf = StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["kingdom", "center_x", "center_y", "kind", "label", "level", "x", "y", "w", "h"])
+    writer.writerow(
+        [
+            "kingdom",
+            "center_x",
+            "center_y",
+            "kind",
+            "label",
+            "level",
+            "x",
+            "y",
+            "w",
+            "h",
+            "identity",
+            "confidence",
+            "provenance",
+            "source_frames",
+            "coordinate_residual_px",
+            "popup_path",
+        ]
+    )
     for e in entities:
         writer.writerow(
-            [kingdom, center[0], center[1], e.kind, e.label, e.level or "", e.x, e.y, e.w, e.h]
+            [
+                kingdom,
+                center[0],
+                center[1],
+                e.kind,
+                e.label,
+                e.level or "",
+                e.x,
+                e.y,
+                e.w,
+                e.h,
+                e.identity or "",
+                "" if e.confidence is None else f"{e.confidence:.4f}",
+                e.provenance or "",
+                "|".join(e.source_frames),
+                ""
+                if e.coordinate_residual_px is None
+                else f"{e.coordinate_residual_px:.3f}",
+                e.popup_path or "",
+            ]
         )
     return buf.getvalue()
 
@@ -332,32 +463,40 @@ def _iso_diamond_on_panorama(
     h: float,
     mosaic: MosaicResult,
 ) -> str:
-    """Isometric diamond for a world footprint, in unrotated panorama pixels.
+    """Render a centered footprint with affine or legacy panorama geometry."""
+    from ks.cartograph.mosaic import mosaic_projection, world_to_panorama
 
-    Places the diamond by projecting the four world corners with an iso shear
-    in screen space (no transform on the bitmap itself).
-    """
-    from ks.cartograph.mosaic import world_to_panorama
-
-    # Basis: +1 X / +1 Y as classic iso steps sized by mosaic tile scale.
-    # sx,sy are px per world tile; iso diamond uses half-width / half-height.
-    hx = mosaic.scale_x * 0.5
-    hy = mosaic.scale_y * 0.5
-    # Screen vectors for +1 world-X and +1 world-Y (isometric).
-    ex = (hx + hx * 0.15, hy)   # right-downish
-    ey = (-hx - hx * 0.15, hy)  # left-downish
-
-    def corner(wx: float, wy: float) -> tuple[float, float]:
-        # Origin at tile (x,y) mapped to panorama, then iso offset for (wx-x, wy-y)
-        ox, oy = world_to_panorama(x, y, mosaic)
-        dx, dy = wx - x, wy - y
-        return (
-            ox + dx * ex[0] + dy * ey[0],
-            oy + dx * ex[1] + dy * ey[1],
-        )
-
-    pts = [corner(x, y), corner(x + w, y), corner(x + w, y + h), corner(x, y + h)]
+    if mosaic.world_to_pixel_matrix is not None:
+        world_corners = _footprint_world_corners(x, y, w, h)
+        projection = mosaic_projection(mosaic)
+        pts = [
+            projection.pixel_from_world(world_x, world_y)
+            for world_x, world_y in world_corners
+        ]
+    else:
+        world_corners = _legacy_footprint_world_corners(x, y, w, h)
+        origin_x, origin_y = world_to_panorama(x, y, mosaic)
+        half_scale_x = mosaic.scale_x * 0.5
+        half_scale_y = mosaic.scale_y * 0.5
+        world_x_basis = (half_scale_x * 1.15, half_scale_y)
+        world_y_basis = (-half_scale_x * 1.15, half_scale_y)
+        pts = [
+            (
+                origin_x
+                + (world_x - x) * world_x_basis[0]
+                + (world_y - y) * world_y_basis[0],
+                origin_y
+                + (world_x - x) * world_x_basis[1]
+                + (world_y - y) * world_y_basis[1],
+            )
+            for world_x, world_y in world_corners
+        ]
     return " ".join(f"{px:.1f},{py:.1f}" for px, py in pts)
+
+
+def filter_ui_pin_entities(entities: list[MapEntity]) -> list[MapEntity]:
+    """Entities shown as panorama pins (cities + alliance buildings)."""
+    return [entity for entity in entities if entity.kind in UI_PIN_KINDS]
 
 
 def render_iso_overlay_unrotated(
@@ -365,16 +504,20 @@ def render_iso_overlay_unrotated(
     *,
     mosaic: MosaicResult,
     kingdom: str = "",
+    lattice_step: int = DEFAULT_LATTICE_STEP,
+    pin_kinds: frozenset[str] | None = None,
 ) -> str:
-    """Isometric diamond grid + icons on top of unrotated panorama (same pixel size)."""
+    """Sparse isometric diamond grid + UI pins on the unrotated panorama."""
     from ks.cartograph.mosaic import world_to_panorama
+
+    if lattice_step < 1:
+        raise ValueError(f"lattice_step must be >= 1; got {lattice_step}")
+    kinds = UI_PIN_KINDS if pin_kinds is None else frozenset(pin_kinds)
+    pin_entities = [entity for entity in entities if entity.kind in kinds]
 
     h, w = mosaic.image.shape[:2]
     cx, cy = mosaic.center
-    min_wx = int(np.floor(cx - mosaic.origin_x / mosaic.scale_x))
-    max_wx = int(np.ceil(cx + (w - mosaic.origin_x) / mosaic.scale_x))
-    min_wy = int(np.floor(cy - mosaic.origin_y / mosaic.scale_y))
-    max_wy = int(np.ceil(cy + (h - mosaic.origin_y) / mosaic.scale_y))
+    min_wx, max_wx, min_wy, max_wy = _integer_mosaic_bounds(mosaic)
     # Cap density for huge mosaics
     span = 55
     if max_wx - min_wx > span:
@@ -384,7 +527,8 @@ def render_iso_overlay_unrotated(
 
     parts: list[str] = [
         f"<svg xmlns='http://www.w3.org/2000/svg' width='{w}' height='{h}' "
-        f"viewBox='0 0 {w} {h}' style='position:absolute;left:0;top:0;pointer-events:none'>",
+        f"viewBox='0 0 {w} {h}' "
+        f"style='position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none'>",
         "<defs>",
     ]
     for kind, body in ICON_SVG.items():
@@ -396,28 +540,30 @@ def render_iso_overlay_unrotated(
     )
     parts.append(
         f"<text x='12' y='22' fill='#9fd0ff' font-size='14'>"
-        f"Kingdom #{escape(kingdom)} · mosaic unrotated · isometric diamond grid overlay · "
-        f"center {cx},{cy}</text>"
+        f"Kingdom #{escape(kingdom)} · sparse diamond grid (step {lattice_step}) · "
+        f"pins cities/alliance · center {cx},{cy}</text>"
     )
 
     for x in range(min_wx, max_wx + 1):
         for y in range(min_wy, max_wy + 1):
+            if (x - cx) % lattice_step or (y - cy) % lattice_step:
+                continue
             poly = _iso_diamond_on_panorama(x, y, 1, 1, mosaic)
             stroke = "#9fd0ff" if (x + y) % 2 == 0 else "#5ec8ff"
             parts.append(
                 f"<polygon points='{poly}' fill='none' stroke='{stroke}' "
-                f"stroke-opacity='0.32' stroke-width='1'/>"
+                f"stroke-opacity='0.45' stroke-width='1.2'/>"
             )
 
     for x in range(min_wx, max_wx + 1):
-        if x % 5:
+        if (x - cx) % max(5, lattice_step * 2):
             continue
         px, py = world_to_panorama(x + 0.5, float(min_wy), mosaic)
         parts.append(
             f"<text x='{px:.1f}' y='{py:.1f}' text-anchor='middle' fill='#9fd0ff' font-size='11'>X{x}</text>"
         )
     for y in range(min_wy, max_wy + 1):
-        if y % 5:
+        if (y - cy) % max(5, lattice_step * 2):
             continue
         px, py = world_to_panorama(float(min_wx), y + 0.5, mosaic)
         parts.append(
@@ -430,31 +576,233 @@ def render_iso_overlay_unrotated(
         f"stroke='#5ec8ff' stroke-width='2.5'/>"
     )
 
-    for e in entities:
+    for e in pin_entities:
         poly = _iso_diamond_on_panorama(e.x, e.y, e.w, e.h, mosaic)
         parts.append(
             f"<polygon points='{poly}' fill='#0b120c' fill-opacity='0.2' "
             f"stroke='#ffe9c8' stroke-width='1.8'/>"
         )
-        px, py = world_to_panorama(e.x + e.w / 2, e.y + e.h / 2, mosaic)
-        # Nudge icon to iso diamond center
-        hx = mosaic.scale_x * e.w * 0.25
-        hy = mosaic.scale_y * e.h * 0.35
-        ix, iy = px - 16, py + hy - 20
+        if mosaic.world_to_pixel_matrix is not None:
+            entity_center = _footprint_world_center(e.x, e.y, e.w, e.h)
+            px, py = world_to_panorama(*entity_center, mosaic)
+            icon_y = py - 20
+            label_y = py + 18
+        else:
+            px, py = world_to_panorama(
+                e.x + e.w / 2,
+                e.y + e.h / 2,
+                mosaic,
+            )
+            legacy_vertical_nudge = mosaic.scale_y * e.h * 0.35
+            icon_y = py + legacy_vertical_nudge - 20
+            label_y = py + legacy_vertical_nudge + 18
+        ix, iy = px - 16, icon_y
         kind = e.kind if e.kind in ICON_SVG else "rss"
         parts.append(f'<use href="#uicon-{kind}" x="{ix:.1f}" y="{iy:.1f}"/>')
         lvl = f" L{e.level}" if e.level is not None else ""
         parts.append(
-            f"<text x='{px:.1f}' y='{py + hy + 18:.1f}' text-anchor='middle'>"
+            f"<text x='{px:.1f}' y='{label_y:.1f}' text-anchor='middle'>"
             f"{escape(e.label)}{lvl}</text>"
         )
         parts.append(
-            f"<text x='{px:.1f}' y='{py + hy + 32:.1f}' text-anchor='middle' "
+            f"<text x='{px:.1f}' y='{label_y + 14:.1f}' text-anchor='middle' "
             f"font-size='11' fill='#cfe8d4'>{e.x},{e.y}</text>"
         )
 
     parts.append("</svg>")
     return "\n".join(parts)
+
+
+def _content_mask(image: np.ndarray) -> np.ndarray:
+    if image.ndim != 3 or image.shape[2] not in (3, 4):
+        raise ValueError(
+            "mosaic image must have shape HxWx3 or HxWx4; "
+            f"got {image.shape}"
+        )
+    from ks.cartograph.mask import bluestacks_mask_config
+
+    fill = np.asarray(bluestacks_mask_config().fill, dtype=image.dtype)
+    has_rgb_content = ~np.all(image[..., :3] == fill, axis=2)
+    if image.shape[2] == 4:
+        return has_rgb_content & (image[..., 3] > 0)
+    return has_rgb_content
+
+
+def _sample_rgb_at_center(
+    image: np.ndarray,
+    content_mask: np.ndarray,
+    pixel_x: float,
+    pixel_y: float,
+) -> list[int] | None:
+    height, width = image.shape[:2]
+    if not (0.0 <= pixel_x < width and 0.0 <= pixel_y < height):
+        return None
+    sample_x = min(width - 1, max(0, int(round(pixel_x))))
+    sample_y = min(height - 1, max(0, int(round(pixel_y))))
+    if not content_mask[sample_y, sample_x]:
+        return None
+    pixel = image[sample_y, sample_x]
+    return [int(pixel[2]), int(pixel[1]), int(pixel[0])]
+
+
+def _digital_tile_records(mosaic: MosaicResult) -> list[dict[str, object]]:
+    from ks.cartograph.mosaic import mosaic_projection
+
+    image = mosaic.image
+    content_mask = _content_mask(image)
+    projection = mosaic_projection(mosaic)
+    world_x_values, world_y_values = _bounded_tile_centers(mosaic)
+    tiles: list[dict[str, object]] = []
+    for world_x in world_x_values:
+        for world_y in world_y_values:
+            pixel_x, pixel_y = projection.pixel_from_world(world_x, world_y)
+            sampled_rgb = _sample_rgb_at_center(
+                image,
+                content_mask,
+                pixel_x,
+                pixel_y,
+            )
+            if sampled_rgb is None:
+                continue
+            polygon = [
+                list(projection.pixel_from_world(*world_corner))
+                for world_corner in _footprint_world_corners(
+                    world_x,
+                    world_y,
+                    1,
+                    1,
+                )
+            ]
+            tiles.append(
+                {
+                    "x": world_x,
+                    "y": world_y,
+                    "pixel_center": [pixel_x, pixel_y],
+                    "polygon": polygon,
+                    "covered": True,
+                    "terrain": "unknown",
+                    "sampled_rgb": sampled_rgb,
+                }
+            )
+    return tiles
+
+
+def render_digital_map_json(
+    entities: list[MapEntity],
+    *,
+    center: tuple[int, int],
+    kingdom: str,
+    mosaic: MosaicResult,
+    registration: GlobalRegistration | None = None,
+) -> str:
+    """Serialize the canonical bounded, pixel-aligned digital map."""
+    from ks.cartograph.mosaic import mosaic_projection
+
+    _validate_center_matches_mosaic(center, mosaic)
+    projection = mosaic_projection(mosaic)
+    height, width = mosaic.image.shape[:2]
+    document = {
+        "kingdom": kingdom,
+        "center": {"x": center[0], "y": center[1]},
+        "projection": {
+            "center": list(projection.center),
+            "pixel_origin": list(projection.pixel_origin),
+            "matrix": [list(row) for row in projection.matrix],
+        },
+        "panorama": {"width": width, "height": height},
+        "tiles": _digital_tile_records(mosaic),
+        "entities": [_entity_json(entity) for entity in entities],
+    }
+    if registration is not None:
+        document["registration"] = _registration_json(registration)
+    return json.dumps(document, indent=2, sort_keys=True) + "\n"
+
+
+def _entity_json(entity: MapEntity) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "kind": entity.kind,
+        "label": entity.label,
+        "level": entity.level,
+        "x": entity.x,
+        "y": entity.y,
+        "w": entity.w,
+        "h": entity.h,
+    }
+    if entity.identity is not None:
+        payload["identity"] = entity.identity
+    if entity.confidence is not None:
+        payload["confidence"] = entity.confidence
+    if entity.provenance is not None:
+        payload["provenance"] = entity.provenance
+    if entity.source_frames:
+        payload["source_frames"] = list(entity.source_frames)
+    if entity.coordinate_residual_px is not None:
+        payload["coordinate_residual_px"] = entity.coordinate_residual_px
+    if entity.popup_path is not None:
+        payload["popup_path"] = entity.popup_path
+    return payload
+
+
+def registration_document(
+    registration: object,
+    *,
+    matrix: tuple[tuple[float, float], tuple[float, float]] | None = None,
+) -> dict[str, object]:
+    """Serialize registration diagnostics for JSON/YAML export."""
+    return _registration_json(registration, matrix=matrix)
+
+
+def _registration_json(
+    registration: object,
+    *,
+    matrix: tuple[tuple[float, float], tuple[float, float]] | None = None,
+) -> dict[str, object]:
+    metrics = getattr(registration, "metrics", None)
+    graph = getattr(registration, "graph", None)
+    diagnostics = getattr(registration, "diagnostics", ())
+    offsets = getattr(registration, "frame_offsets", {})
+    document: dict[str, object] = {
+        "metrics": None
+        if metrics is None
+        else {
+            "median_px": metrics.median_px,
+            "p95_px": metrics.p95_px,
+            "max_px": metrics.max_px,
+            "connected_frames": list(metrics.connected_frames),
+        },
+        "graph": None
+        if graph is None
+        else {
+            "connected": graph.connected,
+            "expected_frame_count": graph.expected_frame_count,
+            "connected_frame_count": graph.connected_frame_count,
+            "constraint_count": graph.constraint_count,
+            "accepted_count": graph.accepted_count,
+            "rejected_count": graph.rejected_count,
+        },
+        "frame_offsets": {
+            name: [float(offset[0]), float(offset[1])]
+            for name, offset in dict(offsets).items()
+        },
+        "edges": [
+            {
+                "frame_a": item.constraint.frame_a,
+                "frame_b": item.constraint.frame_b,
+                "source": item.source,
+                "inliers": item.inliers,
+                "residual_px": item.residual_px,
+                "accepted": item.accepted,
+                "effective_weight": item.effective_weight,
+            }
+            for item in diagnostics
+        ],
+    }
+    matrix_value = matrix
+    if matrix_value is None:
+        matrix_value = getattr(registration, "world_to_pixel_matrix", None)
+    if matrix_value is not None:
+        document["matrix"] = [list(row) for row in matrix_value]
+    return document
 
 
 def render_html(
@@ -466,8 +814,11 @@ def render_html(
     entities_csv: str,
     mosaic: MosaicResult | None = None,
     panorama_name: str = "panorama.png",
+    map_json_name: str | None = None,
 ) -> str:
     """Isometric working schematic + separate rectangular mosaic for coverage QA."""
+    if mosaic is not None:
+        _validate_center_matches_mosaic(center, mosaic)
     legend = []
     for kind, body in legend_items():
         legend.append(
@@ -483,14 +834,8 @@ def render_html(
     if mosaic is not None:
         mh, mw = mosaic.image.shape[:2]
         # Coverage fraction (non-fill pixels) for the QA caption
-        from ks.cartograph.mask import bluestacks_mask_config
-
-        fill = np.array(bluestacks_mask_config().fill, dtype=np.uint8)
         content = mosaic.image
-        if content.ndim == 3 and content.shape[2] == 4:
-            content_mask = content[:, :, 3] > 0
-        else:
-            content_mask = ~np.all(content[..., :3] == fill, axis=2)
+        content_mask = _content_mask(content)
         # Hull fill is the honest “is the capture solid?” metric (AABB always
         # under-reports for isometric parallelograms).
         import cv2
@@ -507,18 +852,26 @@ def render_html(
         bbox_frac = float(content_mask.mean())
         pan_disp_w = min(1200, mw)
         pan_disp_h = max(1, int(round(pan_disp_w * mh / max(mw, 1))))
+        panorama_overlay = render_iso_overlay_unrotated(
+            entities,
+            mosaic=mosaic,
+            kingdom=kingdom,
+        )
         iso_block = f"""
-  <h2>Masked mosaic (coverage QA)</h2>
+  <h2>Projected panorama</h2>
   <p class="meta">
-    Orthographic stitch from camera screens — no rotate.
+    Orthographic stitch with the affine diamond grid in the same pixel coordinate system.
     Solid coverage <strong>{content_frac:.0%}</strong> inside capture hull
     (bbox fill {bbox_frac:.0%}, {mw}×{mh}px).
     Remaining holes are mostly UI-mask cutouts or swipe gaps.
   </p>
   <div class="map photo" style="max-width:100%;overflow:auto;background:#0a100c">
-    <img src="{escape(panorama_name)}" alt="masked mosaic"
-         style="width:{pan_disp_w}px;height:{pan_disp_h}px;image-rendering:auto;
-                background:#152418;display:block"/>
+    <div style="position:relative;width:{pan_disp_w}px;height:{pan_disp_h}px">
+      <img src="{escape(panorama_name)}" alt="masked mosaic"
+           style="width:100%;height:100%;image-rendering:auto;
+                  background:#152418;display:block"/>
+      {panorama_overlay}
+    </div>
   </div>
   <h2>Isometric schematic (working layer)</h2>
   <p class="meta">
@@ -542,11 +895,13 @@ def render_html(
     pad = 8 if mosaic is not None else 2
     min_x, max_x, min_y, max_y = _bounds(entities, center, pad)
     if mosaic is not None:
-        h, w = mosaic.image.shape[:2]
-        min_x = min(min_x, int(np.floor(center[0] - mosaic.origin_x / mosaic.scale_x)))
-        max_x = max(max_x, int(np.ceil(center[0] + (w - mosaic.origin_x) / mosaic.scale_x)))
-        min_y = min(min_y, int(np.floor(center[1] - mosaic.origin_y / mosaic.scale_y)))
-        max_y = max(max_y, int(np.ceil(center[1] + (h - mosaic.origin_y) / mosaic.scale_y)))
+        mosaic_min_x, mosaic_max_x, mosaic_min_y, mosaic_max_y = (
+            _integer_mosaic_bounds(mosaic)
+        )
+        min_x = min(min_x, mosaic_min_x)
+        max_x = max(max_x, mosaic_max_x)
+        min_y = min(min_y, mosaic_min_y)
+        max_y = max(max_y, mosaic_max_y)
         if max_x - min_x > 80:
             mid = (min_x + max_x) // 2
             min_x, max_x = mid - 40, mid + 40
@@ -566,6 +921,12 @@ def render_html(
             for x in range(min_x, max_x + 1)
         )
         rows.append(f"<tr><th>{y}</th>{tds}</tr>")
+
+    json_link = (
+        f' · <a href="{escape(map_json_name)}">map.json</a>'
+        if map_json_name is not None
+        else ""
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -601,7 +962,7 @@ def render_html(
   <div class="map"><table class="grid">{''.join(rows)}</table></div>
   <h2>CSV for Excel</h2>
   <p><a href="map-grid.csv">map-grid.csv</a> · <a href="entities.csv">entities.csv</a>
-     · <a href="{escape(panorama_name)}">panorama.png</a></p>
+     · <a href="{escape(panorama_name)}">panorama.png</a>{json_link}</p>
   <h3>Grid CSV</h3>
   <pre class="csv">{escape(grid_csv)}</pre>
   <h3>Entities CSV</h3>
@@ -618,7 +979,10 @@ def write_map_bundle(
     center: tuple[int, int],
     kingdom: str,
     mosaic: MosaicResult | None = None,
+    registration: GlobalRegistration | None = None,
 ) -> tuple[Path, Path, Path]:
+    if mosaic is not None:
+        _validate_center_matches_mosaic(center, mosaic)
     out_dir.mkdir(parents=True, exist_ok=True)
     pad = 2
     if mosaic is not None:
@@ -631,12 +995,22 @@ def write_map_bundle(
     grid_csv = render_excel_grid_csv(entities, center=center, pad_tiles=pad)
     ent_csv = render_entities_csv(entities, center=center, kingdom=kingdom)
     panorama_name = "panorama.png"
+    map_json_name = None
     if mosaic is not None:
         pan_path = out_dir / panorama_name
         if mosaic.path.resolve() != pan_path.resolve():
             import cv2
 
             cv2.imwrite(str(pan_path), mosaic.image)
+        map_json_name = "map.json"
+        map_json = render_digital_map_json(
+            entities,
+            center=center,
+            kingdom=kingdom,
+            mosaic=mosaic,
+            registration=registration,
+        )
+        (out_dir / map_json_name).write_text(map_json, encoding="utf-8")
 
     html = render_html(
         entities,
@@ -646,6 +1020,7 @@ def write_map_bundle(
         entities_csv=ent_csv,
         mosaic=mosaic,
         panorama_name=panorama_name,
+        map_json_name=map_json_name,
     )
     html_path = out_dir / "map.html"
     grid_path = out_dir / "map-grid.csv"

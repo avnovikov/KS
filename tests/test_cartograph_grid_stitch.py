@@ -32,7 +32,7 @@ def test_parse_grid_cell():
     assert parse_grid_cell("c0_center") == (0, 0)
     assert parse_grid_cell("g_0_0") == (0, 0)
     assert parse_grid_cell("g_2_-1") == (2, -1)
-    assert parse_grid_cell("E1") is None
+    assert parse_grid_cell("E1") == (1, 0)
 
 
 def _frame(name: str, vx: int, vy: int, color: tuple[int, int, int]) -> CapturedFrame:
@@ -143,6 +143,7 @@ def test_normalize_and_pair_offsets_from_shared_names():
     )
 
     assert normalize_landmark_name("lord382445709") == "lord382445709"
+    assert normalize_landmark_name("My City") == "mycity"
     assert normalize_landmark_name("Alliance Woodmill") == "ambig:alliancewoodmill"
     assert normalize_landmark_name("noise") is None
 
@@ -172,7 +173,7 @@ def test_place_grid_uses_shared_landmark_over_lattice():
     from ks.cartograph.landmarks import NameLandmark
     from ks.cartograph.mosaic import place_grid_by_landmarks
 
-    pe, ps = (189.0, -225.0), (-277.5, -243.5)
+    pe, ps = (150.0, 25.0), (-20.0, 140.0)
     frames = {
         (-2, 0): _frame("g_-2_0", 80, 120, (40, 80, 40)),
         (-1, 0): _frame("g_-1_0", 100, 100, (40, 80, 40)),
@@ -185,8 +186,8 @@ def test_place_grid_uses_shared_landmark_over_lattice():
         fr.image[900:950, 400:450] = (200, 50, 50)
 
     landmarks = {
-        (-1, 0): [NameLandmark("lord111", 100.0, 200.0, 0.95)],
-        (1, 0): [NameLandmark("lord111", 400.0, 250.0, 0.95)],
+        (-1, 0): [NameLandmark("lord111", 400.0, 250.0, 0.95)],
+        (1, 0): [NameLandmark("lord111", 100.0, 200.0, 0.95)],
     }
     pos = place_grid_by_landmarks(
         frames,
@@ -199,5 +200,5 @@ def test_place_grid_uses_shared_landmark_over_lattice():
     )
     dx = pos[(1, 0)][0] - pos[(-1, 0)][0]
     dy = pos[(1, 0)][1] - pos[(-1, 0)][1]
-    assert abs(dx - (-300.0)) < 50, (dx, dy, pos)
-    assert abs(dy - (-50.0)) < 50, (dx, dy, pos)
+    assert abs(dx - 300.0) < 50, (dx, dy, pos)
+    assert abs(dy - 50.0) < 50, (dx, dy, pos)

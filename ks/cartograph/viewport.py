@@ -29,6 +29,7 @@ _COORD_RE = re.compile(
     re.I,
 )
 _SEARCH_BAR_BAND = (0.78, 0.88, 0.05, 0.95)
+_SEARCH_BAR_FOCUSED = (0.80, 0.87, 0.12, 0.78)
 
 
 def tesseract_cmd() -> str | None:
@@ -61,6 +62,31 @@ def ocr_search_bar_from_image(img: np.ndarray) -> tuple[tuple[int, int] | None, 
         pytesseract.pytesseract.tesseract_cmd = cmd
 
     h, w = img.shape[:2]
+    fy0, fy1, fx0, fx1 = _SEARCH_BAR_FOCUSED
+    focused = img[
+        int(h * fy0) : int(h * fy1),
+        int(w * fx0) : int(w * fx1),
+    ]
+    if focused.size:
+        focused_gray = cv2.cvtColor(focused, cv2.COLOR_BGR2GRAY)
+        focused_up = cv2.resize(
+            focused_gray,
+            None,
+            fx=3,
+            fy=3,
+            interpolation=cv2.INTER_CUBIC,
+        )
+        focused_binary = cv2.threshold(
+            focused_up,
+            180,
+            255,
+            cv2.THRESH_BINARY,
+        )[1]
+        text = pytesseract.image_to_string(focused_binary, config="--psm 6")
+        coords = parse_viewport_text(text)
+        if coords is not None and 100 <= coords[0] <= 5000 and 10 <= coords[1] <= 5000:
+            return coords, text.replace("\n", " ").strip()
+
     y0, y1, x0, x1 = _SEARCH_BAR_BAND
     crop = img[int(h * y0) : int(h * y1), int(w * x0) : int(w * x1)]
     if crop.size == 0:

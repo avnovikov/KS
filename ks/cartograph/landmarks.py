@@ -17,13 +17,13 @@ from ks.cartograph.labels import extract_labels
 
 _LORD = re.compile(r"lord\s*(\d{4,})", re.I)
 _UNIQUE_STRUCTURE = re.compile(
-    r"(plains\s*hq|hunting\s*trap|bear\s*trap|alliance\s*hq|alliance\s*banner)",
+    r"(my\s*city|plains\s*hq|hunting\s*trap|bear\s*trap|alliance\s*hq|alliance\s*banner)",
     re.I,
 )
 # Alliance mills/quarries look identical across the map — do not use as pair anchors.
 _AMBIGUOUS = re.compile(r"alliance\s*(woodmill|mill|iron\s*mine|quarry)", re.I)
 _KEEP_RAW = re.compile(
-    r"lord|plains\s*hq|hunting\s*trap|bear\s*trap|alliance\s*hq|alliance\s*banner|\[\w+\]",
+    r"lord|my\s*city|plains\s*hq|hunting\s*trap|bear\s*trap|alliance\s*hq|alliance\s*banner|\[\w+\]",
     re.I,
 )
 
@@ -36,6 +36,11 @@ class NameLandmark:
     x: float
     y: float
     conf: float = 1.0
+
+
+def is_registration_landmark_name(name: str) -> bool:
+    """Return whether a normalized name is safe for cross-frame registration."""
+    return bool(name) and not name.startswith("ambig:")
 
 
 def normalize_landmark_name(text: str) -> str | None:
@@ -163,7 +168,7 @@ def landmark_pair_offsets(
     by_name: dict[str, list[tuple[tuple[int, int], NameLandmark]]] = {}
     for cell, lms in landmarks_by_cell.items():
         for lm in lms:
-            if lm.name.startswith("ambig:"):
+            if not is_registration_landmark_name(lm.name):
                 continue
             by_name.setdefault(lm.name, []).append((cell, lm))
 

@@ -26,6 +26,13 @@ class AffineCalibration:
     rejected: tuple[CalibrationObservation, ...]
 
 
+@dataclass(frozen=True)
+class FrameOffsetCalibration:
+    matrix: np.ndarray
+    frame_offsets: dict[str, tuple[float, float]]
+    residual_rms_px: float
+
+
 def _design_matrix(
     observations: Sequence[CalibrationObservation],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -104,3 +111,60 @@ def fit_world_to_pixel(
     )
     matrix = _fit(accepted)
     return AffineCalibration(matrix=matrix, accepted=accepted, rejected=rejected)
+
+
+def fit_frame_offsets(
+    observations: Sequence[CalibrationObservation],
+    *,
+    reference_frame: str,
+    residual_limit_px: float = 20.0,
+) -> FrameOffsetCalibration:
+    """Fit shared world scale plus one image-space offset per captured frame."""
+    if len(observations) < 5:
+        raise ValueError("at least five exact-object observations are required")
+    frames = sorted({item.frame for item in observations})
+    if reference_frame not in frames:
+        raise ValueError(f"reference frame {reference_frame!r} has no observations")
+    world = np.array(
+        [[item.world_x, item.world_y] for item in observations],
+        dtype=float,
+    )
+    if np.linalg.matrix_rank(world - world.mean(axis=0)) < 2:
+        raise ValueError("exact objects must span both world axes")
+
+    world_center = world.mean(axis=0)
+    design = np.zeros((len(observations), 2 + len(frames)), dtype=float)
+    design[:, :2] = world - world_center
+    frame_index = {frame: index for index, frame in enumerate(frames)}
+    for row, item in enumerate(observations):
+        design[row, 2 + frame_index[item.frame]] = 1.0
+    pixels = np.array(
+        [[item.pixel_x, item.pixel_y] for item in observations],
+        dtype=float,
+    )
+    coefficients, _, rank, _ = np.linalg.lstsq(design, pixels, rcond=None)
+    if rank < design.shape[1]:
+        raise ValueError("exact-object observations do not constrain every frame")
+    predicted = design @ coefficients
+    residual_rms = float(np.sqrt(np.mean(np.square(predicted - pixels))))
+    if residual_rms > residual_limit_px:
+        raise ValueError(
+            f"exact-object residual {residual_rms:.1f}px exceeds "
+            f"{residual_limit_px:.1f}px"
+        )
+
+    matrix = coefficients[:2, :].T
+    biases = coefficients[2:, :]
+    reference_bias = biases[frame_index[reference_frame]]
+    offsets = {
+        frame: (
+            float(reference_bias[0] - biases[index, 0]),
+            float(reference_bias[1] - biases[index, 1]),
+        )
+        for frame, index in frame_index.items()
+    }
+    return FrameOffsetCalibration(
+        matrix=matrix,
+        frame_offsets=offsets,
+        residual_rms_px=residual_rms,
+    )

@@ -18,6 +18,7 @@ FOOTPRINTS: dict[str, tuple[int, int]] = {
     "wood": (1, 1),
     "stone": (1, 1),
     "iron": (1, 1),
+    "unknown": (1, 1),
 }
 
 

@@ -16,6 +16,7 @@ from ks.cartograph.project import round_tile, world_from_pixel
 from ks.cartograph.viewport import tesseract_cmd
 
 _CITY = re.compile(r"(\d{1,2})\s*\[([A-Za-z0-9]+)\]\s*(\S.+)")
+_LEVEL = re.compile(r"(?:^|\b)(?:Lv\.?\s*)?(\d{1,2})(?:\b|\s*\[)", re.I)
 _TRAP = re.compile(r"(Hunting\s+Trap|Bear\s+Trap)\s*\d*", re.I)
 _BUILDING = re.compile(
     r"Alliance\s+(Woodmill|Mill|Iron\s+Mine|Quarry|Banner|HQ)|Plains\s+HQ",
@@ -25,6 +26,17 @@ _KEEP = re.compile(
     r"(\[\w+\].+)|(Hunting\s+Trap)|(Bear\s+Trap)|(Alliance\s+\w+)|(Plains\s+HQ)|(\d{1,2}\s*\[\w+\])",
     re.I,
 )
+
+
+def parse_level(label: str) -> int | None:
+    """Extract a visible object level from OCR text when present."""
+    if m := _CITY.search(label):
+        return int(m.group(1))
+    if m := _LEVEL.search(label):
+        value = int(m.group(1))
+        if 1 <= value <= 30:
+            return value
+    return None
 
 
 def infer_kind(label: str) -> str | None:

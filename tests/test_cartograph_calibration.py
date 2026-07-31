@@ -3,7 +3,11 @@
 import numpy as np
 import pytest
 
-from ks.cartograph.calibration import CalibrationObservation, fit_world_to_pixel
+from ks.cartograph.calibration import (
+    CalibrationObservation,
+    fit_frame_offsets,
+    fit_world_to_pixel,
+)
 
 
 def _observation(
@@ -51,3 +55,31 @@ def test_fit_world_to_pixel_requires_two_dimensional_evidence():
 
     with pytest.raises(ValueError, match="both world axes"):
         fit_world_to_pixel(observations)
+
+
+def test_fit_frame_offsets_uses_exact_objects_as_primary_geometry():
+    matrix = np.array([[90.0, -12.0], [8.0, 70.0]])
+    biases = {"center": np.array([300.0, 500.0]), "east": np.array([210.0, 505.0])}
+    observations = []
+    for frame, bias in biases.items():
+        for _name, world in (
+            ("city-a", (1045.0, 113.0)),
+            ("city-b", (1048.0, 118.0)),
+            ("city-c", (1046.0, 117.0)),
+        ):
+            pixel = matrix @ np.asarray(world) + bias
+            observations.append(
+                CalibrationObservation(
+                    frame=frame,
+                    world_x=world[0],
+                    world_y=world[1],
+                    pixel_x=pixel[0],
+                    pixel_y=pixel[1],
+                )
+            )
+
+    fit = fit_frame_offsets(observations, reference_frame="center")
+
+    assert np.allclose(fit.matrix, matrix)
+    assert np.allclose(fit.frame_offsets["center"], (0.0, 0.0))
+    assert np.allclose(fit.frame_offsets["east"], (90.0, -5.0))

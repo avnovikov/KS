@@ -1,0 +1,13 @@
+---
+description: Use ADB first for KingShot device and game automation
+alwaysApply: true
+---
+
+# ADB-First Device Automation
+
+- Use ADB whenever it supports the requested BlueStacks or KingShot action.
+- Perform taps, swipes, key events, screenshots, and screen transitions through ADB.
+- Verify every transition from an ADB screenshot or readable map coordinate bar.
+- Never continue a map capture after the game leaves the World map.
+- Prefer explicit popup `X` controls in either top corner before fallback dismissal.
+- Use non-ADB automation only when ADB cannot perform the action; state the reason.
