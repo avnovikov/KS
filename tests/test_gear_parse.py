@@ -19,7 +19,7 @@ def test_parse_gear_detail_from_live_ui_text():
     Mastery Forging
     Enhance
     +30
-    Lv. 2
+    Lv. 0
     """
     piece = parse_gear_detail(text, page=0, index=0)
     assert piece.name == "Judicator's Armet"
@@ -27,7 +27,7 @@ def test_parse_gear_detail_from_live_ui_text():
     assert piece.slot == "helmet"
     assert piece.rarity == "mythic"
     assert piece.enhancement_level == 30
-    assert piece.mastery_level == 2
+    assert piece.mastery_level == 0
     assert piece.power == 98550
     assert piece.equipped is True
     assert piece.stats is not None
@@ -116,5 +116,40 @@ def test_parse_enhancement_ignores_bare_digit_noise():
     text = "7\n7\nJudicator's Armet\nMythic\n+41\n"
     piece = parse_gear_detail(text, page=0, index=0)
     assert piece.enhancement_level == 41
+
+
+def test_parse_enhancement_ignores_expedition_plus_percent():
+    text = """
+    Judicator's Armet
+    Mythic
+    152,100
+    Conquest Stats
+    Hero Attack 363
+    Expedition Stats
+    Cavalry Lethality +39.42%
+    """
+    piece = parse_gear_detail(text, page=0, index=0)
+    # No +51 badge in OCR — recover from mythic power (+51 with mastery fit).
+    assert piece.enhancement_level == 51
+
+
+def test_parse_enhancement_falls_back_to_power_when_badge_missing():
+    text = """
+    Stonewall Gloves
+    Rare
+    18,362
+    Conquest Stats
+    Escort Defense 22
+    Expedition Stats
+    Infantry Health +6.90%
+    """
+    piece = parse_gear_detail(text, page=0, index=5)
+    assert piece.enhancement_level == 7
+
+
+def test_parse_enhancement_glued_lowercase_title():
+    text = "pt20 praetorian's shroud\nEpic\n38,850\n"
+    piece = parse_gear_detail(text, page=0, index=3)
+    assert piece.enhancement_level == 20
 
 

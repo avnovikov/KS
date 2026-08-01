@@ -22,11 +22,17 @@ _RARITY_LINEAR: dict[str, tuple[float, float]] = {
 }
 
 
+def known_rarity(rarity: str | None) -> bool:
+    """True when rarity maps to a fitted power curve (not a silent fallback)."""
+    if rarity is None or not str(rarity).strip():
+        return False
+    return str(rarity).strip().lower() in _RARITY_LINEAR
+
+
 def normalize_rarity(rarity: str | None) -> str:
-    key = (rarity or "blue").strip().lower()
+    key = (rarity or "").strip().lower()
     if key not in _RARITY_LINEAR:
-        # Unknown OCR rarity — treat like blue (common mid-tier shell)
-        return "blue"
+        raise ValueError(f"unknown gear rarity {rarity!r}")
     return key
 
 
@@ -36,12 +42,65 @@ def compute_gear_power(
     mastery_level: int | None = None,
 ) -> int:
     """Return estimated UI power for the given progression."""
+    if enhancement_level is None:
+        raise ValueError("enhancement_level is required to estimate power")
     intercept, slope = _RARITY_LINEAR[normalize_rarity(rarity)]
-    enh = int(enhancement_level or 0)
-    if enh < 0:
-        enh = 0
+    enh = int(enhancement_level)
+    if enh < 0 or enh > 200:
+        raise ValueError(f"enhancement_level must be 0..200; got {enh}")
     mast = int(mastery_level or 0)
-    if mast < 0:
-        mast = 0
+    if mast < 0 or mast > 20:
+        raise ValueError(f"mastery_level must be 0..20; got {mast}")
     demastered = intercept + slope * float(enh)
     return int(round(demastered * (1.0 + 0.1 * mast)))
+
+
+def estimate_enhancement_from_power(
+    rarity: str | None,
+    power: int | None,
+    mastery_level: int | None = None,
+    *,
+    abs_tol: int = 50,
+    rel_tol: float = 0.02,
+) -> int | None:
+    """Invert the power curve to recover enhancement when OCR misses +N.
+
+    When mastery is unknown, non-mythic pieces assume mastery 0. Mythic may
+    include hidden ``Lv. N`` in power, so mastery 0..5 is searched there.
+    """
+    if power is None or not known_rarity(rarity):
+        return None
+    try:
+        power_i = int(power)
+    except (TypeError, ValueError):
+        return None
+    if power_i <= 0:
+        return None
+    rarity_key = normalize_rarity(rarity)
+    intercept, slope = _RARITY_LINEAR[rarity_key]
+    if slope == 0:
+        return None
+
+    if mastery_level is not None:
+        mast_options = (int(mastery_level),)
+    elif rarity_key in {"mythic", "gold", "red"}:
+        mast_options = tuple(range(0, 6))
+    else:
+        mast_options = (0,)
+
+    tol = max(abs_tol, int(rel_tol * power_i))
+    best: tuple[int, int] | None = None  # (abs_err, enhancement)
+    for mast in mast_options:
+        if mast < 0 or mast > 20:
+            continue
+        demastered = float(power_i) / (1.0 + 0.1 * mast)
+        nearest = int(round((demastered - intercept) / slope))
+        if nearest < 0 or nearest > 200:
+            continue
+        estimated = compute_gear_power(rarity, nearest, mast)
+        err = abs(estimated - power_i)
+        if err > tol:
+            continue
+        if best is None or err < best[0]:
+            best = (err, nearest)
+    return None if best is None else best[1]

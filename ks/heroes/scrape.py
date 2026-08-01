@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 
 from ks.heroes.config import HeroesConfig, OcrBox
+from ks.heroes.errors import DetailOpenError
 from ks.heroes.models import HeroRecord, SkillRecord
 from ks.heroes.name_ocr import resolve_hero_name
 from ks.heroes.name_shot import save_name_screenshot
@@ -125,9 +126,16 @@ def scrape_hero(
 ) -> HeroRecord | None:
     """Scrape the currently open hero detail screen.
 
-    Caller owns roster open and back navigation. Returns None if name OCR fails.
+    Caller owns roster open and back navigation.
+
+    Returns None when the detail screen is not open (live path) or when an
+    injected ``ocr_fn`` yields no name/power. When the live path confirms a
+    detail screen but name and power both fail, raises ``DetailOpenError`` so
+    the collector still taps Back.
+
     When ``keep_name`` is set (manual fix), that name wins over OCR and is used
-    for the top-center name screenshot filename.
+    for the top-center name screenshot filename. Otherwise a name OCR miss with
+    power present yields a placeholder ``Hero_p{page}_i{index}``.
     """
     if page < 0:
         raise ValueError(f"page must be >= 0; got {page}")
@@ -162,8 +170,18 @@ def scrape_hero(
     power = parse_power(digits_fn(img, cfg.ocr.power.as_tuple()))
     if name is None:
         if power is None and not keep_name:
+            # Live path already confirmed detail; empty OCR must still close.
+            if ocr_fn is None:
+                raise DetailOpenError(
+                    f"hero detail open but name/power OCR failed "
+                    f"(page={page} index={index})"
+                )
             return None
         name = f"Hero_p{page}_i{index}"
+        print(
+            f"warn: placeholder hero name {name!r} "
+            f"(page={page} index={index}, power={power})"
+        )
     if keep_name and keep_name.strip():
         name = keep_name.strip()
     if raw_name and name and clean_name(raw_name) != name:

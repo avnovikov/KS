@@ -1,12 +1,17 @@
-# Hero semantics overlay for the recommend ILP.
-# Sources:
-#   - https://kingshotmastery.com/guides/kingshot-widget-guide (widget type / march skill / priority)
-#   - https://kingshotguide.net/guides/joiner-hero-mechanics-no-one-told-you-about/ (effect_op)
-#   - https://kingshotdata.com/heroes/* (max skill values, best-effort)
-# Join key = scraped HeroRecord.name. KingshotPro cache fills gen/troop/tiers.
-
+# Hero catalog — SINGLE SOURCE OF TRUTH for static hero semantics.
+# Used by: recommend ILP, arena ILP, name OCR matching.
+#
+# Live roster (power/stars/skills/levels) stays in scraped heroes.json.
+# Arena placement multipliers stay in config/arena_roles.yaml (slots only).
+#
+# Sources for overlays:
+#   - https://kingshotmastery.com/guides/kingshot-widget-guide
+#   - https://kingshotguide.net/guides/joiner-hero-mechanics-no-one-told-you-about/
+#   - https://kingshotdata.com/heroes/*
+#   - https://kingshotmastery.com/heroes/* (per-hero skills)
+# Join key = scraped HeroRecord.name.
+#
 heroes:
-  # --- Mythic offensive widgets ---
   Amadeus:
     widget_type: attack
     widget_name: Aegis of Fate
@@ -14,18 +19,22 @@ heroes:
     rally_widget_priority: 5
     garrison_widget_priority: 2
     effects:
-      - kind: lethality_up
-        max_value: 25.0
-        applies_to: expedition
-        effect_op: 101
-        first_expedition: true
-      - kind: attack_up
-        max_value: 25.0
-        applies_to: expedition
-      - kind: rally_attack
-        max_value: 15.0
-        applies_to: widget
-
+    - kind: lethality_up
+      max_value: 25.0
+      applies_to: expedition
+      effect_op: 101
+      first_expedition: true
+    - kind: attack_up
+      max_value: 25.0
+      applies_to: expedition
+    - kind: rally_attack
+      max_value: 15.0
+      applies_to: widget
+    arena_role: front_fighter
+    arena_value: 95
+    arena_tags:
+    - aoe
+    - tank
   Helga:
     widget_type: attack
     widget_name: Bands of Tyre
@@ -33,10 +42,17 @@ heroes:
     rally_widget_priority: 4
     garrison_widget_priority: 2
     effects:
-      - kind: rally_lethality
-        max_value: 15.0
-        applies_to: widget
-
+    - kind: rally_lethality
+      max_value: 15.0
+      applies_to: widget
+    arena_role: front_fighter
+    arena_value: 90
+    arena_tags:
+    - cc
+    - aoe
+    - tank
+    troop: infantry
+    rarity: legendary
   Petra:
     widget_type: attack
     widget_name: Fate's Writ
@@ -44,13 +60,12 @@ heroes:
     rally_widget_priority: 4
     garrison_widget_priority: 2
     effects:
-      - kind: attack_up
-        max_value: 50.0
-        applies_to: expedition
-      - kind: rally_attack
-        max_value: 15.0
-        applies_to: widget
-
+    - kind: attack_up
+      max_value: 50.0
+      applies_to: expedition
+    - kind: rally_attack
+      max_value: 15.0
+      applies_to: widget
   Marlin:
     widget_type: attack
     widget_name: Mistweaver
@@ -58,10 +73,9 @@ heroes:
     rally_widget_priority: 3
     garrison_widget_priority: 2
     effects:
-      - kind: rally_lethality
-        max_value: 15.0
-        applies_to: widget
-
+    - kind: rally_lethality
+      max_value: 15.0
+      applies_to: widget
   Rosa:
     widget_type: attack
     widget_name: Aeolian
@@ -69,10 +83,9 @@ heroes:
     rally_widget_priority: 4
     garrison_widget_priority: 2
     effects:
-      - kind: rally_lethality
-        max_value: 15.0
-        applies_to: widget
-
+    - kind: rally_lethality
+      max_value: 15.0
+      applies_to: widget
   Yang:
     widget_type: attack
     widget_name: Frostkin
@@ -80,10 +93,9 @@ heroes:
     rally_widget_priority: 5
     garrison_widget_priority: 2
     effects:
-      - kind: rally_lethality
-        max_value: 15.0
-        applies_to: widget
-
+    - kind: rally_lethality
+      max_value: 15.0
+      applies_to: widget
   Ava:
     widget_type: attack
     widget_name: Chameleos
@@ -91,11 +103,9 @@ heroes:
     rally_widget_priority: 5
     garrison_widget_priority: 1
     effects:
-      - kind: rally_lethality
-        max_value: 15.0
-        applies_to: widget
-
-  # --- Mythic defensive widgets ---
+    - kind: rally_lethality
+      max_value: 15.0
+      applies_to: widget
   Zoe:
     widget_type: defense
     widget_name: The Unrighteous
@@ -103,15 +113,14 @@ heroes:
     rally_widget_priority: 2
     garrison_widget_priority: 5
     effects:
-      - kind: attack_up
-        max_value: 25.0
-        applies_to: expedition
-        effect_op: 102
-        first_expedition: true
-      - kind: defender_attack
-        max_value: 15.0
-        applies_to: widget
-
+    - kind: attack_up
+      max_value: 25.0
+      applies_to: expedition
+      effect_op: 102
+      first_expedition: true
+    - kind: defender_attack
+      max_value: 15.0
+      applies_to: widget
   Jabel:
     widget_type: defense
     widget_name: Greaves of Faith
@@ -119,26 +128,38 @@ heroes:
     rally_widget_priority: 2
     garrison_widget_priority: 4
     effects:
-      - kind: lethality_up
-        max_value: 15.0
-        applies_to: widget
-
+    - kind: lethality_up
+      max_value: 15.0
+      applies_to: widget
+    arena_role: back_cc
+    arena_value: 92
+    arena_tags:
+    - cc
+    - aoe
+    troop: cavalry
+    rarity: legendary
   Saul:
     widget_type: defense
     widget_march_skill: Defender (dual DefenseUp)
     rally_widget_priority: 2
     garrison_widget_priority: 4
     effects:
-      - kind: defense_up
-        max_value: 25.0
-        applies_to: expedition
-        effect_op: 112
-        first_expedition: true
-      - kind: defense_up
-        max_value: 25.0
-        applies_to: expedition
-        effect_op: 113
-
+    - kind: defense_up
+      max_value: 25.0
+      applies_to: expedition
+      effect_op: 112
+      first_expedition: true
+    - kind: defense_up
+      max_value: 25.0
+      applies_to: expedition
+      effect_op: 113
+    arena_role: back_cc
+    arena_value: 80
+    arena_tags:
+    - cc
+    - dps
+    troop: archer
+    rarity: legendary
   Hilde:
     widget_type: defense
     widget_name: Revelation
@@ -146,16 +167,15 @@ heroes:
     rally_widget_priority: 1
     garrison_widget_priority: 4
     effects:
-      - kind: defense_up
-        max_value: 20.0
-        applies_to: expedition
-        effect_op: 112
-        first_expedition: true
-      - kind: attack_up
-        max_value: 20.0
-        applies_to: expedition
-        effect_op: 102
-
+    - kind: defense_up
+      max_value: 20.0
+      applies_to: expedition
+      effect_op: 112
+      first_expedition: true
+    - kind: attack_up
+      max_value: 20.0
+      applies_to: expedition
+      effect_op: 102
   Eric:
     widget_type: defense
     widget_name: Anvil of Truth
@@ -163,15 +183,14 @@ heroes:
     rally_widget_priority: 2
     garrison_widget_priority: 4
     effects:
-      - kind: opp_damage_down
-        max_value: 20.0
-        applies_to: expedition
-        effect_op: 202
-        first_expedition: true
-      - kind: defender_defense
-        max_value: 15.0
-        applies_to: widget
-
+    - kind: opp_damage_down
+      max_value: 20.0
+      applies_to: expedition
+      effect_op: 202
+      first_expedition: true
+    - kind: defender_defense
+      max_value: 15.0
+      applies_to: widget
   Alcar:
     widget_type: defense
     widget_name: Praetorian Guard
@@ -179,10 +198,9 @@ heroes:
     rally_widget_priority: 2
     garrison_widget_priority: 4
     effects:
-      - kind: defender_health
-        max_value: 15.0
-        applies_to: widget
-
+    - kind: defender_health
+      max_value: 15.0
+      applies_to: widget
   Triton:
     widget_type: defense
     widget_name: Tidal Scepter
@@ -190,20 +208,18 @@ heroes:
     rally_widget_priority: 2
     garrison_widget_priority: 5
     effects:
-      - kind: defender_defense
-        max_value: 15.0
-        applies_to: widget
-
+    - kind: defender_defense
+      max_value: 15.0
+      applies_to: widget
   Sophia:
     widget_type: defense
     widget_name: Scarlet Rose
     rally_widget_priority: 2
     garrison_widget_priority: 4
     effects:
-      - kind: defender_attack
-        max_value: 15.0
-        applies_to: widget
-
+    - kind: defender_attack
+      max_value: 15.0
+      applies_to: widget
   Charles:
     widget_type: defense
     widget_name: Justice Fist
@@ -211,10 +227,9 @@ heroes:
     rally_widget_priority: 1
     garrison_widget_priority: 5
     effects:
-      - kind: defender_health
-        max_value: 15.0
-        applies_to: widget
-
+    - kind: defender_health
+      max_value: 15.0
+      applies_to: widget
   Wee & Woo:
     widget_type: defense
     widget_name: Mortar
@@ -222,117 +237,211 @@ heroes:
     rally_widget_priority: 2
     garrison_widget_priority: 5
     effects:
-      - kind: defender_attack
-        max_value: 15.0
-        applies_to: widget
-
-  # --- Epic / SR joiners (no widget) ---
+    - kind: defender_attack
+      max_value: 15.0
+      applies_to: widget
   Chenko:
     widget_type: none
     troop: cavalry
     effects:
-      - kind: lethality_up
-        max_value: 25.0
-        applies_to: expedition
-        effect_op: 101
-        first_expedition: true
-
+    - kind: lethality_up
+      max_value: 25.0
+      applies_to: expedition
+      effect_op: 101
+      first_expedition: true
+    arena_role: back_dps
+    arena_value: 88
+    arena_tags:
+    - aoe
+    - dps
+    rarity: epic
   Yeonwoo:
     widget_type: none
     troop: archer
     effects:
-      - kind: lethality_up
-        max_value: 25.0
-        applies_to: expedition
-        effect_op: 101
-        first_expedition: true
-
+    - kind: lethality_up
+      max_value: 25.0
+      applies_to: expedition
+      effect_op: 101
+      first_expedition: true
+    arena_role: back_dps
+    arena_value: 65
+    arena_tags:
+    - dps
+    rarity: epic
   Amane:
     widget_type: none
     troop: archer
     effects:
-      - kind: attack_up
-        max_value: 25.0
-        applies_to: expedition
-        effect_op: 102
-        first_expedition: true
-
+    - kind: attack_up
+      max_value: 25.0
+      applies_to: expedition
+      effect_op: 102
+      first_expedition: true
+    arena_role: back_dps
+    arena_value: 62
+    arena_tags:
+    - dps
+    rarity: epic
   Howard:
     widget_type: none
     troop: infantry
     effects:
-      - kind: damage_taken_down
-        max_value: 20.0
-        applies_to: expedition
-        effect_op: 111
-        first_expedition: true
-
+    - kind: damage_taken_down
+      max_value: 20.0
+      applies_to: expedition
+      effect_op: 111
+      first_expedition: true
+    arena_role: front_tank
+    arena_value: 85
+    arena_tags:
+    - tank
+    - team_def
+    rarity: epic
   Quinn:
     widget_type: none
     troop: archer
     effects:
-      - kind: damage_taken_down
-        max_value: 20.0
-        applies_to: expedition
-        effect_op: 111
-        first_expedition: true
-
+    - kind: damage_taken_down
+      max_value: 20.0
+      applies_to: expedition
+      effect_op: 111
+      first_expedition: true
+    arena_role: back_dps
+    arena_value: 72
+    arena_tags:
+    - dps
+    rarity: epic
   Gordon:
     widget_type: none
     troop: cavalry
     effects:
-      - kind: defense_up
-        max_value: 25.0
-        applies_to: expedition
-        effect_op: 113
-        first_expedition: true
-
+    - kind: defense_up
+      max_value: 25.0
+      applies_to: expedition
+      effect_op: 113
+      first_expedition: true
+    arena_role: back_support
+    arena_value: 75
+    arena_tags:
+    - heal
+    rarity: epic
   Fahd:
     widget_type: none
     troop: cavalry
     effects:
-      - kind: opp_damage_down
-        max_value: 20.0
-        applies_to: expedition
-        effect_op: 201
-        first_expedition: true
-
+    - kind: opp_damage_down
+      max_value: 20.0
+      applies_to: expedition
+      effect_op: 201
+      first_expedition: true
+    arena_role: back_dps
+    arena_value: 45
+    arena_tags:
+    - dps
+    rarity: epic
   Margot:
     widget_type: defense
     effects:
-      - kind: attack_up
-        max_value: 25.0
-        applies_to: expedition
-        effect_op: 102
-        first_expedition: true
-
+    - kind: attack_up
+      max_value: 25.0
+      applies_to: expedition
+      effect_op: 102
+      first_expedition: true
   Vivian:
     widget_type: attack
     effects:
-      - kind: attack_up
-        max_value: 25.0
-        applies_to: expedition
-      - kind: rally_attack
-        max_value: 15.0
-        applies_to: widget
-
+    - kind: attack_up
+      max_value: 25.0
+      applies_to: expedition
+    - kind: rally_attack
+      max_value: 15.0
+      applies_to: widget
   Jaeger:
     widget_type: defense
     effects:
-      - kind: defense_up
-        max_value: 20.0
-        applies_to: expedition
-
+    - kind: defense_up
+      max_value: 20.0
+      applies_to: expedition
   Long Fei:
     widget_type: attack
     effects:
-      - kind: attack_up
-        max_value: 25.0
-        applies_to: expedition
-
+    - kind: attack_up
+      max_value: 25.0
+      applies_to: expedition
   Thrud:
     widget_type: attack
     effects:
-      - kind: lethality_up
-        max_value: 25.0
-        applies_to: expedition
+    - kind: lethality_up
+      max_value: 25.0
+      applies_to: expedition
+  Diana:
+    arena_role: back_dps
+    arena_value: 70
+    arena_tags:
+    - dps
+    - aoe
+    - stamina
+    troop: archer
+    rarity: epic
+    widget_type: none
+    gen: 1
+    obtain: Desert Trial Event
+    notes: 'Epic Gen1 archer. Conquest: Incendiary Arrows (ATK*290% + AoE 98%), Sharpshooter (+30% AS),
+      Deadly Strike (+20% crit). Expedition: Iron Constitution (−20% governor stamina when leading), Quick
+      Paced (+100% wilderness march speed when leading). No exclusive widget. Scraped roster: 3★3 pellets,
+      archer, epic.'
+    effects:
+    - kind: stamina_cost_down
+      max_value: 20.0
+      applies_to: expedition
+      first_expedition: false
+    - kind: wilderness_march_speed
+      max_value: 100.0
+      applies_to: expedition
+      first_expedition: false
+    - kind: attack_speed_up
+      max_value: 30.0
+      applies_to: conquest
+    - kind: crit_rate_up
+      max_value: 20.0
+      applies_to: conquest
+    - kind: aoe_damage_up
+      max_value: 98.0
+      applies_to: conquest
+  Forrest:
+    arena_role: front_tank
+    arena_value: 40
+    arena_tags:
+    - tank
+    troop: infantry
+    rarity: rare
+    widget_type: none
+    gen: 1
+  Seth:
+    arena_role: front_tank
+    arena_value: 40
+    arena_tags:
+    - tank
+    troop: infantry
+    rarity: rare
+    widget_type: none
+    gen: 1
+  Edwin:
+    arena_role: back_cc
+    arena_value: 50
+    arena_tags:
+    - cc
+    troop: cavalry
+    rarity: rare
+    widget_type: none
+    gen: 1
+  Olive:
+    arena_role: back_dps
+    arena_value: 35
+    arena_tags:
+    - dps
+    troop: archer
+    rarity: rare
+    widget_type: none
+    gen: 1

@@ -1,8 +1,10 @@
-"""Top-center hero name OCR + fuzzy match against existing hero catalogs.
+"""Top-center hero name OCR + fuzzy match against the hero catalog.
 
-Sources of truth (already in-repo):
-  - ``artifacts/heroes/catalog_cache/kingshotpro_heroes.json`` (name, rarity, troop)
-  - ``config/hero_catalog.yaml`` (widget overlay; also contributes names)
+Single source of truth for static hero identity:
+  ``config/hero_catalog.yaml`` (names, troop, rarity, widgets, arena hints).
+
+Optional enricher (when populated):
+  ``artifacts/heroes/catalog_cache/kingshotpro_heroes.json``
 """
 
 from __future__ import annotations

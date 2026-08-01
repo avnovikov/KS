@@ -27,9 +27,22 @@
       padding: 1.25rem 1.5rem;
       border-bottom: 1px solid var(--border);
       background: linear-gradient(180deg, #2a303a, var(--bg));
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem 1.25rem;
     }
+    .header-text { min-width: 12rem; }
     h1 { margin: 0 0 0.35rem; font-size: 1.35rem; font-weight: 600; }
     .meta { color: var(--muted); font-size: 0.85rem; }
+    .header-actions { display: flex; align-items: center; gap: 0.6rem; }
+    button.rescan {
+      padding: 0.45rem 0.85rem;
+      font-size: 0.85rem;
+      white-space: nowrap;
+    }
+    button.rescan.busy { border-color: var(--muted); color: var(--muted); }
     main { padding: 1rem 1.5rem 2rem; overflow-x: auto; }
     table {
       width: 100%;
@@ -52,6 +65,14 @@
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
+    th.sortable {
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    th.sortable:hover { color: var(--accent); }
+    th.sortable[aria-sort="ascending"]::after { content: " ↑"; color: var(--accent); }
+    th.sortable[aria-sort="descending"]::after { content: " ↓"; color: var(--accent); }
     tr:hover td { background: rgba(108, 178, 255, 0.04); }
     input[type="number"] {
       width: 4.5rem;
@@ -110,26 +131,41 @@
 </head>
 <body>
   <header>
-    <h1>Gear inventory</h1>
-    <div class="meta">{{ gear_dir }} · {{ pieces|length }} pieces</div>
+    <div class="header-text">
+      <h1>KS Inventory</h1>
+      <div class="meta">{{ gear_dir }} · {{ pieces|length }} pieces</div>
+      {% set active = "gear" %}
+      {% include "_nav_tabs.html" %}
+    </div>
+    <div class="header-actions">
+      <button type="button" class="rescan" id="rescan-btn"
+              title="Replace inventory via ADB OCR (Backpack &gt; Gear must be open)">
+        Rescan from OCR
+      </button>
+    </div>
   </header>
   <main>
-    <table>
+    <table id="gear-table">
       <thead>
         <tr>
           <th>Name</th>
-          <th>Troop</th>
-          <th>Slot</th>
-          <th>Rarity</th>
-          <th>Enhancement</th>
+          <th class="sortable" data-sort="troop" scope="col" title="Sort by troop">Troop</th>
+          <th class="sortable" data-sort="slot" scope="col" title="Sort by slot">Slot</th>
+          <th class="sortable" data-sort="rarity" scope="col" title="Sort by rarity">Rarity</th>
+          <th class="sortable" data-sort="enhancement" scope="col" title="Sort by enhancement">Enhancement</th>
           <th>Mastery</th>
-          <th>Power</th>
+          <th class="sortable" data-sort="power" scope="col" title="Sort by power">Power</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         {% for p in pieces %}
-        <tr data-piece-id="{{ p.piece_id }}">
+        <tr data-piece-id="{{ p.piece_id }}"
+            data-troop="{{ (p.troop_type or '')|lower }}"
+            data-slot="{{ (p.slot or '')|lower }}"
+            data-rarity="{{ (p.rarity or '')|lower }}"
+            data-enhancement="{{ p.enhancement_level if p.enhancement_level is not none else '' }}"
+            data-power="{{ p.power if p.power is not none else '' }}">
           <td>
             <div class="name-cell">
               <img src="{{ icons.get(p.piece_id, '') }}" alt="" />
@@ -163,6 +199,99 @@
       clearTimeout(showToast._t);
       showToast._t = setTimeout(() => { toast.className = ""; toast.style.display = "none"; }, 2500);
     }
+
+    const RARITY_RANK = {
+      mythic: 5, gold: 5, red: 5,
+      epic: 4, purple: 4,
+      rare: 3, blue: 3,
+      uncommon: 2, green: 2,
+      common: 1, grey: 1, gray: 1, white: 1,
+    };
+    const SLOT_RANK = { helmet: 1, helm: 1, chest: 2, gloves: 3, boots: 4 };
+    const TROOP_RANK = { infantry: 1, cavalry: 2, archers: 3, archer: 3 };
+
+    function sortValue(row, key) {
+      const raw = row.dataset[key] || "";
+      if (key === "power" || key === "enhancement") {
+        if (raw === "") return -1;
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : -1;
+      }
+      if (key === "rarity") return RARITY_RANK[raw] || 0;
+      if (key === "slot") return SLOT_RANK[raw] || 99;
+      if (key === "troop") return TROOP_RANK[raw] || 99;
+      return raw;
+    }
+
+    function sortTable(key, dir) {
+      const table = document.getElementById("gear-table");
+      const tbody = table.querySelector("tbody");
+      const rows = Array.from(tbody.querySelectorAll("tr"));
+      const mult = dir === "asc" ? 1 : -1;
+      rows.sort((a, b) => {
+        const va = sortValue(a, key);
+        const vb = sortValue(b, key);
+        if (va < vb) return -1 * mult;
+        if (va > vb) return 1 * mult;
+        return (a.dataset.pieceId || "").localeCompare(b.dataset.pieceId || "");
+      });
+      rows.forEach((row) => tbody.appendChild(row));
+      table.querySelectorAll("th.sortable").forEach((th) => {
+        if (th.dataset.sort === key) th.setAttribute("aria-sort", dir === "asc" ? "ascending" : "descending");
+        else th.removeAttribute("aria-sort");
+      });
+    }
+
+    document.querySelectorAll("#gear-table th.sortable").forEach((th) => {
+      th.addEventListener("click", () => {
+        const key = th.dataset.sort;
+        const current = th.getAttribute("aria-sort");
+        const dir = current === "ascending" ? "desc" : "asc";
+        sortTable(key, dir);
+      });
+    });
+
+    const rescanBtn = document.getElementById("rescan-btn");
+    if (rescanBtn) {
+      rescanBtn.addEventListener("click", async () => {
+        const ok = window.confirm(
+          "Replace the entire gear inventory from ADB OCR?\n\n" +
+          "Leave Backpack > Gear open on the device. This clears the current set."
+        );
+        if (!ok) return;
+        rescanBtn.disabled = true;
+        rescanBtn.classList.add("busy");
+        rescanBtn.textContent = "Scanning…";
+        showToast("OCR rescan started — leave Backpack > Gear open", true);
+        try {
+          const res = await fetch("/api/gear/rescan", {
+            method: "POST",
+            cache: "no-store",
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            const detail = data.detail || res.statusText;
+            throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+          }
+          showToast(`Rescan done · ${data.count ?? 0} pieces`, true);
+          // Drop service-worker / Cache API entries so icons/HTML cannot stick.
+          if ("caches" in window) {
+            try {
+              const keys = await caches.keys();
+              await Promise.all(keys.map((k) => caches.delete(k)));
+            } catch (_) { /* ignore */ }
+          }
+          const bust = data.cache_bust || String(Date.now());
+          window.location.replace(`/gear?v=${encodeURIComponent(bust)}`);
+        } catch (err) {
+          showToast(String(err.message || err), false);
+          rescanBtn.disabled = false;
+          rescanBtn.classList.remove("busy");
+          rescanBtn.textContent = "Rescan from OCR";
+        }
+      });
+    }
+
     document.querySelectorAll("button.save").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const row = btn.closest("tr");
@@ -170,7 +299,8 @@
         const enh = row.querySelector('input[name="enhancement"]').value;
         const mast = row.querySelector('input[name="mastery"]').value;
         const body = {};
-        if (enh !== "") body.enhancement_level = Number(enh);
+        if (enh === "") body.clear_enhancement = true;
+        else body.enhancement_level = Number(enh);
         if (mast === "") body.clear_mastery = true;
         else body.mastery_level = Number(mast);
         btn.disabled = true;
@@ -185,6 +315,11 @@
           const powerCell = row.querySelector(".power-cell");
           if (powerCell && data.piece && data.piece.power != null) {
             powerCell.textContent = Number(data.piece.power).toLocaleString();
+            row.dataset.power = String(data.piece.power);
+          }
+          if (data.piece) {
+            row.dataset.enhancement =
+              data.piece.enhancement_level == null ? "" : String(data.piece.enhancement_level);
           }
           showToast(`Saved ${data.piece?.name || id} · power ${data.piece?.power ?? "—"}`, true);
         } catch (err) {

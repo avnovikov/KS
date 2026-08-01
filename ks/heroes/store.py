@@ -97,7 +97,10 @@ class HeroStore:
         raw = json.loads(self.json_path.read_text(encoding="utf-8"))
         heroes = raw.get("heroes") if isinstance(raw, dict) else raw
         if not isinstance(heroes, list):
-            return
+            raise ValueError(
+                f"{self.json_path} must be a list or "
+                f'{{"heroes": [...]}}; refusing to load (would wipe on upsert)'
+            )
         for item in heroes:
             hero = HeroRecord.from_dict(item)
             self._heroes[hero.name] = hero
@@ -115,6 +118,11 @@ class HeroStore:
 
     def all_heroes(self) -> list[HeroRecord]:
         return sorted(self._heroes.values(), key=lambda h: (h.roster_page, h.roster_index, h.name))
+
+    def reload(self) -> None:
+        """Re-read heroes.json into memory (picks up external OCR writes)."""
+        self._heroes.clear()
+        self._load_existing_json()
 
     def flush(self) -> None:
         self._write_json()
