@@ -1,6 +1,12 @@
 from __future__ import annotations
 
+from ks.heroes.gear_models import GearRecord
 from ks.heroes.models import HeroRecord
+from ks.heroes.optimize.gear_assign import (
+    assign_best_sets,
+    assignment_to_dict,
+    gear_bonus_by_troop,
+)
 from ks.heroes.optimize.model import solve_mode
 from ks.heroes.optimize.troop_stats import TroopStatsTable
 from ks.heroes.optimize.troops import breakdown_for_totals
@@ -23,6 +29,8 @@ def recommend(
     event: EventProfile | None = None,
     troop_stats: TroopStatsTable | None = None,
     truegold: int = 0,
+    gear: list[GearRecord] | None = None,
+    gear_profile: str = "early_game_growth",
 ) -> RecommendResult:
     if not scenarios:
         raise ValueError("scenarios must not be empty")
@@ -33,9 +41,12 @@ def recommend(
     else:
         modes = scenarios
 
+    gear_bonus = (
+        gear_bonus_by_troop(gear, profile=gear_profile) if gear else None
+    )
+
     solutions = []
     for mode, scenario in modes.items():
-        # Keep scenario.mode aligned with dict key.
         scenario = Scenario(
             mode=mode,
             combat_rate=scenario.combat_rate,
@@ -57,6 +68,7 @@ def recommend(
                 event=event,
                 troop_stats=troop_stats,
                 truegold=truegold,
+                gear_bonus_by_troop=gear_bonus,
             )
         )
 
@@ -89,6 +101,16 @@ def recommend(
         if s.mode != best.mode
     )
     by_level = breakdown_for_totals(troops, best.troops)
+    gear_assignment = None
+    if gear:
+        assigned = assign_best_sets(
+            heroes,
+            catalog,
+            gear,
+            selected=list(best.hero_names),
+            profile=gear_profile,
+        )
+        gear_assignment = assignment_to_dict(assigned)
     return RecommendResult(
         recommended_mode=best.mode,
         heroes=hero_rows,
@@ -99,6 +121,7 @@ def recommend(
         breakdown=dict(best.breakdown),
         alternatives=alternatives,
         troops_by_level=by_level,
+        gear_assignment=gear_assignment,
     )
 
 

@@ -24,8 +24,11 @@ _RARITY_MAP = {
 
 _SLOT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(helmet|armet|faceplate|helm)\b", re.I), "helmet"),
-    (re.compile(r"\b(chest|armor|armour|cuirass|shroud|plate)\b", re.I), "chest"),
-    (re.compile(r"\b(gloves?|gauntlets?|grips)\b", re.I), "gloves"),
+    (
+        re.compile(r"\b(chest|armor|armour|cuirass|shroud|plate|leatherwear|breastplate)\b", re.I),
+        "chest",
+    ),
+    (re.compile(r"\b(gloves?|gauntlets?|grips|bracers?)\b", re.I), "gloves"),
     (re.compile(r"\b(boots?|greaves|riders?)\b", re.I), "boots"),
 ]
 
@@ -189,7 +192,48 @@ def _parse_slot(text: str) -> str | None:
     return None
 
 
+_KNOWN_GEAR_NAMES = [
+    "Judicator's Armet",
+    "Crusader's Armet",
+    "Crusader Battle Boots",
+    "Crusader Battie Boots",  # OCR typo
+    "Praetorian's Gloves",
+    "Praetorian's Shroud",
+    "Praetorian s Gloves",
+    "Berserker's Faceplate",
+    "Berserker's Bracers",
+    "Berserker's Boots",
+    "Windbreaker Leatherwear",
+    "Windbreaker Faceplate",
+    "Windbreaker Bracers",
+    "Windbreaker Boots",
+    "Stonewall Greaves",
+    "Stonewall Gloves",
+    "Stonewall Shroud",
+    "Brigader's Gauntlets",
+    "Warrior's Helm",
+    "Cuirassier's Breastplate",
+]
+
+
 def _parse_name(text: str) -> str | None:
+    # Prefer known gear titles embedded in noisy OCR.
+    lower = text.lower().replace("'", "")
+    for known in _KNOWN_GEAR_NAMES:
+        key = known.lower().replace("'", "")
+        if key in lower:
+            if known == "Crusader Battie Boots":
+                return "Crusader Battle Boots"
+            if known == "Praetorian s Gloves":
+                return "Praetorian's Gloves"
+            return known.replace(" s ", "'s ") if " s " in known else known
+
+    # OCR often splits titles across lines: "Berserker's B" + "Bracers".
+    if "berserker" in lower and "bracer" in lower:
+        return "Berserker's Bracers"
+    if "cuirassier" in lower and "breast" in lower:
+        return "Cuirassier's Breastplate"
+
     # Prefer multi-word Title Case titles (e.g. Judicator's Armet).
     for match in _NAME_TITLE_RE.finditer(text):
         candidate = " ".join(match.group(1).split()).strip()
@@ -230,13 +274,14 @@ def _parse_power(text: str) -> int | None:
     plausible = [v for v in values if 100 <= v <= 9_999_999]
     if not plausible:
         return values[0]
-    # OCR sometimes prepends a digit (98,550 → 798,550).
+    # OCR sometimes prepends a digit (98,550 → 798,550 or 18,360 → 218,360).
+    # Never strip a leading 1 from 1xx,xxx values like 152,100.
     cleaned: list[int] = []
     for value in plausible:
         s = str(value)
-        if value >= 100_000 and len(s) >= 5:
+        if len(s) >= 6 and s[0] in "23456789":
             trimmed = int(s[1:])
-            if 1_000 <= trimmed <= 999_999:
+            if 10_000 <= trimmed <= 999_999:
                 cleaned.append(trimmed)
                 continue
         cleaned.append(value)

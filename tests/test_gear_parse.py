@@ -93,6 +93,18 @@ def test_parse_power_strips_ocr_leading_digit():
     assert piece.power == 98550
 
 
+def test_parse_power_keeps_leading_one_for_mid_six_digit():
+    text = "Judicator's Armet\nMythic\n152,100\nConquest Stats\nHero Attack 363\n"
+    piece = parse_gear_detail(text, page=0, index=0)
+    assert piece.power == 152100
+
+
+def test_parse_power_strips_leading_two_noise():
+    text = "Stonewall Shroud\nRare\n218,360\nConquest Stats\nHero Defense 68\n"
+    piece = parse_gear_detail(text, page=0, index=0)
+    assert piece.power == 18360
+
+
 def test_parse_enhancement_from_glued_title():
     text = "aer30 Judicator's Armet\nMythic\n98,550\n"
     piece = parse_gear_detail(text, page=0, index=0)

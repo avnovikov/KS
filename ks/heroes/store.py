@@ -2,9 +2,22 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 from ks.heroes.models import HeroRecord
+
+# Fields often set by hand / follow-up edits; keep prior value if update leaves them empty.
+_PRESERVE_IF_NONE = ("level", "pellets", "stars", "escorts", "power", "rarity", "troop_type")
+
+
+def _merge_preserved(prev: HeroRecord, incoming: HeroRecord) -> HeroRecord:
+    updates = {
+        field: getattr(prev, field)
+        for field in _PRESERVE_IF_NONE
+        if getattr(incoming, field) is None and getattr(prev, field) is not None
+    }
+    return replace(incoming, **updates) if updates else incoming
 
 
 class HeroStore:
@@ -33,6 +46,7 @@ class HeroStore:
                     troop_type TEXT,
                     escorts INTEGER,
                     stars INTEGER,
+                    pellets INTEGER,
                     roster_page INTEGER NOT NULL,
                     roster_index INTEGER NOT NULL,
                     scraped_at TEXT NOT NULL,
@@ -72,6 +86,10 @@ class HeroStore:
             }
             if "name_screenshot" not in hero_cols:
                 conn.execute("ALTER TABLE heroes ADD COLUMN name_screenshot TEXT")
+            if "pellets" not in hero_cols:
+                conn.execute("ALTER TABLE heroes ADD COLUMN pellets INTEGER")
+            if "level" not in hero_cols:
+                conn.execute("ALTER TABLE heroes ADD COLUMN level INTEGER")
 
     def _load_existing_json(self) -> None:
         if not self.json_path.is_file():
@@ -87,6 +105,10 @@ class HeroStore:
     def upsert(self, hero: HeroRecord) -> None:
         if not hero.name:
             raise ValueError("hero.name must be non-empty")
+        # Preserve manually curated fields when a partial scrape/update omits them.
+        prev = self._heroes.get(hero.name)
+        if prev is not None:
+            hero = _merge_preserved(prev, hero)
         self._heroes[hero.name] = hero
         self._write_json()
         self._write_sqlite(hero)
@@ -113,15 +135,17 @@ class HeroStore:
             conn.execute(
                 """
                 INSERT INTO heroes (
-                    name, power, rarity, troop_type, escorts, stars,
+                    name, power, level, rarity, troop_type, escorts, stars, pellets,
                     roster_page, roster_index, scraped_at, name_screenshot
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(name) DO UPDATE SET
                     power=excluded.power,
+                    level=excluded.level,
                     rarity=excluded.rarity,
                     troop_type=excluded.troop_type,
                     escorts=excluded.escorts,
                     stars=excluded.stars,
+                    pellets=excluded.pellets,
                     roster_page=excluded.roster_page,
                     roster_index=excluded.roster_index,
                     scraped_at=excluded.scraped_at,
@@ -130,10 +154,12 @@ class HeroStore:
                 (
                     hero.name,
                     hero.power,
+                    hero.level,
                     hero.rarity,
                     hero.troop_type,
                     hero.escorts,
                     hero.stars,
+                    hero.pellets,
                     hero.roster_page,
                     hero.roster_index,
                     hero.scraped_at,

@@ -55,7 +55,8 @@ ocr:
   power: {x: 400, y: 1140, w: 320, h: 70}
   rarity: {x: 20, y: 90, w: 200, h: 120}
   troop_type: {x: 400, y: 200, w: 280, h: 50}
-  escorts: {x: 100, y: 1200, w: 200, h: 80}
-  stars: {x: 400, y: 1280, w: 280, h: 60}
+  escorts: {x: 100, y: 1320, w: 200, h: 80}
+  # 5 star slots × 6 pellets; just under power, above Escorts/Level.
+  stars: {x: 300, y: 1270, w: 520, h: 85}
   stats_panel: {x: 450, y: 340, w: 600, h: 980}
   skill_panel: {x: 60, y: 1220, w: 960, h: 300}

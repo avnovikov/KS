@@ -29,6 +29,7 @@ def solve_mode(
     troop_stats: TroopStatsTable | None = None,
     truegold: int = 0,
     one_per_troop_type: bool = True,
+    gear_bonus_by_troop: dict[str, float] | None = None,
 ) -> ModeSolution:
     usable = [h for h in heroes if h.name in catalog]
     if len(usable) < 3:
@@ -48,6 +49,7 @@ def solve_mode(
     # Gear is fungible within troop class: score power using best geared hero
     # of that class (widgets / skills / stars stay on the selected hero).
     class_power = max_power_by_troop(usable, catalog)
+    gear_bonus = gear_bonus_by_troop or {}
     strengths = {
         h.name: hero_strength(
             h,
@@ -55,6 +57,7 @@ def solve_mode(
             scenario.mode,
             event=event,
             effective_power=class_power.get(troop_of[h.name], h.power),
+            gear_bonus=float(gear_bonus.get(troop_of[h.name], 0.0)),
         )
         for h in usable
     }

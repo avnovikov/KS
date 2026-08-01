@@ -134,6 +134,7 @@ class RecommendResult:
     breakdown: dict[str, float]
     alternatives: tuple[dict[str, Any], ...] = ()
     troops_by_level: dict[str, dict[int, int]] | None = None
+    gear_assignment: dict[str, list[dict[str, Any]]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out = {
@@ -151,4 +152,6 @@ class RecommendResult:
                 kind: {str(level): count for level, count in levels.items()}
                 for kind, levels in self.troops_by_level.items()
             }
+        if self.gear_assignment is not None:
+            out["gear_assignment"] = self.gear_assignment
         return out

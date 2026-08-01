@@ -14,6 +14,7 @@ def _sample() -> HeroRecord:
         troop_type="Cavalry",
         escorts=8,
         stars=1,
+        pellets=2,
         stats=HeroStats(
             conquest={"Hero Attack": 1619},
             expedition={"Cavalry Attack": 101.37},
@@ -42,13 +43,15 @@ def test_hero_store_json_and_sqlite_round_trip(tmp_path: Path):
     assert raw["heroes"][0]["name"] == "Jabel"
     assert raw["heroes"][0]["stats"]["conquest"]["Hero Attack"] == 1619
     assert raw["heroes"][0]["name_screenshot"] == "names/Jabel.png"
+    assert raw["heroes"][0]["stars"] == 1
+    assert raw["heroes"][0]["pellets"] == 2
 
     with sqlite3.connect(store.db_path) as conn:
         row = conn.execute(
-            "SELECT power, rarity, escorts, name_screenshot FROM heroes WHERE name = ?",
+            "SELECT power, rarity, escorts, name_screenshot, pellets FROM heroes WHERE name = ?",
             ("Jabel",),
         ).fetchone()
-        assert row == (123456, "SSR", 8, "names/Jabel.png")
+        assert row == (123456, "SSR", 8, "names/Jabel.png", 2)
         skills = conn.execute(
             "SELECT name, level, current_bonus FROM skills WHERE hero_name = ?",
             ("Jabel",),
@@ -61,3 +64,41 @@ def test_hero_store_json_and_sqlite_round_trip(tmp_path: Path):
         ).fetchall()
         assert ("conquest", "Hero Attack", 1619.0) in stats
         assert ("expedition", "Cavalry Attack", 101.37) in stats
+
+
+def test_upsert_preserves_hero_level_when_incoming_omits_it(tmp_path: Path) -> None:
+    store = HeroStore(tmp_path)
+    store.upsert(
+        HeroRecord(
+            name="Chenko",
+            power=100,
+            level=57,
+            stars=3,
+            pellets=1,
+            roster_page=0,
+            roster_index=0,
+            scraped_at="2026-08-01T12:00:00Z",
+        )
+    )
+    store.upsert(
+        HeroRecord(
+            name="Chenko",
+            power=200,
+            level=None,
+            stars=3,
+            pellets=None,
+            roster_page=0,
+            roster_index=0,
+            scraped_at="2026-08-01T13:00:00Z",
+        )
+    )
+    raw = json.loads(store.json_path.read_text(encoding="utf-8"))
+    assert raw["heroes"][0]["level"] == 57
+    assert raw["heroes"][0]["pellets"] == 1
+    assert raw["heroes"][0]["power"] == 200
+    with sqlite3.connect(store.db_path) as conn:
+        row = conn.execute(
+            "SELECT level, pellets, power FROM heroes WHERE name = ?",
+            ("Chenko",),
+        ).fetchone()
+        assert row == (57, 1, 200)

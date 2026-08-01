@@ -21,6 +21,7 @@ from ks.heroes.parse import (
     parse_skill_panel,
     parse_stats_panel,
 )
+from ks.heroes.stars_vision import count_stars_pellets
 from ks.heroes.teal_ocr import extract_teal_current_percent
 
 
@@ -186,8 +187,11 @@ def scrape_hero(
         if entry and entry.troop:
             troop_type = entry.troop
     stars = None
+    pellets = None
     if cfg.ocr.stars is not None:
-        stars = parse_int(_ocr_box(img, cfg.ocr.stars, ocr))
+        progress = count_stars_pellets(img, cfg.ocr.stars)
+        stars = progress.stars
+        pellets = progress.pellets
 
     # Stats popup: open → OCR → close
     device.tap(cfg.nav.stats_list_button.x, cfg.nav.stats_list_button.y)
@@ -226,6 +230,7 @@ def scrape_hero(
         troop_type=troop_type,
         escorts=escorts,
         stars=stars,
+        pellets=pellets,
         stats=stats,
         skills=tuple(skills),
         roster_page=page,

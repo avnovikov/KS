@@ -33,8 +33,6 @@ def test_scrape_hero_tap_order_and_fields():
             return "Escorts\n8"
         if cfg.ocr.troop_type and box == cfg.ocr.troop_type.as_tuple():
             return "Cavalry"
-        if cfg.ocr.stars and box == cfg.ocr.stars.as_tuple():
-            return "1"
         if box == cfg.ocr.stats_panel.as_tuple():
             return "Hero Attack 1,619\nExpedition\nCavalry Attack +101.37%"
         if box == cfg.ocr.skill_panel.as_tuple():
@@ -58,6 +56,9 @@ def test_scrape_hero_tap_order_and_fields():
     assert hero.power == 1_234_567
     assert hero.rarity == "SSR"
     assert hero.escorts == 8
+    # Blank frame → vision finds no yellow pellets.
+    assert hero.stars == 0
+    assert hero.pellets == 0
     assert hero.stats is not None
     assert hero.stats.conquest["Hero Attack"] == 1619
     assert len(hero.skills) == 1
@@ -71,6 +72,46 @@ def test_scrape_hero_tap_order_and_fields():
     assert device.taps[2] == skills_tab
     for i, slot in enumerate(cfg.skill_slots):
         assert device.taps[3 + i] == (slot.x, slot.y)
+
+
+def test_scrape_hero_counts_painted_stars():
+    cfg = load_heroes_config()
+    assert cfg.ocr.stars is not None
+    img = np.zeros((1920, 1080, 3), dtype=np.uint8)
+    box = cfg.ocr.stars
+    # Paint 2 full yellow slots + ~3/6 of the third.
+    sw = box.w // 5
+    for i in range(2):
+        x0 = box.x + i * sw + 8
+        x1 = box.x + (i + 1) * sw - 8
+        img[box.y + 10 : box.y + box.h - 10, x0:x1] = (0, 220, 255)  # BGR yellow-ish
+    # Partial third slot (~half width)
+    x0 = box.x + 2 * sw + 8
+    x1 = box.x + 2 * sw + sw // 2
+    img[box.y + 10 : box.y + box.h - 10, x0:x1] = (0, 220, 255)
+    ok, buf = cv2.imencode(".png", img)
+    assert ok
+    device = FakeDevice(png_bytes=buf.tobytes())
+
+    def fake_ocr(_image: np.ndarray, box_t: tuple[int, int, int, int]) -> str:
+        if box_t == cfg.ocr.name.as_tuple():
+            return "Diana"
+        if box_t == cfg.ocr.power.as_tuple():
+            return "458320"
+        return ""
+
+    hero = scrape_hero(
+        device,
+        cfg,
+        page=0,
+        index=0,
+        ocr_fn=fake_ocr,
+        sleep_fn=lambda _s: None,
+        names_dir=None,
+    )
+    assert hero is not None
+    assert hero.stars == 2
+    assert hero.pellets == 3
 
 
 def test_scrape_hero_returns_none_without_name():

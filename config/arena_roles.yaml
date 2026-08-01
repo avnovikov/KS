@@ -1,0 +1,87 @@
+# Arena generic-offense role hints (Conquest / Battle skills).
+# Sources: kingshotmastery Arena guide, grindnstrat, kingshotguides early Arena,
+# kingshot.fandom Gen1 lineups. Used only for Arena ILP — not marches.
+
+slots:
+  front: [F1, F2]
+  back: [B1, B2, B3]
+  # B2 = middle back (safest carry per early-game guides)
+  carry_slot: B2
+
+# Multipliers applied to hero score when placed in a slot family.
+placement:
+  infantry_front: 1.25
+  cavalry_front: 1.05
+  # Keys must match normalize_troop(): infantry|cavalry|archers
+  archers_front: 0.55
+  infantry_back: 0.85
+  cavalry_back: 1.10
+  archers_back: 1.15
+  carry_slot_bonus: 1.12
+  front_tank_bonus: 1.10
+
+heroes:
+  Helga:
+    role: front_fighter
+    arena_value: 90
+    tags: [cc, aoe, tank]
+  Howard:
+    role: front_tank
+    arena_value: 85
+    tags: [tank, team_def]
+  Amadeus:
+    role: front_fighter
+    arena_value: 95
+    tags: [aoe, tank]
+  Jabel:
+    role: back_cc
+    arena_value: 92
+    tags: [cc, aoe]
+  Chenko:
+    role: back_dps
+    arena_value: 88
+    tags: [aoe, dps]
+  Saul:
+    role: back_cc
+    arena_value: 80
+    tags: [cc, dps]
+  Diana:
+    role: back_dps
+    arena_value: 70
+    tags: [dps]
+  Quinn:
+    role: back_dps
+    arena_value: 72
+    tags: [dps]
+  Gordon:
+    role: back_support
+    arena_value: 75
+    tags: [heal]
+  Yeonwoo:
+    role: back_dps
+    arena_value: 65
+    tags: [dps]
+  Amane:
+    role: back_dps
+    arena_value: 62
+    tags: [dps]
+  Fahd:
+    role: back_dps
+    arena_value: 45
+    tags: [dps]
+  Forrest:
+    role: front_tank
+    arena_value: 40
+    tags: [tank]
+  Seth:
+    role: front_tank
+    arena_value: 40
+    tags: [tank]
+  Edwin:
+    role: back_cc
+    arena_value: 50
+    tags: [cc]
+  Olive:
+    role: back_dps
+    arena_value: 35
+    tags: [dps]

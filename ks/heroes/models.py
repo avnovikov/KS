@@ -71,10 +71,12 @@ class SkillRecord:
 class HeroRecord:
     name: str
     power: int | None = None
+    level: int | None = None
     rarity: str | None = None
     troop_type: str | None = None
     escorts: int | None = None
     stars: int | None = None
+    pellets: int | None = None
     stats: HeroStats | None = None
     skills: tuple[SkillRecord, ...] = ()
     roster_page: int = 0
@@ -86,10 +88,12 @@ class HeroRecord:
         return {
             "name": self.name,
             "power": self.power,
+            "level": self.level,
             "rarity": self.rarity,
             "troop_type": self.troop_type,
             "escorts": self.escorts,
             "stars": self.stars,
+            "pellets": self.pellets,
             "stats": self.stats.to_dict() if self.stats else None,
             "skills": [s.to_dict() for s in self.skills],
             "roster_page": self.roster_page,
@@ -104,10 +108,12 @@ class HeroRecord:
         return cls(
             name=str(data["name"]),
             power=int(data["power"]) if data.get("power") is not None else None,
+            level=int(data["level"]) if data.get("level") is not None else None,
             rarity=data.get("rarity"),
             troop_type=data.get("troop_type"),
             escorts=int(data["escorts"]) if data.get("escorts") is not None else None,
             stars=int(data["stars"]) if data.get("stars") is not None else None,
+            pellets=int(data["pellets"]) if data.get("pellets") is not None else None,
             stats=HeroStats.from_dict(data.get("stats")),
             skills=tuple(SkillRecord.from_dict(s) for s in skills_raw),
             roster_page=int(data.get("roster_page") or 0),

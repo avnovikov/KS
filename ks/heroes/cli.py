@@ -8,7 +8,12 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ks.heroes.collector import capture_name_screenshots, collect_heroes
+from ks.heroes.collector import (
+    capture_name_screenshots,
+    capture_power_stats,
+    capture_star_progress,
+    collect_heroes,
+)
 from ks.heroes.config import DEFAULT_HEROES_CONFIG, load_heroes_config
 from ks.heroes.gear_collector import collect_gear
 from ks.heroes.gear_config import DEFAULT_GEAR_CONFIG, load_gear_config
@@ -26,7 +31,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="command", required=True)
 
-    collect = sub.add_parser("collect", help="Walk roster and scrape heroes.")
+    collect = sub.add_parser(
+        "collect",
+        help="Walk roster and scrape heroes (incl. stars/pellets vision).",
+    )
     collect.add_argument(
         "--config",
         type=Path,
@@ -112,6 +120,73 @@ def build_parser() -> argparse.ArgumentParser:
         help="Existing collect output dir containing heroes.json (e.g. artifacts/heroes/full-run).",
     )
 
+    capture_stars = sub.add_parser(
+        "capture-stars",
+        help="Re-open each hero and update stars/pellets from the star strip.",
+    )
+    capture_stars.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_HEROES_CONFIG,
+        help="Path to heroes.yaml (default: config/heroes.yaml).",
+    )
+    capture_stars.add_argument(
+        "--serial",
+        type=str,
+        default=None,
+        help="ADB serial override (default: config adb.serial).",
+    )
+    capture_stars.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Existing collect output dir containing heroes.json.",
+    )
+
+    capture_power = sub.add_parser(
+        "capture-power-stats",
+        help="Re-open each hero; update ONLY power + stats (use unequipped/naked).",
+    )
+    capture_power.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_HEROES_CONFIG,
+        help="Path to heroes.yaml (default: config/heroes.yaml).",
+    )
+    capture_power.add_argument(
+        "--serial",
+        type=str,
+        default=None,
+        help="ADB serial override (default: config adb.serial).",
+    )
+    capture_power.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Existing collect output dir containing heroes.json.",
+    )
+
+    fetch_stats = sub.add_parser(
+        "fetch-stats-catalog",
+        help="Scrape ungared hero stats from kingshotdata.com into catalog_cache.",
+    )
+    fetch_stats.add_argument(
+        "--out",
+        type=Path,
+        default=ROOT
+        / "artifacts"
+        / "heroes"
+        / "catalog_cache"
+        / "kingshotdata_stats.json",
+        help="Write catalog JSON here.",
+    )
+    fetch_stats.add_argument(
+        "--pause",
+        type=float,
+        default=0.25,
+        help="Seconds to pause between hero page fetches.",
+    )
+
     train_names = sub.add_parser(
         "train-names",
         help="Evaluate/train name OCR from labeled names/<Hero>.png crops.",
@@ -186,10 +261,76 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     recommend.add_argument(
+        "--gear",
+        type=Path,
+        default=None,
+        help="Gear inventory JSON or collect dir (assigns best set per troop class).",
+    )
+    recommend.add_argument(
+        "--gear-profile",
+        type=str,
+        default="early_game_growth",
+        help="hero_gear_optimizer build profile (default: early_game_growth / Bear).",
+    )
+    recommend.add_argument(
         "--out",
         type=Path,
         default=ROOT / "artifacts" / "heroes" / "recommend_result.json",
         help="Write recommendation JSON here.",
+    )
+
+    arena = sub.add_parser(
+        "arena",
+        help="Pick Arena attack formation (5 heroes, 2 front + 3 back).",
+    )
+    arena.add_argument(
+        "--heroes",
+        type=Path,
+        required=True,
+        help="Path to heroes.json from collect.",
+    )
+    arena.add_argument(
+        "--catalog",
+        type=Path,
+        default=ROOT / "config" / "hero_catalog.yaml",
+        help="Widget/effect overlay YAML.",
+    )
+    arena.add_argument(
+        "--pro-cache",
+        type=Path,
+        default=ROOT / "artifacts" / "heroes" / "catalog_cache" / "kingshotpro_heroes.json",
+        help="Cached KingshotPro heroes.json (optional if missing).",
+    )
+    arena.add_argument(
+        "--roles",
+        type=Path,
+        default=ROOT / "config" / "arena_roles.yaml",
+        help="Arena role / placement weights YAML.",
+    )
+    arena.add_argument(
+        "--side",
+        type=str,
+        default="attack",
+        choices=["attack"],
+        help="Arena side (only attack / generic offense for now).",
+    )
+    arena.add_argument(
+        "--gear",
+        type=Path,
+        default=None,
+        help="Gear inventory JSON or collect dir (assigns best set per troop class).",
+    )
+    arena.add_argument(
+        "--gear-profile",
+        type=str,
+        default="early_game_combat",
+        help="hero_gear_optimizer build profile (default: early_game_combat).",
+    )
+    arena.add_argument(
+        "--out",
+        type=Path,
+        default=ROOT / "artifacts" / "heroes" / "arena_result.json",
+        help="Write arena recommendation JSON here.",
     )
     return p
 
@@ -249,6 +390,7 @@ def _cmd_collect(args: argparse.Namespace) -> int:
     print(f"  json: {store.json_path}")
     print(f"  db:   {store.db_path}")
     print(f"  names: {store.names_dir}")
+    print("  stars/pellets: counted from star strip on each detail screen")
     return 0
 
 
@@ -321,6 +463,80 @@ def _cmd_capture_names(args: argparse.Namespace) -> int:
     print("Uses names already in heroes.json (manual fixes are kept).")
     updated = capture_name_screenshots(device, cfg, store)
     print(f"done: {len(updated)} name screenshot(s)")
+    return 0
+
+
+def _cmd_capture_stars(args: argparse.Namespace) -> int:
+    try:
+        cfg = load_heroes_config(args.config)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error loading config: {exc}", file=sys.stderr)
+        return 1
+
+    out_dir = args.out
+    if not (out_dir / "heroes.json").is_file():
+        print(f"Error: missing {out_dir / 'heroes.json'}", file=sys.stderr)
+        return 1
+
+    store = HeroStore(out_dir)
+    from ks.device.adb import AdbDevice
+
+    serial = args.serial or cfg.adb_serial
+    try:
+        device = AdbDevice.connect(serial=serial)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error connecting ADB: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"capturing stars/pellets → {store.json_path}")
+    updated = capture_star_progress(device, cfg, store)
+    print(f"done: {len(updated)} hero(s) updated")
+    return 0
+
+
+def _cmd_capture_power_stats(args: argparse.Namespace) -> int:
+    try:
+        cfg = load_heroes_config(args.config)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error loading config: {exc}", file=sys.stderr)
+        return 1
+
+    out_dir = args.out
+    if not (out_dir / "heroes.json").is_file():
+        print(f"Error: missing {out_dir / 'heroes.json'}", file=sys.stderr)
+        return 1
+
+    store = HeroStore(out_dir)
+    from ks.device.adb import AdbDevice
+
+    serial = args.serial or cfg.adb_serial
+    try:
+        device = AdbDevice.connect(serial=serial)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error connecting ADB: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"capturing naked power/stats → {store.json_path}")
+    print("tip: unequip all gear first; leave Heroes roster visible")
+    print("updates ONLY power + stats (keeps level/stars/pellets/skills)")
+    updated = capture_power_stats(device, cfg, store)
+    print(f"done: {len(updated)} hero(s) updated")
+    return 0
+
+
+def _cmd_fetch_stats_catalog(args: argparse.Namespace) -> int:
+    from ks.heroes.web_stats_catalog import scrape_catalog, write_catalog
+
+    try:
+        payload = scrape_catalog(pause_s=float(args.pause))
+        path = write_catalog(payload, args.out)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    meta = payload["_meta"]
+    print(
+        f"wrote {path} heroes={meta['count']} errors={len(meta.get('errors') or [])}"
+    )
     return 0
 
 
@@ -401,6 +617,11 @@ def _cmd_recommend(args: argparse.Namespace) -> int:
             pro_path.parent.mkdir(parents=True, exist_ok=True)
             pro_path.write_text('{"heroes": []}\n', encoding="utf-8")
         catalog = load_catalog(pro_path, args.catalog)
+        gear_pieces = None
+        if args.gear is not None:
+            from ks.heroes.optimize.gear_assign import load_gear_pieces
+
+            gear_pieces = load_gear_pieces(args.gear)
         result = recommend(
             heroes,
             catalog,
@@ -410,6 +631,8 @@ def _cmd_recommend(args: argparse.Namespace) -> int:
             event=event,
             troop_stats=troop_stats,
             truegold=tg,
+            gear=gear_pieces,
+            gear_profile=args.gear_profile,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"Error: {exc}", file=sys.stderr)
@@ -426,6 +649,77 @@ def _cmd_recommend(args: argparse.Namespace) -> int:
         f"C={result.troops['cavalry']} "
         f"A={result.troops['archers']}"
     )
+    if result.gear_assignment:
+        print("gear:")
+        for name, rows in result.gear_assignment.items():
+            if not rows:
+                print(f"  {name}: (no pieces for class)")
+                continue
+            bits = [
+                f"{r['slot']}={r.get('name') or r['piece_id']}"
+                f"+{r.get('enhancement_level') or 0}"
+                for r in rows
+            ]
+            print(f"  {name}: {', '.join(bits)}")
+    print(f"wrote: {args.out}")
+    return 0
+
+
+def _cmd_arena(args: argparse.Namespace) -> int:
+    from ks.heroes.optimize.arena import load_arena_roles, optimize_arena_attack
+    from ks.heroes.optimize.catalog import load_catalog
+
+    try:
+        heroes = _load_heroes_json(args.heroes)
+        pro_path = args.pro_cache
+        if not pro_path.exists():
+            pro_path.parent.mkdir(parents=True, exist_ok=True)
+            pro_path.write_text('{"heroes": []}\n', encoding="utf-8")
+        catalog = load_catalog(pro_path, args.catalog)
+        roles = load_arena_roles(args.roles)
+        gear_pieces = None
+        if args.gear is not None:
+            from ks.heroes.optimize.gear_assign import load_gear_pieces
+
+            gear_pieces = load_gear_pieces(args.gear)
+        if args.side != "attack":
+            raise ValueError(f"unsupported arena side {args.side!r}")
+        result = optimize_arena_attack(
+            heroes,
+            catalog,
+            roles,
+            gear=gear_pieces,
+            gear_profile=args.gear_profile,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if result.status != "Optimal":
+        print(f"Error: arena solve status={result.status}", file=sys.stderr)
+        return 1
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(json.dumps(result.to_dict(), indent=2) + "\n", encoding="utf-8")
+    print(f"side: {result.side}")
+    print(f"score: {result.score:.1f}")
+    print("formation (2 front / 3 back):")
+    for slot in ("F1", "F2", "B1", "B2", "B3"):
+        name = result.formation.get(slot, "?")
+        reason = result.reasons.get(name, "")
+        print(f"  {slot}: {name}" + (f"  ({reason})" if reason else ""))
+    if result.gear_assignment:
+        print("gear:")
+        for name, rows in result.gear_assignment.items():
+            if not rows:
+                print(f"  {name}: (no pieces for class)")
+                continue
+            bits = [
+                f"{r['slot']}={r.get('name') or r['piece_id']}"
+                f"+{r.get('enhancement_level') or 0}"
+                for r in rows
+            ]
+            print(f"  {name}: {', '.join(bits)}")
     print(f"wrote: {args.out}")
     return 0
 
@@ -439,10 +733,18 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_collect_gear(args)
     if args.command == "capture-names":
         return _cmd_capture_names(args)
+    if args.command == "capture-stars":
+        return _cmd_capture_stars(args)
+    if args.command == "capture-power-stats":
+        return _cmd_capture_power_stats(args)
+    if args.command == "fetch-stats-catalog":
+        return _cmd_fetch_stats_catalog(args)
     if args.command == "train-names":
         return _cmd_train_names(args)
     if args.command == "recommend":
         return _cmd_recommend(args)
+    if args.command == "arena":
+        return _cmd_arena(args)
     parser.error(f"unknown command {args.command!r}")
     return 2
 
