@@ -332,6 +332,29 @@ def build_parser() -> argparse.ArgumentParser:
         default=ROOT / "artifacts" / "heroes" / "arena_result.json",
         help="Write arena recommendation JSON here.",
     )
+
+    ui = sub.add_parser(
+        "ui",
+        help="Local FastAPI UI for gear inventory (edit enhancement/mastery).",
+    )
+    ui.add_argument(
+        "--gear",
+        type=Path,
+        default=ROOT / "artifacts" / "gear" / "full-run",
+        help="Gear collect dir (or gear.json path).",
+    )
+    ui.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Bind host (default: 127.0.0.1).",
+    )
+    ui.add_argument(
+        "--port",
+        type=int,
+        default=8765,
+        help="Bind port (default: 8765).",
+    )
     return p
 
 
@@ -724,6 +747,21 @@ def _cmd_arena(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ui(args: argparse.Namespace) -> int:
+    from ks.heroes.ui import run_ui
+
+    gear = Path(args.gear)
+    if not gear.exists():
+        print(
+            f"error: gear path not found: {gear}\n"
+            "Re-run collect-gear or pass --gear <dir>.",
+            file=sys.stderr,
+        )
+        return 1
+    run_ui(gear, host=str(args.host), port=int(args.port))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -745,6 +783,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_recommend(args)
     if args.command == "arena":
         return _cmd_arena(args)
+    if args.command == "ui":
+        return _cmd_ui(args)
     parser.error(f"unknown command {args.command!r}")
     return 2
 

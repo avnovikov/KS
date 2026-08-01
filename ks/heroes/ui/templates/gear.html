@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KS Gear Inventory</title>
+  <style>
+    :root {
+      --bg: #1a1d23;
+      --panel: #242830;
+      --text: #e8eaed;
+      --muted: #9aa0a6;
+      --accent: #6cb2ff;
+      --ok: #7dcea0;
+      --err: #f1959b;
+      --border: #3a3f4b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.4;
+    }
+    header {
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, #2a303a, var(--bg));
+    }
+    h1 { margin: 0 0 0.35rem; font-size: 1.35rem; font-weight: 600; }
+    .meta { color: var(--muted); font-size: 0.85rem; }
+    main { padding: 1rem 1.5rem 2rem; overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      padding: 0.55rem 0.65rem;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      font-size: 0.9rem;
+      vertical-align: middle;
+    }
+    th {
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    tr:hover td { background: rgba(108, 178, 255, 0.04); }
+    input[type="number"] {
+      width: 4.5rem;
+      padding: 0.3rem 0.4rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--text);
+    }
+    button {
+      padding: 0.3rem 0.7rem;
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      background: transparent;
+      color: var(--accent);
+      cursor: pointer;
+      font-size: 0.8rem;
+    }
+    button:hover { background: rgba(108, 178, 255, 0.12); }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    .rarity { text-transform: capitalize; }
+    .rarity.mythic { color: #f0c674; }
+    .rarity.epic { color: #c39bd3; }
+    .rarity.blue, .rarity.rare { color: #85c1e9; }
+    .rarity.green, .rarity.uncommon { color: #82e0aa; }
+    #toast {
+      position: fixed;
+      right: 1rem;
+      bottom: 1rem;
+      padding: 0.65rem 0.9rem;
+      border-radius: 6px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      display: none;
+      max-width: 22rem;
+      font-size: 0.85rem;
+    }
+    #toast.ok { border-color: var(--ok); color: var(--ok); display: block; }
+    #toast.err { border-color: var(--err); color: var(--err); display: block; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Gear inventory</h1>
+    <div class="meta">{{ gear_dir }} · {{ pieces|length }} pieces</div>
+  </header>
+  <main>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Troop</th>
+          <th>Slot</th>
+          <th>Rarity</th>
+          <th>Enhancement</th>
+          <th>Mastery</th>
+          <th>Power</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in pieces %}
+        <tr data-piece-id="{{ p.piece_id }}">
+          <td>{{ p.name or "—" }}</td>
+          <td>{{ p.troop_type or "—" }}</td>
+          <td>{{ p.slot or "—" }}</td>
+          <td class="rarity {{ (p.rarity or '')|lower }}">{{ p.rarity or "—" }}</td>
+          <td>
+            <input type="number" min="0" max="200" name="enhancement"
+                   value="{{ p.enhancement_level if p.enhancement_level is not none else '' }}" />
+          </td>
+          <td>
+            <input type="number" min="0" max="20" name="mastery"
+                   value="{{ p.mastery_level if p.mastery_level is not none else '' }}" />
+          </td>
+          <td>{{ p.power if p.power is not none else "—" }}</td>
+          <td><button type="button" class="save">Save</button></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </main>
+  <div id="toast"></div>
+  <script>
+    const toast = document.getElementById("toast");
+    function showToast(msg, ok) {
+      toast.textContent = msg;
+      toast.className = ok ? "ok" : "err";
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => { toast.className = ""; toast.style.display = "none"; }, 2500);
+    }
+    document.querySelectorAll("button.save").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const row = btn.closest("tr");
+        const id = row.dataset.pieceId;
+        const enh = row.querySelector('input[name="enhancement"]').value;
+        const mast = row.querySelector('input[name="mastery"]').value;
+        const body = {};
+        if (enh !== "") body.enhancement_level = Number(enh);
+        if (mast === "") body.clear_mastery = true;
+        else body.mastery_level = Number(mast);
+        btn.disabled = true;
+        try {
+          const res = await fetch(`/api/gear/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.detail || res.statusText);
+          showToast(`Saved ${data.piece?.name || id}`, true);
+        } catch (err) {
+          showToast(String(err.message || err), false);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+  </script>
+</body>
+</html>
