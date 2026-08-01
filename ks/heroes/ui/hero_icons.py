@@ -16,6 +16,18 @@ _TROOP_FILL = {
     "archer": "#1a5276",
     "archers": "#1a5276",
 }
+_RARITY_STROKE = {
+    "legendary": "#f0c674",
+    "mythic": "#f0c674",
+    "gold": "#f0c674",
+    "epic": "#c39bd3",
+    "purple": "#c39bd3",
+    "rare": "#85c1e9",
+    "blue": "#85c1e9",
+    "uncommon": "#82e0aa",
+    "green": "#82e0aa",
+    "common": "#9aa0a6",
+}
 
 
 def hero_slug(name: str) -> str:
@@ -80,7 +92,9 @@ def _copy_name_screenshot(
 
 def _svg_for_hero(hero: HeroRecord) -> str:
     troop = (hero.troop_type or "").lower()
+    rarity = (hero.rarity or "").lower()
     fill = _TROOP_FILL.get(troop, "#3a3f4b")
+    stroke = _RARITY_STROKE.get(rarity, "#6cb2ff")
     letter = (hero.name.strip()[:1] or "?").upper()
     digest = hashlib.md5(hero.name.encode()).hexdigest()
     accent = f"#{digest[:6]}"
@@ -91,7 +105,7 @@ def _svg_for_hero(hero: HeroRecord) -> str:
       <stop offset="100%" stop-color="{accent}"/>
     </linearGradient>
   </defs>
-  <rect x="2" y="2" width="60" height="60" rx="12" fill="url(#g)" stroke="#6cb2ff" stroke-width="2"/>
+  <rect x="2" y="2" width="60" height="60" rx="12" fill="url(#g)" stroke="{stroke}" stroke-width="3"/>
   <text x="32" y="40" text-anchor="middle" font-family="Georgia, serif" font-size="28" font-weight="700" fill="#e8eaed">{letter}</text>
 </svg>
 """
