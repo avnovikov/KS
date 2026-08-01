@@ -1,0 +1,210 @@
+"""Tests for heroes roster UI (stars/pellets + star-scaled power)."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from ks.heroes.models import HeroRecord
+from ks.heroes.optimize.scoring import star_progress_factor
+from ks.heroes.store import HeroStore
+
+
+def _seed(tmp_path: Path) -> HeroStore:
+    store = HeroStore(tmp_path)
+    store.upsert(
+        HeroRecord(
+            name="Helga",
+            power=1_000_000,
+            troop_type="infantry",
+            rarity="legendary",
+            stars=2,
+            pellets=0,
+            roster_page=0,
+            roster_index=0,
+            scraped_at="2026-08-02T00:00:00Z",
+        )
+    )
+    return store
+
+
+def test_scale_power_uses_star_progress_ratio() -> None:
+    from ks.heroes.ui.hero_power import scale_power_for_star_change
+
+    old_s, old_p, new_s, new_p = 2, 0, 3, 0
+    power = 1_000_000
+    expected = round(
+        power
+        * star_progress_factor(new_s, new_p)
+        / star_progress_factor(old_s, old_p)
+    )
+    assert scale_power_for_star_change(power, old_s, old_p, new_s, new_p) == expected
+
+
+def test_scale_power_none_stays_none() -> None:
+    from ks.heroes.ui.hero_power import scale_power_for_star_change
+
+    assert scale_power_for_star_change(None, 1, 0, 2, 0) is None
+
+
+def test_scale_power_includes_pellets() -> None:
+    from ks.heroes.ui.hero_power import scale_power_for_star_change
+
+    before = scale_power_for_star_change(1_000_000, 2, 0, 2, 3)
+    assert before is not None
+    assert before > 1_000_000
+
+
+def test_hero_store_reload(tmp_path: Path) -> None:
+    store = _seed(tmp_path)
+    store.upsert(
+        HeroRecord(
+            name="Saul",
+            power=500_000,
+            stars=1,
+            pellets=0,
+            scraped_at="t",
+        )
+    )
+    # Simulate external write
+    payload = json.loads((tmp_path / "heroes.json").read_text(encoding="utf-8"))
+    payload["heroes"][0]["stars"] = 4
+    (tmp_path / "heroes.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+    store.reload()
+    helga = next(h for h in store.all_heroes() if h.name == "Helga")
+    assert helga.stars == 4
+
+
+def test_update_hero_stars_scales_power(tmp_path: Path) -> None:
+    from ks.heroes.ui.app import update_hero_stars
+
+    store = _seed(tmp_path)
+    updated = update_hero_stars(store, "Helga", stars=3, pellets=0)
+    assert updated.stars == 3
+    assert updated.pellets == 0
+    expected = round(
+        1_000_000
+        * star_progress_factor(3, 0)
+        / star_progress_factor(2, 0)
+    )
+    assert updated.power == expected
+
+    raw = json.loads((tmp_path / "heroes.json").read_text(encoding="utf-8"))
+    row = next(h for h in raw["heroes"] if h["name"] == "Helga")
+    assert row["stars"] == 3
+    assert row["power"] == expected
+
+
+def test_update_hero_stars_missing_power(tmp_path: Path) -> None:
+    from ks.heroes.ui.app import update_hero_stars
+
+    store = HeroStore(tmp_path)
+    store.upsert(
+        HeroRecord(name="Gordon", stars=1, pellets=0, scraped_at="t")
+    )
+    updated = update_hero_stars(store, "Gordon", stars=2)
+    assert updated.stars == 2
+    assert updated.power is None
+
+
+def test_update_hero_stars_rejects_range(tmp_path: Path) -> None:
+    from ks.heroes.ui.app import update_hero_stars
+
+    store = _seed(tmp_path)
+    with pytest.raises(ValueError, match="0..5"):
+        update_hero_stars(store, "Helga", stars=6)
+    with pytest.raises(ValueError, match="0..5"):
+        update_hero_stars(store, "Helga", pellets=6)
+
+
+def test_update_hero_unknown(tmp_path: Path) -> None:
+    from ks.heroes.ui.app import update_hero_stars
+
+    store = _seed(tmp_path)
+    with pytest.raises(KeyError):
+        update_hero_stars(store, "Missing", stars=1)
+
+
+def test_fastapi_heroes_patch_and_page(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.ui.app import create_app
+
+    _seed(tmp_path)
+    client = TestClient(create_app(heroes_dir=tmp_path))
+    page = client.get("/heroes")
+    assert page.status_code == 200
+    assert b"Helga" in page.content
+
+    listed = client.get("/api/heroes").json()["heroes"]
+    assert listed[0]["name"] == "Helga"
+
+    res = client.patch("/api/heroes/Helga", json={"stars": 3, "pellets": 2})
+    assert res.status_code == 200
+    body = res.json()["hero"]
+    assert body["stars"] == 3
+    assert body["pellets"] == 2
+    assert body["power"] == round(
+        1_000_000
+        * star_progress_factor(3, 2)
+        / star_progress_factor(2, 0)
+    )
+
+
+def test_fastapi_heroes_rescan_mocked(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.ui.app import create_app
+
+    _seed(tmp_path)
+
+    def fake_rescan(store, **_kwargs):
+        store.upsert(
+            HeroRecord(
+                name="Helga",
+                power=1_100_000,
+                stars=4,
+                pellets=1,
+                troop_type="infantry",
+                scraped_at="rescanned",
+            )
+        )
+        return store.all_heroes()
+
+    client = TestClient(
+        create_app(heroes_dir=tmp_path, heroes_rescan_fn=fake_rescan)
+    )
+    res = client.post("/api/heroes/rescan")
+    assert res.status_code == 200
+    assert res.json()["ok"] is True
+    assert res.json()["count"] >= 1
+    hero = res.json()["heroes"][0]
+    assert hero["power"] == 1_100_000
+    assert hero["stars"] == 4
+
+
+def test_create_app_requires_inventory(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from ks.heroes.ui.app import create_app
+
+    with pytest.raises(ValueError, match="gear_dir or heroes_dir"):
+        create_app()
+
+
+def test_home_redirects_to_heroes_when_no_gear(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.ui.app import create_app
+
+    _seed(tmp_path)
+    client = TestClient(create_app(heroes_dir=tmp_path))
+    res = client.get("/", follow_redirects=False)
+    assert res.status_code == 302
+    assert res.headers["location"] == "/heroes"

@@ -116,6 +116,11 @@ class HeroStore:
     def all_heroes(self) -> list[HeroRecord]:
         return sorted(self._heroes.values(), key=lambda h: (h.roster_page, h.roster_index, h.name))
 
+    def reload(self) -> None:
+        """Re-read heroes.json into memory (picks up external OCR writes)."""
+        self._heroes.clear()
+        self._load_existing_json()
+
     def flush(self) -> None:
         self._write_json()
         for hero in self._heroes.values():
