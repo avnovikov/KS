@@ -1,0 +1,59 @@
+# Swordland-style personal point scenario priors (tunable).
+# combat_rate: personal points per 10k enemy soldier power (80 attack / 40 defend).
+
+modes:
+  garrison:
+    combat_rate: 40
+    minutes_held: 40
+    personal_rate: 600          # Sanctum-like personal drip
+    p_first: 0.1
+    first_bonus: 500
+    loot_expected: 200
+    enemy_power_scale: 120000
+    require_widget: defense
+    formation_weights:
+      infantry: 1.2
+      cavalry: 0.6
+      archers: 0.8
+
+  rally_lead:
+    combat_rate: 80
+    minutes_held: 5
+    personal_rate: 100
+    p_first: 0.4
+    first_bonus: 2000
+    loot_expected: 800
+    enemy_power_scale: 150000
+    require_widget: attack
+    formation_weights:
+      infantry: 0.3
+      cavalry: 0.6
+      archers: 1.3
+
+  joiner:
+    combat_rate: 40
+    minutes_held: 0
+    personal_rate: 0
+    p_first: 0.0
+    first_bonus: 0
+    loot_expected: 2500
+    enemy_power_scale: 80000
+    require_widget: null
+    formation_weights:
+      infantry: 1.0
+      cavalry: 1.0
+      archers: 1.0
+
+  solo:
+    combat_rate: 80
+    minutes_held: 0
+    personal_rate: 0
+    p_first: 0.15
+    first_bonus: 1500
+    loot_expected: 500
+    enemy_power_scale: 100000
+    require_widget: null
+    formation_weights:
+      infantry: 0.5
+      cavalry: 0.7
+      archers: 1.2

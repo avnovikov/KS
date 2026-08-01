@@ -51,6 +51,7 @@ def test_scrape_hero_tap_order_and_fields():
         index=3,
         ocr_fn=fake_ocr,
         sleep_fn=lambda _s: None,
+        names_dir=None,
     )
     assert hero is not None
     assert hero.name == "Jabel"
@@ -61,6 +62,7 @@ def test_scrape_hero_tap_order_and_fields():
     assert hero.stats.conquest["Hero Attack"] == 1619
     assert len(hero.skills) == 1
     assert hero.skills[0].name == "Rally Flag"
+    assert hero.name_screenshot is None
 
     list_btn = (cfg.nav.stats_list_button.x, cfg.nav.stats_list_button.y)
     skills_tab = (cfg.nav.skills_tab.x, cfg.nav.skills_tab.y)

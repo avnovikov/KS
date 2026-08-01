@@ -1,0 +1,7 @@
+# Deprecated for name matching — use the hybrid catalog instead:
+#   artifacts/heroes/catalog_cache/kingshotpro_heroes.json  (name, rarity, troop)
+#   config/hero_catalog.yaml                               (widget overlay + names)
+#
+# Kept only so older notes don't break; collectors resolve names via
+# ks.heroes.name_ocr.load_name_catalog().
+names: []

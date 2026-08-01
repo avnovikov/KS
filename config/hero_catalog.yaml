@@ -1,0 +1,338 @@
+# Hero semantics overlay for the recommend ILP.
+# Sources:
+#   - https://kingshotmastery.com/guides/kingshot-widget-guide (widget type / march skill / priority)
+#   - https://kingshotguide.net/guides/joiner-hero-mechanics-no-one-told-you-about/ (effect_op)
+#   - https://kingshotdata.com/heroes/* (max skill values, best-effort)
+# Join key = scraped HeroRecord.name. KingshotPro cache fills gen/troop/tiers.
+
+heroes:
+  # --- Mythic offensive widgets ---
+  Amadeus:
+    widget_type: attack
+    widget_name: Aegis of Fate
+    widget_march_skill: Rally Attack +15%
+    rally_widget_priority: 5
+    garrison_widget_priority: 2
+    effects:
+      - kind: lethality_up
+        max_value: 25.0
+        applies_to: expedition
+        effect_op: 101
+        first_expedition: true
+      - kind: attack_up
+        max_value: 25.0
+        applies_to: expedition
+      - kind: rally_attack
+        max_value: 15.0
+        applies_to: widget
+
+  Helga:
+    widget_type: attack
+    widget_name: Bands of Tyre
+    widget_march_skill: Rally Troops' Lethality +15%
+    rally_widget_priority: 4
+    garrison_widget_priority: 2
+    effects:
+      - kind: rally_lethality
+        max_value: 15.0
+        applies_to: widget
+
+  Petra:
+    widget_type: attack
+    widget_name: Fate's Writ
+    widget_march_skill: Rally Squad Attack +15%
+    rally_widget_priority: 4
+    garrison_widget_priority: 2
+    effects:
+      - kind: attack_up
+        max_value: 50.0
+        applies_to: expedition
+      - kind: rally_attack
+        max_value: 15.0
+        applies_to: widget
+
+  Marlin:
+    widget_type: attack
+    widget_name: Mistweaver
+    widget_march_skill: Rally Squads' Lethality +15%
+    rally_widget_priority: 3
+    garrison_widget_priority: 2
+    effects:
+      - kind: rally_lethality
+        max_value: 15.0
+        applies_to: widget
+
+  Rosa:
+    widget_type: attack
+    widget_name: Aeolian
+    widget_march_skill: Rally Squad's Lethality +15%
+    rally_widget_priority: 4
+    garrison_widget_priority: 2
+    effects:
+      - kind: rally_lethality
+        max_value: 15.0
+        applies_to: widget
+
+  Yang:
+    widget_type: attack
+    widget_name: Frostkin
+    widget_march_skill: Rally Squads' Lethality +15%
+    rally_widget_priority: 5
+    garrison_widget_priority: 2
+    effects:
+      - kind: rally_lethality
+        max_value: 15.0
+        applies_to: widget
+
+  Ava:
+    widget_type: attack
+    widget_name: Chameleos
+    widget_march_skill: Rally Squads' Lethality +15%
+    rally_widget_priority: 5
+    garrison_widget_priority: 1
+    effects:
+      - kind: rally_lethality
+        max_value: 15.0
+        applies_to: widget
+
+  # --- Mythic defensive widgets ---
+  Zoe:
+    widget_type: defense
+    widget_name: The Unrighteous
+    widget_march_skill: Defender Squads' Attack +15%
+    rally_widget_priority: 2
+    garrison_widget_priority: 5
+    effects:
+      - kind: attack_up
+        max_value: 25.0
+        applies_to: expedition
+        effect_op: 102
+        first_expedition: true
+      - kind: defender_attack
+        max_value: 15.0
+        applies_to: widget
+
+  Jabel:
+    widget_type: defense
+    widget_name: Greaves of Faith
+    widget_march_skill: Defender Troops' Lethality +15%
+    rally_widget_priority: 2
+    garrison_widget_priority: 4
+    effects:
+      - kind: lethality_up
+        max_value: 15.0
+        applies_to: widget
+
+  Saul:
+    widget_type: defense
+    widget_march_skill: Defender (dual DefenseUp)
+    rally_widget_priority: 2
+    garrison_widget_priority: 4
+    effects:
+      - kind: defense_up
+        max_value: 25.0
+        applies_to: expedition
+        effect_op: 112
+        first_expedition: true
+      - kind: defense_up
+        max_value: 25.0
+        applies_to: expedition
+        effect_op: 113
+
+  Hilde:
+    widget_type: defense
+    widget_name: Revelation
+    widget_march_skill: Defender Squads' Health
+    rally_widget_priority: 1
+    garrison_widget_priority: 4
+    effects:
+      - kind: defense_up
+        max_value: 20.0
+        applies_to: expedition
+        effect_op: 112
+        first_expedition: true
+      - kind: attack_up
+        max_value: 20.0
+        applies_to: expedition
+        effect_op: 102
+
+  Eric:
+    widget_type: defense
+    widget_name: Anvil of Truth
+    widget_march_skill: Defender Squad Defense +15%
+    rally_widget_priority: 2
+    garrison_widget_priority: 4
+    effects:
+      - kind: opp_damage_down
+        max_value: 20.0
+        applies_to: expedition
+        effect_op: 202
+        first_expedition: true
+      - kind: defender_defense
+        max_value: 15.0
+        applies_to: widget
+
+  Alcar:
+    widget_type: defense
+    widget_name: Praetorian Guard
+    widget_march_skill: Defender Squads' Health +15%
+    rally_widget_priority: 2
+    garrison_widget_priority: 4
+    effects:
+      - kind: defender_health
+        max_value: 15.0
+        applies_to: widget
+
+  Triton:
+    widget_type: defense
+    widget_name: Tidal Scepter
+    widget_march_skill: Defender Squad Defense +15%
+    rally_widget_priority: 2
+    garrison_widget_priority: 5
+    effects:
+      - kind: defender_defense
+        max_value: 15.0
+        applies_to: widget
+
+  Sophia:
+    widget_type: defense
+    widget_name: Scarlet Rose
+    rally_widget_priority: 2
+    garrison_widget_priority: 4
+    effects:
+      - kind: defender_attack
+        max_value: 15.0
+        applies_to: widget
+
+  Charles:
+    widget_type: defense
+    widget_name: Justice Fist
+    widget_march_skill: Defender Squad's Health +15%
+    rally_widget_priority: 1
+    garrison_widget_priority: 5
+    effects:
+      - kind: defender_health
+        max_value: 15.0
+        applies_to: widget
+
+  Wee & Woo:
+    widget_type: defense
+    widget_name: Mortar
+    widget_march_skill: Defender Squad's Attack +15%
+    rally_widget_priority: 2
+    garrison_widget_priority: 5
+    effects:
+      - kind: defender_attack
+        max_value: 15.0
+        applies_to: widget
+
+  # --- Epic / SR joiners (no widget) ---
+  Chenko:
+    widget_type: none
+    troop: cavalry
+    effects:
+      - kind: lethality_up
+        max_value: 25.0
+        applies_to: expedition
+        effect_op: 101
+        first_expedition: true
+
+  Yeonwoo:
+    widget_type: none
+    troop: archer
+    effects:
+      - kind: lethality_up
+        max_value: 25.0
+        applies_to: expedition
+        effect_op: 101
+        first_expedition: true
+
+  Amane:
+    widget_type: none
+    troop: archer
+    effects:
+      - kind: attack_up
+        max_value: 25.0
+        applies_to: expedition
+        effect_op: 102
+        first_expedition: true
+
+  Howard:
+    widget_type: none
+    troop: infantry
+    effects:
+      - kind: damage_taken_down
+        max_value: 20.0
+        applies_to: expedition
+        effect_op: 111
+        first_expedition: true
+
+  Quinn:
+    widget_type: none
+    troop: archer
+    effects:
+      - kind: damage_taken_down
+        max_value: 20.0
+        applies_to: expedition
+        effect_op: 111
+        first_expedition: true
+
+  Gordon:
+    widget_type: none
+    troop: cavalry
+    effects:
+      - kind: defense_up
+        max_value: 25.0
+        applies_to: expedition
+        effect_op: 113
+        first_expedition: true
+
+  Fahd:
+    widget_type: none
+    troop: cavalry
+    effects:
+      - kind: opp_damage_down
+        max_value: 20.0
+        applies_to: expedition
+        effect_op: 201
+        first_expedition: true
+
+  Margot:
+    widget_type: defense
+    effects:
+      - kind: attack_up
+        max_value: 25.0
+        applies_to: expedition
+        effect_op: 102
+        first_expedition: true
+
+  Vivian:
+    widget_type: attack
+    effects:
+      - kind: attack_up
+        max_value: 25.0
+        applies_to: expedition
+      - kind: rally_attack
+        max_value: 15.0
+        applies_to: widget
+
+  Jaeger:
+    widget_type: defense
+    effects:
+      - kind: defense_up
+        max_value: 20.0
+        applies_to: expedition
+
+  Long Fei:
+    widget_type: attack
+    effects:
+      - kind: attack_up
+        max_value: 25.0
+        applies_to: expedition
+
+  Thrud:
+    widget_type: attack
+    effects:
+      - kind: lethality_up
+        max_value: 25.0
+        applies_to: expedition

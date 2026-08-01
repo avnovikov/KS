@@ -1,0 +1,124 @@
+source: https://kingshotoptimizer.com/
+source_version: 1.12.4
+extracted_on: '2026-08-01'
+notes:
+- Copied from Kingshot Optimizer public web app JS for local planning.
+- Default site optimizer optimizes ONE infantry+cavalry+archer set for Expedition.
+- For early Arena/Conquest, prefer early_game_combat weights and do NOT ignore conquest
+  imbuements (R+40/+80).
+formula: incremental_forgehammers_to_reach_mastery_n = n * 10
+cumulative_formula: n*(n+1)*10/2
+totals:
+  0_to_10: 550
+  0_to_20: 2100
+  mythic_gear_mastery_11_to_20: 55
+levels:
+- mastery: 0
+  forgehammers_cost: 0
+  cumulative_forgehammers: 0
+  mythic_gear_cost: 0
+  cumulative_mythic_gear_for_mastery: 0
+- mastery: 1
+  forgehammers_cost: 10
+  cumulative_forgehammers: 10
+  mythic_gear_cost: 0
+  cumulative_mythic_gear_for_mastery: 0
+- mastery: 2
+  forgehammers_cost: 20
+  cumulative_forgehammers: 30
+  mythic_gear_cost: 0
+  cumulative_mythic_gear_for_mastery: 0
+- mastery: 3
+  forgehammers_cost: 30
+  cumulative_forgehammers: 60
+  mythic_gear_cost: 0
+  cumulative_mythic_gear_for_mastery: 0
+- mastery: 4
+  forgehammers_cost: 40
+  cumulative_forgehammers: 100
+  mythic_gear_cost: 0
+  cumulative_mythic_gear_for_mastery: 0
+- mastery: 5
+  forgehammers_cost: 50
+  cumulative_forgehammers: 150
+  mythic_gear_cost: 0
+  cumulative_mythic_gear_for_mastery: 0
+- mastery: 6
+  forgehammers_cost: 60
+  cumulative_forgehammers: 210
+  mythic_gear_cost: 0
+  cumulative_mythic_gear_for_mastery: 0
+- mastery: 7
+  forgehammers_cost: 70
+  cumulative_forgehammers: 280
+  mythic_gear_cost: 0
+  cumulative_mythic_gear_for_mastery: 0
+- mastery: 8
+  forgehammers_cost: 80
+  cumulative_forgehammers: 360
+  mythic_gear_cost: 0
+  cumulative_mythic_gear_for_mastery: 0
+- mastery: 9
+  forgehammers_cost: 90
+  cumulative_forgehammers: 450
+  mythic_gear_cost: 0
+  cumulative_mythic_gear_for_mastery: 0
+- mastery: 10
+  forgehammers_cost: 100
+  cumulative_forgehammers: 550
+  mythic_gear_cost: 0
+  cumulative_mythic_gear_for_mastery: 0
+- mastery: 11
+  forgehammers_cost: 110
+  cumulative_forgehammers: 660
+  mythic_gear_cost: 1
+  cumulative_mythic_gear_for_mastery: 1
+- mastery: 12
+  forgehammers_cost: 120
+  cumulative_forgehammers: 780
+  mythic_gear_cost: 2
+  cumulative_mythic_gear_for_mastery: 3
+- mastery: 13
+  forgehammers_cost: 130
+  cumulative_forgehammers: 910
+  mythic_gear_cost: 3
+  cumulative_mythic_gear_for_mastery: 6
+- mastery: 14
+  forgehammers_cost: 140
+  cumulative_forgehammers: 1050
+  mythic_gear_cost: 4
+  cumulative_mythic_gear_for_mastery: 10
+- mastery: 15
+  forgehammers_cost: 150
+  cumulative_forgehammers: 1200
+  mythic_gear_cost: 5
+  cumulative_mythic_gear_for_mastery: 15
+- mastery: 16
+  forgehammers_cost: 160
+  cumulative_forgehammers: 1360
+  mythic_gear_cost: 6
+  cumulative_mythic_gear_for_mastery: 21
+- mastery: 17
+  forgehammers_cost: 170
+  cumulative_forgehammers: 1530
+  mythic_gear_cost: 7
+  cumulative_mythic_gear_for_mastery: 28
+- mastery: 18
+  forgehammers_cost: 180
+  cumulative_forgehammers: 1710
+  mythic_gear_cost: 8
+  cumulative_mythic_gear_for_mastery: 36
+- mastery: 19
+  forgehammers_cost: 190
+  cumulative_forgehammers: 1900
+  mythic_gear_cost: 9
+  cumulative_mythic_gear_for_mastery: 45
+- mastery: 20
+  forgehammers_cost: 200
+  cumulative_forgehammers: 2100
+  mythic_gear_cost: 10
+  cumulative_mythic_gear_for_mastery: 55
+requirements:
+  mastery_requires_enhancement: 20
+  epic_cannot_use_mastery: true
+  red_requires_mastery_min: 10

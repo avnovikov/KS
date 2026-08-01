@@ -59,13 +59,15 @@ def clean_name(text: str) -> str | None:
     """Return a usable hero name or None if the crop looks empty."""
     if not isinstance(text, str):
         raise ValueError(f"text must be a string; got {type(text).__name__}")
-    name = " ".join(text.split()).strip()
+    # Keep letters / hyphen / apostrophe; drop OCR junk.
+    cleaned = re.sub(r"[^A-Za-z\-'\s]+", " ", text)
+    name = " ".join(cleaned.split()).strip()
     if len(name) < 2:
         return None
-    # Reject pure noise / digits-only crops from empty slots.
     if name.isdigit():
         return None
-    return name
+    # Prefer Title Case tokens for stable dedupe keys.
+    return " ".join(part.capitalize() for part in name.split())
 
 
 def parse_stats_panel(text: str) -> HeroStats:
@@ -75,21 +77,63 @@ def parse_stats_panel(text: str) -> HeroStats:
 
     conquest: dict[str, int] = {}
     for match in _CONQUEST_LINE.finditer(text):
-        label = match.group(1).title().replace("Hero ", "Hero ").strip()
-        # Normalize casing to Title Case words as in UI
-        label = " ".join(w.capitalize() for w in label.split())
+        label = " ".join(w.capitalize() for w in match.group(1).split())
         conquest[label] = int(match.group(2).replace(",", ""))
 
+    # Fuzzy path: OCR often drops leading letters ("ero Attack", "scort Health").
+    if len(conquest) < 6:
+        escort_mode = False
+        for line in text.splitlines():
+            low = line.lower().strip()
+            if not low:
+                continue
+            if "exped" in low or "edition" in low:
+                break
+            if "escort" in low or low.startswith("scort") or low.startswith("ort "):
+                escort_mode = True
+            match = re.search(
+                r"(?:ero|scort|ort|hero|escort)?\s*(Attack|Defense|Health)\s*([\d,]+)",
+                line,
+                re.IGNORECASE,
+            )
+            if not match:
+                continue
+            kind = match.group(1).title()
+            value = int(match.group(2).replace(",", ""))
+            prefix = "Escort" if escort_mode else "Hero"
+            key = f"{prefix} {kind}"
+            if key in conquest and prefix == "Hero":
+                key = f"Escort {kind}"
+            conquest.setdefault(key, value)
+            if kind == "Health" and prefix == "Hero":
+                escort_mode = True
+
     expedition: dict[str, float] = {}
-    # Only treat lines after an "Expedition" marker when present.
     lower = text.lower()
     exp_idx = lower.find("expedition")
+    if exp_idx < 0:
+        exp_idx = lower.find("edition")  # truncated "Expedition"
     exp_region = text[exp_idx:] if exp_idx >= 0 else text
     for match in _EXPEDITION_LINE.finditer(exp_region):
         label = " ".join(w.capitalize() for w in match.group(1).split())
-        if label.lower() in {"hero stats", "conquest", "expedition"}:
+        if label.lower() in {"hero stats", "conquest", "expedition", "edition"}:
             continue
         expedition[label] = float(match.group(2))
+    # Fuzzy percent lines: "jalry Attack +101.37%"
+    if len(expedition) < 2:
+        for match in re.finditer(
+            r"([A-Za-z][A-Za-z ]{2,40}?)\s*\+?\s*([\d.]+)\s*%",
+            exp_region,
+        ):
+            label = " ".join(w.capitalize() for w in match.group(1).split())
+            low = label.lower()
+            if low in {"hero stats", "conquest", "expedition", "upgrade preview"}:
+                continue
+            # Repair common OCR truncations for cavalry lines
+            if "alry" in low or "cavalry" in low or "jalry" in low:
+                kind = label.split()[-1] if " " in label else label
+                label = f"Cavalry {kind.capitalize()}"
+            expedition.setdefault(label, float(match.group(2)))
 
     return HeroStats(conquest=conquest, expedition=expedition, raw_text=text)
 

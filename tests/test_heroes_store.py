@@ -30,6 +30,7 @@ def _sample() -> HeroRecord:
         roster_page=0,
         roster_index=0,
         scraped_at="2026-08-01T12:00:00Z",
+        name_screenshot="names/Jabel.png",
     )
 
 
@@ -40,12 +41,14 @@ def test_hero_store_json_and_sqlite_round_trip(tmp_path: Path):
     raw = json.loads(store.json_path.read_text(encoding="utf-8"))
     assert raw["heroes"][0]["name"] == "Jabel"
     assert raw["heroes"][0]["stats"]["conquest"]["Hero Attack"] == 1619
+    assert raw["heroes"][0]["name_screenshot"] == "names/Jabel.png"
 
     with sqlite3.connect(store.db_path) as conn:
         row = conn.execute(
-            "SELECT power, rarity, escorts FROM heroes WHERE name = ?", ("Jabel",)
+            "SELECT power, rarity, escorts, name_screenshot FROM heroes WHERE name = ?",
+            ("Jabel",),
         ).fetchone()
-        assert row == (123456, "SSR", 8)
+        assert row == (123456, "SSR", 8, "names/Jabel.png")
         skills = conn.execute(
             "SELECT name, level, current_bonus FROM skills WHERE hero_name = ?",
             ("Jabel",),

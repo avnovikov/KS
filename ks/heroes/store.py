@@ -17,6 +17,7 @@ class HeroStore:
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.json_path = self.out_dir / "heroes.json"
         self.db_path = self.out_dir / "heroes.db"
+        self.names_dir = self.out_dir / "names"
         self._heroes: dict[str, HeroRecord] = {}
         self._init_db()
         self._load_existing_json()
@@ -34,7 +35,8 @@ class HeroStore:
                     stars INTEGER,
                     roster_page INTEGER NOT NULL,
                     roster_index INTEGER NOT NULL,
-                    scraped_at TEXT NOT NULL
+                    scraped_at TEXT NOT NULL,
+                    name_screenshot TEXT
                 );
                 CREATE TABLE IF NOT EXISTS hero_stats (
                     hero_name TEXT NOT NULL,
@@ -58,12 +60,18 @@ class HeroStore:
                 );
                 """
             )
-            cols = {
+            skill_cols = {
                 row[1]
                 for row in conn.execute("PRAGMA table_info(skills)").fetchall()
             }
-            if "current_bonus" not in cols:
+            if "current_bonus" not in skill_cols:
                 conn.execute("ALTER TABLE skills ADD COLUMN current_bonus REAL")
+            hero_cols = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(heroes)").fetchall()
+            }
+            if "name_screenshot" not in hero_cols:
+                conn.execute("ALTER TABLE heroes ADD COLUMN name_screenshot TEXT")
 
     def _load_existing_json(self) -> None:
         if not self.json_path.is_file():
@@ -106,8 +114,8 @@ class HeroStore:
                 """
                 INSERT INTO heroes (
                     name, power, rarity, troop_type, escorts, stars,
-                    roster_page, roster_index, scraped_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    roster_page, roster_index, scraped_at, name_screenshot
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(name) DO UPDATE SET
                     power=excluded.power,
                     rarity=excluded.rarity,
@@ -116,7 +124,8 @@ class HeroStore:
                     stars=excluded.stars,
                     roster_page=excluded.roster_page,
                     roster_index=excluded.roster_index,
-                    scraped_at=excluded.scraped_at
+                    scraped_at=excluded.scraped_at,
+                    name_screenshot=excluded.name_screenshot
                 """,
                 (
                     hero.name,
@@ -128,6 +137,7 @@ class HeroStore:
                     hero.roster_page,
                     hero.roster_index,
                     hero.scraped_at,
+                    hero.name_screenshot,
                 ),
             )
             conn.execute("DELETE FROM hero_stats WHERE hero_name = ?", (hero.name,))

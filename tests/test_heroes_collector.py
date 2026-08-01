@@ -84,3 +84,53 @@ def test_collect_heroes_dedupes_by_name(tmp_path):
     )
     assert len(heroes) == 1
     assert heroes[0].name == "Same"
+
+
+def test_collect_heroes_keeps_manual_name(tmp_path):
+    cfg = load_heroes_config()
+    device = RecordingDevice(png_bytes=_png())
+    store = HeroStore(tmp_path)
+    store.upsert(
+        HeroRecord(
+            name="Olive",
+            power=150816,
+            roster_page=0,
+            roster_index=0,
+            scraped_at="t0",
+        )
+    )
+
+    kept: list[str | None] = []
+
+    def fake_scrape(
+        device,
+        cfg,
+        *,
+        page,
+        index,
+        ocr_fn=None,
+        sleep_fn=None,
+        keep_name=None,
+        **_kw,
+    ):
+        kept.append(keep_name)
+        if page == 0 and index == 0:
+            return HeroRecord(
+                name=keep_name or "Hero_p0_i0",
+                power=150816,
+                roster_page=0,
+                roster_index=0,
+                scraped_at="t1",
+                name_screenshot="names/Olive.png",
+            )
+        return None
+
+    heroes = collect_heroes(
+        device,
+        cfg,
+        store,
+        sleep_fn=lambda _s: None,
+        scrape_fn=fake_scrape,
+    )
+    assert kept[0] == "Olive"
+    assert heroes[0].name == "Olive"

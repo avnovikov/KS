@@ -1,0 +1,46 @@
+# Manual troop inventory — counts you own per type/tier.
+# Battle stats for EVERY tier (T1–T11 × Truegold 0–5) are in:
+#   config/troop_stats.yaml
+# Source: https://kingshotsimulator.com/troop-base-stats
+
+march_capacity: 80280
+truegold: 0
+
+infantry:
+  1: 0
+  2: 0
+  3: 1015
+  4: 0
+  5: 0
+  6: 30084
+  7: 2759
+  8: 0
+  9: 0
+  10: 0
+  11: 0
+
+cavalry:
+  1: 1000
+  2: 2288
+  3: 4197
+  4: 114
+  5: 0
+  6: 17473
+  7: 2852
+  8: 0
+  9: 0
+  10: 0
+  11: 0
+
+archers:
+  1: 245
+  2: 1024
+  3: 2630
+  4: 0
+  5: 0
+  6: 20420
+  7: 5067
+  8: 0
+  9: 0
+  10: 0
+  11: 0

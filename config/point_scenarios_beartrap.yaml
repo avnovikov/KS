@@ -1,0 +1,42 @@
+# Bear Trap / Bear Hunt scenarios — only starter (rally_lead) vs joiner.
+# "Points" here are a damage-contribution proxy for ranking modes, not Relic Points.
+#
+# Usage:
+#   ks-heroes recommend \
+#     --heroes artifacts/heroes/.../heroes.json \
+#     --event config/events/beartrap.yaml \
+#     --scenarios config/point_scenarios_beartrap.yaml
+#
+# --force-role rally_lead  → force starter/host lineup
+# --force-role joiner      → force joiner first-skill lineup
+
+modes:
+  # Starter / host: you lead the bear rally — widgets ON, full 3-hero skills.
+  rally_lead:
+    combat_rate: 100          # high weight on strength → damage proxy
+    minutes_held: 0
+    personal_rate: 0
+    p_first: 0
+    first_bonus: 0
+    loot_expected: 500        # small host bonus for opening/leading
+    enemy_power_scale: 200000
+    require_widget: attack
+    formation_weights:
+      infantry: 0.4
+      cavalry: 0.7
+      archers: 1.4            # bear meta often archer-heavy late gens
+
+  # Joiner: widgets OFF; score driven by first expedition skill + troops.
+  joiner:
+    combat_rate: 70
+    minutes_held: 0
+    personal_rate: 0
+    p_first: 0
+    first_bonus: 0
+    loot_expected: 0
+    enemy_power_scale: 150000
+    require_widget: null
+    formation_weights:
+      infantry: 0.5
+      cavalry: 0.8
+      archers: 1.3

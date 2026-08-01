@@ -80,6 +80,7 @@ class HeroRecord:
     roster_page: int = 0
     roster_index: int = 0
     scraped_at: str = ""
+    name_screenshot: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -94,6 +95,7 @@ class HeroRecord:
             "roster_page": self.roster_page,
             "roster_index": self.roster_index,
             "scraped_at": self.scraped_at,
+            "name_screenshot": self.name_screenshot,
         }
 
     @classmethod
@@ -111,4 +113,5 @@ class HeroRecord:
             roster_page=int(data.get("roster_page") or 0),
             roster_index=int(data.get("roster_index") or 0),
             scraped_at=str(data.get("scraped_at") or ""),
+            name_screenshot=data.get("name_screenshot"),
         )

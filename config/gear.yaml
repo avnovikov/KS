@@ -1,0 +1,59 @@
+# Calibrated for BlueStacks portrait 1080x1920 — Backpack > Gear tab (2026-08-01).
+# Start with the Gear inventory grid visible before running collect-gear.
+adb:
+  serial: 127.0.0.1:5555
+
+delays_ms:
+  after_tap: 700
+  after_open: 1100
+  after_tab: 900
+  after_skill: 700
+
+save_screenshots: true
+
+grid:
+  # One screen only: 4 columns × 5 rows (no paging — inventory fits one page).
+  max_pages: 1
+  # 4 columns × 5 rows of backpack gear tiles
+  cells:
+    - {x: 135, y: 400}
+    - {x: 405, y: 400}
+    - {x: 675, y: 400}
+    - {x: 945, y: 400}
+    - {x: 135, y: 670}
+    - {x: 405, y: 670}
+    - {x: 675, y: 670}
+    - {x: 945, y: 670}
+    - {x: 135, y: 940}
+    - {x: 405, y: 940}
+    - {x: 675, y: 940}
+    - {x: 945, y: 940}
+    - {x: 135, y: 1210}
+    - {x: 405, y: 1210}
+    - {x: 675, y: 1210}
+    - {x: 945, y: 1210}
+    - {x: 135, y: 1480}
+    - {x: 405, y: 1480}
+    - {x: 675, y: 1480}
+    - {x: 945, y: 1480}
+  page_swipe:
+    x1: 540
+    y1: 1500
+    x2: 540
+    y2: 500
+    duration_ms: 400
+
+nav:
+  # Gear Details modal X (top-right)
+  close_detail: {x: 990, y: 290}
+  back: {x: 55, y: 95}
+
+ocr:
+  # Full Gear Details modal body
+  detail_panel: {x: 80, y: 240, w: 920, h: 1100}
+  # Optional focused crops (icon badges / title)
+  enhancement: {x: 220, y: 330, w: 90, h: 50}
+  mastery: {x: 150, y: 430, w: 100, h: 40}
+  name: {x: 320, y: 320, w: 420, h: 50}
+  rarity: {x: 320, y: 370, w: 200, h: 40}
+  power: {x: 320, y: 410, w: 220, h: 45}
