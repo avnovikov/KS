@@ -1,0 +1,61 @@
+# Placeholder coordinates for BlueStacks portrait ~1080x1920.
+# Calibrate against a live screencap before using --live.
+adb:
+  serial: 127.0.0.1:5555
+
+delays_ms:
+  after_tap: 400
+  after_open: 800
+  after_tab: 600
+  after_skill: 500
+
+roster:
+  max_pages: 20
+  cells:
+    - {x: 200, y: 420}
+    - {x: 440, y: 420}
+    - {x: 680, y: 420}
+    - {x: 920, y: 420}
+    - {x: 200, y: 700}
+    - {x: 440, y: 700}
+    - {x: 680, y: 700}
+    - {x: 920, y: 700}
+    - {x: 200, y: 980}
+    - {x: 440, y: 980}
+    - {x: 680, y: 980}
+    - {x: 920, y: 980}
+    - {x: 200, y: 1260}
+    - {x: 440, y: 1260}
+    - {x: 680, y: 1260}
+    - {x: 920, y: 1260}
+  page_swipe:
+    x1: 900
+    y1: 900
+    x2: 200
+    y2: 900
+    duration_ms: 350
+
+nav:
+  back: {x: 70, y: 120}
+  stats_tab: {x: 270, y: 1850}
+  skills_tab: {x: 540, y: 1850}
+  stats_list_button: {x: 980, y: 1680}
+
+skills:
+  slots:
+    - {x: 160, y: 520}
+    - {x: 160, y: 720}
+    - {x: 160, y: 920}
+    - {x: 920, y: 520}
+    - {x: 920, y: 720}
+    - {x: 920, y: 920}
+
+ocr:
+  name: {x: 300, y: 90, w: 480, h: 70}
+  power: {x: 300, y: 160, w: 480, h: 50}
+  rarity: {x: 40, y: 100, w: 160, h: 80}
+  troop_type: {x: 400, y: 210, w: 280, h: 40}
+  escorts: {x: 80, y: 1550, w: 200, h: 60}
+  stars: {x: 480, y: 1480, w: 120, h: 50}
+  stats_panel: {x: 520, y: 520, w: 500, h: 700}
+  skill_panel: {x: 80, y: 1180, w: 920, h: 280}

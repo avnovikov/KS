@@ -24,6 +24,7 @@ dev = ["pytest>=8.0"]
 ks = "ks.cli:main"
 ks-discord = "ks.discord.bot:main"
 ks-cartograph = "ks.cartograph.cli:main"
+ks-heroes = "ks.heroes.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["ks*"]
