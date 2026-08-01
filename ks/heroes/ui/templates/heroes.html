@@ -36,10 +36,6 @@
     .header-text { min-width: 12rem; }
     h1 { margin: 0 0 0.35rem; font-size: 1.35rem; font-weight: 600; }
     .meta { color: var(--muted); font-size: 0.85rem; }
-    .nav { display: flex; gap: 0.75rem; margin-top: 0.45rem; font-size: 0.85rem; }
-    .nav a { color: var(--accent); text-decoration: none; }
-    .nav a:hover { text-decoration: underline; }
-    .nav .current { color: var(--text); font-weight: 600; }
     .header-actions { display: flex; align-items: center; gap: 0.6rem; }
     button.rescan {
       padding: 0.45rem 0.85rem;
@@ -69,6 +65,14 @@
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
+    th.sortable {
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    th.sortable:hover { color: var(--accent); }
+    th.sortable[aria-sort="ascending"]::after { content: " ↑"; color: var(--accent); }
+    th.sortable[aria-sort="descending"]::after { content: " ↓"; color: var(--accent); }
     tr:hover td { background: rgba(108, 178, 255, 0.04); }
     input[type="number"] {
       width: 4.5rem;
@@ -96,13 +100,42 @@
       min-width: 12rem;
     }
     .name-cell img {
-      width: 40px;
-      height: 40px;
-      border-radius: 8px;
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
       object-fit: cover;
       background: #1a1d23;
       flex-shrink: 0;
+      border: 2px solid var(--border);
     }
+    .name-cell img.rarity-legendary,
+    .name-cell img.rarity-mythic,
+    .name-cell img.rarity-gold { border-color: #f0c674; }
+    .name-cell img.rarity-epic,
+    .name-cell img.rarity-purple { border-color: #c39bd3; }
+    .name-cell img.rarity-rare,
+    .name-cell img.rarity-blue { border-color: #85c1e9; }
+    .name-cell img.rarity-uncommon,
+    .name-cell img.rarity-green { border-color: #82e0aa; }
+    .hero-name-link {
+      background: none;
+      border: none;
+      padding: 0;
+      color: var(--accent);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: left;
+    }
+    .hero-name-link:hover {
+      text-decoration: underline;
+      background: none;
+    }
+    .rarity { text-transform: capitalize; font-weight: 550; }
+    .rarity.legendary, .rarity.mythic, .rarity.gold { color: #f0c674; }
+    .rarity.epic, .rarity.purple { color: #c39bd3; }
+    .rarity.rare, .rarity.blue { color: #85c1e9; }
+    .rarity.uncommon, .rarity.green { color: #82e0aa; }
     .power-cell { font-variant-numeric: tabular-nums; }
     .hint { color: var(--muted); font-size: 0.8rem; margin: 0 0 0.85rem; }
     #toast {
@@ -116,22 +149,112 @@
       display: none;
       max-width: 22rem;
       font-size: 0.85rem;
+      z-index: 40;
     }
     #toast.ok { border-color: var(--ok); color: var(--ok); display: block; }
     #toast.err { border-color: var(--err); color: var(--err); display: block; }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      z-index: 30;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      width: min(720px, 100%);
+      max-height: min(88vh, 900px);
+      overflow: auto;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+    }
+    .modal-header {
+      display: flex;
+      gap: 0.9rem;
+      align-items: center;
+      padding: 1rem 1.1rem;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: var(--panel);
+    }
+    .modal-header img {
+      width: 64px;
+      height: 64px;
+      border-radius: 12px;
+      object-fit: cover;
+      border: 2px solid var(--border);
+      background: #1a1d23;
+    }
+    .modal-header h2 {
+      margin: 0;
+      font-size: 1.2rem;
+    }
+    .modal-sub { color: var(--muted); font-size: 0.85rem; margin-top: 0.2rem; }
+    .modal-close {
+      margin-left: auto;
+      align-self: flex-start;
+    }
+    .modal-body { padding: 1rem 1.1rem 1.25rem; }
+    .fact-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+      gap: 0.55rem 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .fact {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.45rem 0.55rem;
+    }
+    .fact-k {
+      display: block;
+      color: var(--muted);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 0.15rem;
+    }
+    .fact-v { font-variant-numeric: tabular-nums; }
+    .section-title {
+      margin: 0.85rem 0 0.4rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .stat-table, .skill-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      margin-bottom: 0.5rem;
+    }
+    .stat-table th, .stat-table td,
+    .skill-table th, .skill-table td {
+      border-bottom: 1px solid var(--border);
+      padding: 0.35rem 0.4rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    .stat-table th, .skill-table th { color: var(--muted); font-weight: 500; }
+    .skill-desc { color: var(--muted); font-size: 0.8rem; }
+    .empty { color: var(--muted); font-size: 0.85rem; }
   </style>
 </head>
 <body>
   <header>
     <div class="header-text">
-      <h1>Heroes roster</h1>
+      <h1>KS Inventory</h1>
       <div class="meta">{{ heroes_dir }} · {{ heroes|length }} heroes</div>
-      <nav class="nav" aria-label="UI sections">
-        <span class="current">Heroes</span>
-        {% if gear_enabled %}
-        <a href="/gear">Gear</a>
-        {% endif %}
-      </nav>
+      {% set active = "heroes" %}
+      {% include "_nav_tabs.html" %}
     </div>
     <div class="header-actions">
       <button type="button" class="rescan" id="rescan-btn"
@@ -142,30 +265,41 @@
   </header>
   <main>
     <p class="hint">
-      Edit stars/pellets mid-event. Power scales from the last OCR baseline using the star progress factor.
+      Edit stars/pellets mid-event. Click a hero name for full details. Power scales from the last OCR baseline.
     </p>
     <table id="heroes-table">
       <thead>
         <tr>
-          <th>Name</th>
-          <th>Troop</th>
-          <th>Stars</th>
-          <th>Pellets</th>
-          <th>Power</th>
+          <th class="sortable" data-sort="name" scope="col" title="Sort by name">Name</th>
+          <th class="sortable" data-sort="rarity" scope="col" title="Sort by rarity">Rarity</th>
+          <th class="sortable" data-sort="troop" scope="col" title="Sort by troop">Troop</th>
+          <th class="sortable" data-sort="stars" scope="col" title="Sort by stars">Stars</th>
+          <th class="sortable" data-sort="pellets" scope="col" title="Sort by pellets">Pellets</th>
+          <th class="sortable" data-sort="power" scope="col" title="Sort by power">Power</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         {% for h in heroes %}
-        <tr data-name="{{ h.name }}">
+        <tr data-name="{{ h.name }}"
+            data-rarity="{{ (h.rarity or '')|lower }}"
+            data-troop="{{ (h.troop_type or '')|lower }}"
+            data-stars="{{ h.stars if h.stars is not none else '' }}"
+            data-pellets="{{ h.pellets if h.pellets is not none else '' }}"
+            data-power="{{ h.power if h.power is not none else '' }}">
           <td>
             <div class="name-cell">
               {% if icons.get(h.name) %}
-              <img src="{{ icons[h.name] }}" alt="" width="40" height="40" />
+              <img class="rarity-{{ (h.rarity or '')|lower }} hero-open"
+                   data-name="{{ h.name }}"
+                   src="{{ icons[h.name] }}" alt="" width="44" height="44"
+                   role="button" tabindex="0" title="Open details" />
               {% endif %}
-              <span>{{ h.name }}</span>
+              <button type="button" class="hero-name-link hero-open"
+                      data-name="{{ h.name }}">{{ h.name }}</button>
             </div>
           </td>
+          <td class="rarity {{ (h.rarity or '')|lower }}">{{ h.rarity or "—" }}</td>
           <td>{{ h.troop_type or "—" }}</td>
           <td>
             <input type="number" min="0" max="5" step="1"
@@ -186,6 +320,21 @@
       </tbody>
     </table>
   </main>
+
+  <div class="modal-backdrop" id="hero-detail-modal" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="hero-detail-title">
+      <div class="modal-header">
+        <img id="hero-detail-icon" alt="" width="64" height="64" />
+        <div>
+          <h2 id="hero-detail-title">Hero</h2>
+          <div class="modal-sub" id="hero-detail-sub"></div>
+        </div>
+        <button type="button" class="modal-close" id="hero-detail-close">Close</button>
+      </div>
+      <div class="modal-body" id="hero-detail-body"></div>
+    </div>
+  </div>
+
   <div id="toast" role="status"></div>
   <script>
     function showToast(msg, ok) {
@@ -195,6 +344,180 @@
       clearTimeout(showToast._t);
       showToast._t = setTimeout(() => { el.className = ""; el.style.display = "none"; }, 3200);
     }
+
+    function fmt(v) {
+      return v == null || v === "" ? "—" : String(v);
+    }
+
+    function esc(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function rarityClass(r) {
+      return (r || "").toLowerCase();
+    }
+
+    function statsTable(title, obj) {
+      const entries = Object.entries(obj || {});
+      if (!entries.length) return "";
+      const rows = entries.map(([k, v]) =>
+        `<tr><td>${esc(k)}</td><td class="fact-v">${esc(v)}</td></tr>`
+      ).join("");
+      return `<h3 class="section-title">${esc(title)}</h3>
+        <table class="stat-table"><thead><tr><th>Stat</th><th>Value</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+    }
+
+    function skillsTable(skills) {
+      if (!skills || !skills.length) {
+        return `<h3 class="section-title">Skills</h3><p class="empty">No skills scraped.</p>`;
+      }
+      const rows = skills.map((s) => {
+        const bonus = s.current_bonus != null ? ` · bonus ${s.current_bonus}` : "";
+        const desc = s.description || s.upgrade_preview || s.raw_text || "";
+        return `<tr>
+          <td>${esc(s.slot)}</td>
+          <td><strong>${esc(s.name || "—")}</strong>
+            <div class="skill-desc">Lv ${esc(fmt(s.level))}${esc(bonus)}</div>
+            ${desc ? `<div class="skill-desc">${esc(desc)}</div>` : ""}
+          </td>
+        </tr>`;
+      }).join("");
+      return `<h3 class="section-title">Skills</h3>
+        <table class="skill-table"><thead><tr><th>Slot</th><th>Skill</th></tr></thead>
+        <tbody>${rows}</tbody></table>`;
+    }
+
+    function renderHeroDetail(hero) {
+      const icon = document.getElementById("hero-detail-icon");
+      icon.src = hero.icon_url || "";
+      icon.className = "rarity-" + rarityClass(hero.rarity);
+      icon.style.display = hero.icon_url ? "block" : "none";
+      document.getElementById("hero-detail-title").textContent = hero.name || "Hero";
+      document.getElementById("hero-detail-sub").innerHTML =
+        `<span class="rarity ${esc(rarityClass(hero.rarity))}">${esc(fmt(hero.rarity))}</span>` +
+        ` · ${esc(fmt(hero.troop_type))}` +
+        ` · ${esc(hero.stars ?? 0)}★ + ${esc(hero.pellets ?? 0)}p`;
+
+      const facts = [
+        ["Power", hero.power],
+        ["Level", hero.level],
+        ["Escorts", hero.escorts],
+        ["Stars", hero.stars],
+        ["Pellets", hero.pellets],
+        ["Roster", `p${hero.roster_page ?? 0} #${hero.roster_index ?? 0}`],
+        ["Scraped", hero.scraped_at],
+      ];
+      const factHtml = facts.map(([k, v]) =>
+        `<div class="fact"><span class="fact-k">${esc(k)}</span>` +
+        `<span class="fact-v">${esc(fmt(v))}</span></div>`
+      ).join("");
+
+      const stats = hero.stats || {};
+      const body = document.getElementById("hero-detail-body");
+      body.innerHTML =
+        `<div class="fact-grid">${factHtml}</div>` +
+        statsTable("Conquest", stats.conquest) +
+        statsTable("Expedition", stats.expedition) +
+        skillsTable(hero.skills);
+    }
+
+    const modal = document.getElementById("hero-detail-modal");
+    function openHeroModal(name) {
+      modal.classList.add("open");
+      modal.setAttribute("aria-hidden", "false");
+      document.getElementById("hero-detail-body").innerHTML =
+        `<p class="empty">Loading ${esc(name)}…</p>`;
+      fetch("/api/heroes/" + encodeURIComponent(name))
+        .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+        .then(({ ok, data }) => {
+          if (!ok) throw new Error(data.detail || "Failed to load hero");
+          renderHeroDetail(data.hero);
+        })
+        .catch((err) => {
+          document.getElementById("hero-detail-body").innerHTML =
+            `<p class="empty">${esc(err.message || err)}</p>`;
+        });
+    }
+    function closeHeroModal() {
+      modal.classList.remove("open");
+      modal.setAttribute("aria-hidden", "true");
+    }
+    document.getElementById("hero-detail-close").addEventListener("click", closeHeroModal);
+    modal.addEventListener("click", (ev) => {
+      if (ev.target === modal) closeHeroModal();
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && modal.classList.contains("open")) closeHeroModal();
+    });
+
+    const RARITY_RANK = {
+      legendary: 6, mythic: 5, gold: 5, red: 5,
+      epic: 4, purple: 4,
+      rare: 3, blue: 3,
+      uncommon: 2, green: 2,
+      common: 1, grey: 1, gray: 1, white: 1,
+    };
+    const TROOP_RANK = { infantry: 1, cavalry: 2, archers: 3, archer: 3 };
+
+    function sortValue(row, key) {
+      const raw = row.dataset[key] || "";
+      if (key === "power" || key === "stars" || key === "pellets") {
+        if (raw === "") return -1;
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : -1;
+      }
+      if (key === "rarity") return RARITY_RANK[raw] || 0;
+      if (key === "troop") return TROOP_RANK[raw] || 99;
+      if (key === "name") return (row.dataset.name || "").toLowerCase();
+      return raw;
+    }
+
+    function sortTable(key, dir) {
+      const table = document.getElementById("heroes-table");
+      const tbody = table.querySelector("tbody");
+      const rows = Array.from(tbody.querySelectorAll("tr"));
+      const mult = dir === "asc" ? 1 : -1;
+      rows.sort((a, b) => {
+        const va = sortValue(a, key);
+        const vb = sortValue(b, key);
+        if (va < vb) return -1 * mult;
+        if (va > vb) return 1 * mult;
+        return (a.dataset.name || "").localeCompare(b.dataset.name || "");
+      });
+      rows.forEach((row) => tbody.appendChild(row));
+      table.querySelectorAll("th.sortable").forEach((th) => {
+        if (th.dataset.sort === key) {
+          th.setAttribute("aria-sort", dir === "asc" ? "ascending" : "descending");
+        } else {
+          th.removeAttribute("aria-sort");
+        }
+      });
+    }
+
+    document.querySelectorAll("#heroes-table th.sortable").forEach((th) => {
+      th.addEventListener("click", () => {
+        const key = th.dataset.sort;
+        const current = th.getAttribute("aria-sort");
+        const dir = current === "ascending" ? "desc" : "asc";
+        sortTable(key, dir);
+      });
+    });
+
+    document.querySelectorAll(".hero-open").forEach((el) => {
+      const open = () => openHeroModal(el.dataset.name);
+      el.addEventListener("click", open);
+      el.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          open();
+        }
+      });
+    });
 
     document.querySelectorAll("#heroes-table tbody tr").forEach((row) => {
       const btn = row.querySelector(".save-btn");
@@ -220,6 +543,9 @@
           const powerCell = row.querySelector(".power-cell");
           const p = data.hero.power;
           powerCell.textContent = p == null ? "—" : String(p);
+          row.dataset.power = p == null ? "" : String(p);
+          row.dataset.stars = data.hero.stars == null ? "" : String(data.hero.stars);
+          row.dataset.pellets = data.hero.pellets == null ? "" : String(data.hero.pellets);
           showToast("Saved " + name + (p != null ? " · power " + p : ""), true);
         } catch (err) {
           showToast(String(err.message || err), false);

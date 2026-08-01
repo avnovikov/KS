@@ -8,8 +8,9 @@ on 2026-08-01 for local private use in this KS tooling UI.
 
 ## Heroes
 
-Optional portraits under `heroes/` may be vendored from
-[Kingshot Database](https://kingshotdata.com/) (`/uploads/…/{slug}.webp`)
-for local private use. Letter SVGs are generated when no portrait is present.
+Portraits under `heroes/` vendored from
+[Kingshot Database](https://kingshotdata.com/) (`/uploads/…/*avatar*.webp` etc.)
+on 2026-08-02 for local private use. Letter SVGs are generated when no portrait
+is present.
 
 Not affiliated with Century Games, Kingshot Optimizer, or Kingshot Database.

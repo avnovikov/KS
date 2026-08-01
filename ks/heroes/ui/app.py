@@ -293,6 +293,7 @@ def create_app(
                 "icons": icon_map,
                 "gear_dir": str(gear_path),
                 "cache_bust": bust,
+                "gear_enabled": True,
                 "heroes_enabled": resolved_heroes is not None,
             },
         )
@@ -420,6 +421,7 @@ def create_app(
                 "heroes_dir": str(heroes_path),
                 "cache_bust": bust,
                 "gear_enabled": resolved_gear is not None,
+                "heroes_enabled": True,
             },
         )
         response.headers["Cache-Control"] = "no-store"
@@ -442,6 +444,19 @@ def create_app(
                 for h in heroes
             ],
         }
+
+    @app.get("/api/heroes/{name}")
+    def api_get_hero(name: str) -> dict[str, Any]:
+        heroes_path, store = _require_heroes()
+        store.reload()
+        hero = next((h for h in store.all_heroes() if h.name == name), None)
+        if hero is None:
+            raise HTTPException(status_code=404, detail=f"unknown hero: {name}")
+        bust = inventory_revision(heroes_path, "heroes.json")
+        icon_url = with_cache_bust(
+            ensure_all_hero_icons([hero], heroes_path).get(name), bust
+        )
+        return {"hero": {**hero.to_dict(), "icon_url": icon_url}}
 
     @app.patch("/api/heroes/{name}")
     async def api_patch_hero(name: str, request: Request) -> dict[str, Any]:

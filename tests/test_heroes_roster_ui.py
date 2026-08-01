@@ -144,6 +144,15 @@ def test_fastapi_heroes_patch_and_page(tmp_path: Path) -> None:
     listed = client.get("/api/heroes").json()["heroes"]
     assert listed[0]["name"] == "Helga"
 
+    detail = client.get("/api/heroes/Helga")
+    assert detail.status_code == 200
+    assert detail.json()["hero"]["name"] == "Helga"
+    assert b"hero-name-link" in page.content
+    assert b"hero-detail-modal" in page.content
+    assert b'data-sort="power"' in page.content
+    assert b"th.sortable" in page.content or b'class="sortable"' in page.content
+    assert "skills" in detail.json()["hero"]
+
     res = client.patch("/api/heroes/Helga", json={"stars": 3, "pellets": 2})
     assert res.status_code == 200
     body = res.json()["hero"]
@@ -208,3 +217,40 @@ def test_home_redirects_to_heroes_when_no_gear(tmp_path: Path) -> None:
     res = client.get("/", follow_redirects=False)
     assert res.status_code == 302
     assert res.headers["location"] == "/heroes"
+
+
+def test_inventory_tabs_link_both_screens(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.gear_models import GearRecord
+    from ks.heroes.gear_store import GearStore
+    from ks.heroes.ui.app import create_app
+
+    heroes_dir = tmp_path / "heroes"
+    gear_dir = tmp_path / "gear"
+    heroes_dir.mkdir()
+    gear_dir.mkdir()
+    _seed(heroes_dir)
+    GearStore(gear_dir).upsert(
+        GearRecord(
+            piece_id="cell0",
+            name="Test Helm",
+            troop_type="infantry",
+            slot="helmet",
+            rarity="mythic",
+            enhancement_level=1,
+            power=1000,
+        )
+    )
+    client = TestClient(create_app(gear_dir, heroes_dir=heroes_dir))
+
+    gear_page = client.get("/gear")
+    assert gear_page.status_code == 200
+    assert b"Gear inventory" in gear_page.content
+    assert b'href="/heroes"' in gear_page.content
+
+    heroes_page = client.get("/heroes")
+    assert heroes_page.status_code == 200
+    assert b"Heroes inventory" in heroes_page.content
+    assert b'href="/gear"' in heroes_page.content
