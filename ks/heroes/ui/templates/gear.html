@@ -77,6 +77,21 @@
     .rarity.epic { color: #c39bd3; }
     .rarity.blue, .rarity.rare { color: #85c1e9; }
     .rarity.green, .rarity.uncommon { color: #82e0aa; }
+    .name-cell {
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      min-width: 12rem;
+    }
+    .name-cell img {
+      width: 40px;
+      height: 40px;
+      border-radius: 8px;
+      object-fit: cover;
+      background: #1a1d23;
+      flex-shrink: 0;
+    }
+    .power-cell { font-variant-numeric: tabular-nums; }
     #toast {
       position: fixed;
       right: 1rem;
@@ -115,7 +130,12 @@
       <tbody>
         {% for p in pieces %}
         <tr data-piece-id="{{ p.piece_id }}">
-          <td>{{ p.name or "—" }}</td>
+          <td>
+            <div class="name-cell">
+              <img src="{{ icons.get(p.piece_id, '') }}" alt="" />
+              <span>{{ p.name or "—" }}</span>
+            </div>
+          </td>
           <td>{{ p.troop_type or "—" }}</td>
           <td>{{ p.slot or "—" }}</td>
           <td class="rarity {{ (p.rarity or '')|lower }}">{{ p.rarity or "—" }}</td>
@@ -127,7 +147,7 @@
             <input type="number" min="0" max="20" name="mastery"
                    value="{{ p.mastery_level if p.mastery_level is not none else '' }}" />
           </td>
-          <td>{{ p.power if p.power is not none else "—" }}</td>
+          <td class="power-cell">{{ p.power if p.power is not none else "—" }}</td>
           <td><button type="button" class="save">Save</button></td>
         </tr>
         {% endfor %}
@@ -162,7 +182,11 @@
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data.detail || res.statusText);
-          showToast(`Saved ${data.piece?.name || id}`, true);
+          const powerCell = row.querySelector(".power-cell");
+          if (powerCell && data.piece && data.piece.power != null) {
+            powerCell.textContent = Number(data.piece.power).toLocaleString();
+          }
+          showToast(`Saved ${data.piece?.name || id} · power ${data.piece?.power ?? "—"}`, true);
         } catch (err) {
           showToast(String(err.message || err), false);
         } finally {
