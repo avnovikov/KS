@@ -1,17 +1,48 @@
-"""FastAPI app: gear inventory view + level edits via GearStore."""
+"""FastAPI app: gear inventory + heroes roster (stars/pellets) via stores."""
 
 from __future__ import annotations
 
+import os
+import shutil
+import threading
+import time
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
+from ks.heroes.config import DEFAULT_HEROES_CONFIG
+from ks.heroes.gear_config import DEFAULT_GEAR_CONFIG
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.gear_store import GearStore
+from ks.heroes.models import HeroRecord
+from ks.heroes.store import HeroStore
+from ks.heroes.ui.hero_icons import ensure_all_hero_icons
+from ks.heroes.ui.hero_power import scale_power_for_star_change
+from ks.heroes.ui.heroes_rescan import rescan_heroes_from_ocr
 from ks.heroes.ui.icons import ensure_all_icons
 from ks.heroes.ui.power import compute_gear_power
+from ks.heroes.ui.rescan import rescan_gear_from_ocr
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+_STARS_RANGE = range(0, 6)
+_PELLETS_RANGE = range(0, 6)
+
+
+def inventory_revision(dir_path: Path, filename: str) -> str:
+    """Stable cache-bust token from inventory JSON mtime."""
+    path = dir_path / filename
+    if not path.is_file():
+        return "0"
+    return str(path.stat().st_mtime_ns)
+
+
+def with_cache_bust(url: str | None, bust: str) -> str | None:
+    """Append ?v=… so browsers do not keep stale icons after rescan."""
+    if not url:
+        return url
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}v={bust}"
+
 
 try:
     from fastapi import FastAPI, HTTPException, Request
@@ -37,9 +68,22 @@ def _resolve_gear_dir(gear: Path) -> Path:
     raise FileNotFoundError(f"gear path not found: {gear}")
 
 
+def _resolve_heroes_dir(heroes: Path) -> Path:
+    path = heroes.expanduser().resolve()
+    if path.is_file() and path.name == "heroes.json":
+        return path.parent
+    if path.is_dir():
+        return path
+    raise FileNotFoundError(f"heroes path not found: {heroes}")
+
+
 def sync_piece_power(piece: GearRecord) -> GearRecord:
-    """Return piece with power derived from rarity/enhancement/mastery."""
-    if piece.enhancement_level is None and piece.rarity is None:
+    """Return piece with power derived from rarity/enhancement/mastery.
+
+    Requires both rarity and enhancement so we never overwrite OCR power with a
+    guessed blue/+0 estimate for partial records.
+    """
+    if piece.enhancement_level is None or not piece.rarity:
         return piece
     power = compute_gear_power(
         piece.rarity, piece.enhancement_level, piece.mastery_level
@@ -101,63 +145,225 @@ def sync_all_powers(store: GearStore) -> int:
     return changed
 
 
-def create_app(gear_dir: Path) -> Any:
-    """Build FastAPI app bound to a gear inventory directory."""
+def update_hero_stars(
+    store: HeroStore,
+    name: str,
+    *,
+    stars: int | None | object = ...,
+    pellets: int | None | object = ...,
+) -> HeroRecord:
+    """Update stars/pellets; rescale naked power via star_progress_factor."""
+    heroes = {h.name: h for h in store.all_heroes()}
+    hero = heroes.get(name)
+    if hero is None:
+        raise KeyError(name)
+
+    new_stars = hero.stars
+    new_pellets = hero.pellets
+    if stars is not ...:
+        if stars is not None:
+            level = int(stars)
+            if level not in _STARS_RANGE:
+                raise ValueError(f"stars must be 0..5; got {level}")
+            new_stars = level
+        else:
+            new_stars = None
+    if pellets is not ...:
+        if pellets is not None:
+            level = int(pellets)
+            if level not in _PELLETS_RANGE:
+                raise ValueError(f"pellets must be 0..5; got {level}")
+            new_pellets = level
+        else:
+            new_pellets = None
+
+    if new_stars == hero.stars and new_pellets == hero.pellets:
+        return hero
+
+    new_power = scale_power_for_star_change(
+        hero.power,
+        hero.stars,
+        hero.pellets,
+        new_stars,
+        new_pellets,
+    )
+    updated = replace(
+        hero, stars=new_stars, pellets=new_pellets, power=new_power
+    )
+    store.upsert(updated)
+    return updated
+
+
+def create_app(
+    gear_dir: Path | None = None,
+    *,
+    heroes_dir: Path | None = None,
+    gear_config: Path | None = None,
+    heroes_config: Path | None = None,
+    serial: str | None = None,
+    rescan_fn: Callable[..., list[GearRecord]] | None = None,
+    heroes_rescan_fn: Callable[..., list[HeroRecord]] | None = None,
+) -> Any:
+    """Build FastAPI app bound to gear and/or heroes inventory directories."""
     if FastAPI is None:
         raise ImportError(
             "UI dependencies missing; install with: pip install 'ks[ui]'"
         )
+    if gear_dir is None and heroes_dir is None:
+        raise ValueError("gear_dir or heroes_dir is required")
 
-    resolved = _resolve_gear_dir(gear_dir)
-    store = GearStore(resolved)
-    sync_all_powers(store)
-    icons = ensure_all_icons(store.all_pieces(), resolved)
+    resolved_gear = _resolve_gear_dir(gear_dir) if gear_dir is not None else None
+    resolved_heroes = (
+        _resolve_heroes_dir(heroes_dir) if heroes_dir is not None else None
+    )
+    gear_store = GearStore(resolved_gear) if resolved_gear is not None else None
+    hero_store = (
+        HeroStore(resolved_heroes) if resolved_heroes is not None else None
+    )
+    gear_config_path = (gear_config or DEFAULT_GEAR_CONFIG).expanduser().resolve()
+    heroes_config_path = (
+        (heroes_config or DEFAULT_HEROES_CONFIG).expanduser().resolve()
+    )
+    do_gear_rescan = rescan_fn or rescan_gear_from_ocr
+    do_heroes_rescan = heroes_rescan_fn or rescan_heroes_from_ocr
+    gear_rescan_lock = threading.Lock()
+    heroes_rescan_lock = threading.Lock()
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
-    app = FastAPI(title="KS Heroes Gear UI", version="0.1.0")
-    app.state.gear_dir = resolved
-    app.state.store = store
+    app = FastAPI(title="KS Heroes UI", version="0.2.0")
+    app.state.gear_dir = resolved_gear
+    app.state.heroes_dir = resolved_heroes
+    app.state.store = gear_store
+    app.state.hero_store = hero_store
+    app.state.gear_config = gear_config_path
+    app.state.heroes_config = heroes_config_path
+    app.state.serial = serial
     static_dir = Path(__file__).resolve().parent / "static"
     if static_dir.is_dir():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
-    icons_path = resolved / "icons"
-    icons_path.mkdir(parents=True, exist_ok=True)
-    app.mount(
-        "/icons",
-        StaticFiles(directory=str(icons_path)),
-        name="icons",
-    )
+    if resolved_gear is not None:
+        icons_path = resolved_gear / "icons"
+        icons_path.mkdir(parents=True, exist_ok=True)
+        app.mount(
+            "/icons",
+            StaticFiles(directory=str(icons_path)),
+            name="icons",
+        )
+    if resolved_heroes is not None:
+        hero_icons_path = resolved_heroes / "icons"
+        hero_icons_path.mkdir(parents=True, exist_ok=True)
+        app.mount(
+            "/hero-icons",
+            StaticFiles(directory=str(hero_icons_path)),
+            name="hero_icons",
+        )
+
+    def _require_gear() -> tuple[Path, GearStore]:
+        if resolved_gear is None or gear_store is None:
+            raise HTTPException(status_code=404, detail="gear UI not configured")
+        return resolved_gear, gear_store
+
+    def _require_heroes() -> tuple[Path, HeroStore]:
+        if resolved_heroes is None or hero_store is None:
+            raise HTTPException(
+                status_code=404, detail="heroes UI not configured"
+            )
+        return resolved_heroes, hero_store
 
     @app.get("/", include_in_schema=False)
     def home() -> RedirectResponse:
-        return RedirectResponse(url="/gear", status_code=302)
+        if resolved_gear is not None:
+            return RedirectResponse(url="/gear", status_code=302)
+        return RedirectResponse(url="/heroes", status_code=302)
 
     @app.get("/gear", response_class=HTMLResponse)
     def gear_page(request: Request) -> HTMLResponse:
+        gear_path, store = _require_gear()
+        store.reload()
         pieces = store.all_pieces()
-        icon_map = ensure_all_icons(pieces, resolved)
-        return templates.TemplateResponse(
+        bust = inventory_revision(gear_path, "gear.json")
+        icon_map = {
+            pid: with_cache_bust(url, bust)
+            for pid, url in ensure_all_icons(pieces, gear_path).items()
+        }
+        response = templates.TemplateResponse(
             request,
             "gear.html",
             {
                 "pieces": pieces,
                 "icons": icon_map,
-                "gear_dir": str(resolved),
+                "gear_dir": str(gear_path),
+                "cache_bust": bust,
+                "heroes_enabled": resolved_heroes is not None,
             },
         )
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.get("/api/gear")
     def api_list_gear() -> dict[str, Any]:
+        gear_path, store = _require_gear()
+        store.reload()
         pieces = store.all_pieces()
-        icon_map = ensure_all_icons(pieces, resolved)
+        bust = inventory_revision(gear_path, "gear.json")
+        icon_map = ensure_all_icons(pieces, gear_path)
         return {
+            "cache_bust": bust,
             "gear": [
-                {**p.to_dict(), "icon_url": icon_map.get(p.piece_id)}
+                {
+                    **p.to_dict(),
+                    "icon_url": with_cache_bust(icon_map.get(p.piece_id), bust),
+                }
                 for p in pieces
-            ]
+            ],
+        }
+
+    @app.post("/api/gear/rescan")
+    def api_rescan_gear() -> dict[str, Any]:
+        """Replace inventory via ADB OCR (Backpack > Gear must be open)."""
+        gear_path, store = _require_gear()
+        if not gear_rescan_lock.acquire(blocking=False):
+            raise HTTPException(
+                status_code=409,
+                detail="gear rescan already in progress",
+            )
+        try:
+            pieces = do_gear_rescan(
+                store,
+                config_path=gear_config_path,
+                serial=serial,
+            )
+            store.reload()
+            pieces = store.all_pieces()
+            icons_path = gear_path / "icons"
+            if icons_path.is_dir():
+                shutil.rmtree(icons_path)
+            icons_path.mkdir(parents=True, exist_ok=True)
+            json_path = gear_path / "gear.json"
+            if json_path.is_file():
+                now = time.time()
+                os.utime(json_path, (now, now))
+        except Exception as exc:  # noqa: BLE001 — surface ADB/OCR failures to UI
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            gear_rescan_lock.release()
+        bust = inventory_revision(gear_path, "gear.json")
+        icon_map = ensure_all_icons(pieces, gear_path)
+        return {
+            "ok": True,
+            "count": len(pieces),
+            "cache_bust": bust,
+            "gear": [
+                {
+                    **p.to_dict(),
+                    "icon_url": with_cache_bust(icon_map.get(p.piece_id), bust),
+                }
+                for p in pieces
+            ],
         }
 
     @app.patch("/api/gear/{piece_id}")
     async def api_patch_gear(piece_id: str, request: Request) -> dict[str, Any]:
+        gear_path, store = _require_gear()
         try:
             raw = await request.json()
         except Exception as exc:
@@ -167,7 +373,9 @@ def create_app(gear_dir: Path) -> Any:
 
         enh_arg: Any = ...
         mast_arg: Any = ...
-        if "enhancement_level" in raw:
+        if raw.get("clear_enhancement"):
+            enh_arg = None
+        elif "enhancement_level" in raw:
             enh_arg = raw.get("enhancement_level")
         if raw.get("clear_mastery"):
             mast_arg = None
@@ -187,17 +395,144 @@ def create_app(gear_dir: Path) -> Any:
             ) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        icon_url = ensure_all_icons([updated], resolved).get(piece_id)
+        icon_url = ensure_all_icons([updated], gear_path).get(piece_id)
         return {
             "ok": True,
             "piece": {**updated.to_dict(), "icon_url": icon_url},
         }
 
+    @app.get("/heroes", response_class=HTMLResponse)
+    def heroes_page(request: Request) -> HTMLResponse:
+        heroes_path, store = _require_heroes()
+        store.reload()
+        heroes = store.all_heroes()
+        bust = inventory_revision(heroes_path, "heroes.json")
+        icon_map = {
+            name: with_cache_bust(url, bust)
+            for name, url in ensure_all_hero_icons(heroes, heroes_path).items()
+        }
+        response = templates.TemplateResponse(
+            request,
+            "heroes.html",
+            {
+                "heroes": heroes,
+                "icons": icon_map,
+                "heroes_dir": str(heroes_path),
+                "cache_bust": bust,
+                "gear_enabled": resolved_gear is not None,
+            },
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.get("/api/heroes")
+    def api_list_heroes() -> dict[str, Any]:
+        heroes_path, store = _require_heroes()
+        store.reload()
+        heroes = store.all_heroes()
+        bust = inventory_revision(heroes_path, "heroes.json")
+        icon_map = ensure_all_hero_icons(heroes, heroes_path)
+        return {
+            "cache_bust": bust,
+            "heroes": [
+                {
+                    **h.to_dict(),
+                    "icon_url": with_cache_bust(icon_map.get(h.name), bust),
+                }
+                for h in heroes
+            ],
+        }
+
+    @app.patch("/api/heroes/{name}")
+    async def api_patch_hero(name: str, request: Request) -> dict[str, Any]:
+        heroes_path, store = _require_heroes()
+        try:
+            raw = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="JSON body required") from exc
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="JSON object required")
+
+        stars_arg: Any = ...
+        pellets_arg: Any = ...
+        if "stars" in raw:
+            stars_arg = raw.get("stars")
+        if "pellets" in raw:
+            pellets_arg = raw.get("pellets")
+
+        try:
+            updated = update_hero_stars(
+                store,
+                name,
+                stars=stars_arg,
+                pellets=pellets_arg,
+            )
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=404, detail=f"unknown hero: {name}"
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        icon_url = ensure_all_hero_icons([updated], heroes_path).get(name)
+        return {
+            "ok": True,
+            "hero": {**updated.to_dict(), "icon_url": icon_url},
+        }
+
+    @app.post("/api/heroes/rescan")
+    def api_rescan_heroes() -> dict[str, Any]:
+        """Upsert roster via ADB OCR (Heroes roster must be open)."""
+        heroes_path, store = _require_heroes()
+        if not heroes_rescan_lock.acquire(blocking=False):
+            raise HTTPException(
+                status_code=409,
+                detail="heroes rescan already in progress",
+            )
+        try:
+            do_heroes_rescan(
+                store,
+                config_path=heroes_config_path,
+                serial=serial,
+            )
+            store.reload()
+            heroes = store.all_heroes()
+            json_path = heroes_path / "heroes.json"
+            if json_path.is_file():
+                now = time.time()
+                os.utime(json_path, (now, now))
+        except Exception as exc:  # noqa: BLE001 — surface ADB/OCR failures to UI
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            heroes_rescan_lock.release()
+        bust = inventory_revision(heroes_path, "heroes.json")
+        icon_map = ensure_all_hero_icons(heroes, heroes_path)
+        return {
+            "ok": True,
+            "count": len(heroes),
+            "cache_bust": bust,
+            "heroes": [
+                {
+                    **h.to_dict(),
+                    "icon_url": with_cache_bust(icon_map.get(h.name), bust),
+                }
+                for h in heroes
+            ],
+        }
+
     return app
 
 
-def run_ui(gear_dir: Path, *, host: str = "127.0.0.1", port: int = 8765) -> None:
-    """Serve the gear UI (blocking)."""
+def run_ui(
+    gear_dir: Path | None = None,
+    *,
+    heroes_dir: Path | None = None,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    gear_config: Path | None = None,
+    heroes_config: Path | None = None,
+    serial: str | None = None,
+) -> None:
+    """Serve the gear/heroes UI (blocking)."""
     try:
         import uvicorn
     except ImportError as exc:  # pragma: no cover
@@ -205,7 +540,17 @@ def run_ui(gear_dir: Path, *, host: str = "127.0.0.1", port: int = 8765) -> None
             "UI dependencies missing; install with: pip install 'ks[ui]'"
         ) from exc
 
-    app = create_app(gear_dir)
-    print(f"Gear UI: http://{host}:{port}/gear")
-    print(f"Inventory: {Path(gear_dir).expanduser().resolve()}")
+    app = create_app(
+        gear_dir,
+        heroes_dir=heroes_dir,
+        gear_config=gear_config,
+        heroes_config=heroes_config,
+        serial=serial,
+    )
+    if heroes_dir is not None:
+        print(f"Heroes UI: http://{host}:{port}/heroes")
+        print(f"Heroes: {Path(heroes_dir).expanduser().resolve()}")
+    if gear_dir is not None:
+        print(f"Gear UI: http://{host}:{port}/gear")
+        print(f"Inventory: {Path(gear_dir).expanduser().resolve()}")
     uvicorn.run(app, host=host, port=port, log_level="info")

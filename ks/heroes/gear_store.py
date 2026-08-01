@@ -80,6 +80,19 @@ class GearStore:
             key=lambda p: (p.inventory_page, p.inventory_index, p.piece_id),
         )
 
+    def clear(self) -> None:
+        """Drop all pieces from memory, JSON, and SQLite (keeps schema)."""
+        self._pieces.clear()
+        self._write_json()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM gear_stats")
+            conn.execute("DELETE FROM gear")
+
+    def reload(self) -> None:
+        """Re-read gear.json into memory (picks up external OCR writes)."""
+        self._pieces.clear()
+        self._load_existing_json()
+
     def flush(self) -> None:
         self._write_json()
         for piece in self._pieces.values():

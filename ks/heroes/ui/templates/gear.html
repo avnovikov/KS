@@ -112,6 +112,12 @@
   <header>
     <h1>Gear inventory</h1>
     <div class="meta">{{ gear_dir }} · {{ pieces|length }} pieces</div>
+    <nav aria-label="UI sections" style="display:flex;gap:0.75rem;margin-top:0.45rem;font-size:0.85rem">
+      <span style="color:var(--text);font-weight:600">Gear</span>
+      {% if heroes_enabled %}
+      <a href="/heroes" style="color:var(--accent);text-decoration:none">Heroes</a>
+      {% endif %}
+    </nav>
   </header>
   <main>
     <table>
