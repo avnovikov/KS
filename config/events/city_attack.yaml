@@ -1,0 +1,42 @@
+name: city_attack
+# Solo/rally city hit — your 3-hero march; attack widgets fire for the lead.
+mode_kind_weights:
+  rally_lead:
+    rally_attack: 4.5
+    rally_lethality: 4.5
+    lethality_up: 3.5
+    attack_up: 3.5
+    opp_damage_down: 2.0
+    damage_taken_down: 0.8
+    defense_up: 0.6
+    defender_attack: 0.0
+    defender_health: 0.0
+    defender_defense: 0.0
+  solo:
+    lethality_up: 3.5
+    attack_up: 3.5
+    opp_damage_down: 2.0
+    damage_taken_down: 1.0
+    defense_up: 0.8
+    rally_attack: 0.0
+    rally_lethality: 0.0
+    defender_attack: 0.0
+    defender_health: 0.0
+    defender_defense: 0.0
+effect_op_weights:
+  rally_lead:
+    101: 1.5
+    102: 1.5
+    201: 1.3
+    202: 1.3
+    111: 0.7
+    112: 0.7
+    113: 0.7
+  solo:
+    101: 1.4
+    102: 1.4
+    201: 1.25
+    202: 1.25
+    111: 0.9
+    112: 0.9
+    113: 0.9
