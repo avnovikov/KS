@@ -51,12 +51,19 @@ class HeroStore:
                     level INTEGER,
                     description TEXT,
                     upgrade_preview TEXT,
+                    current_bonus REAL,
                     raw_text TEXT,
                     PRIMARY KEY (hero_name, slot),
                     FOREIGN KEY (hero_name) REFERENCES heroes(name)
                 );
                 """
             )
+            cols = {
+                row[1]
+                for row in conn.execute("PRAGMA table_info(skills)").fetchall()
+            }
+            if "current_bonus" not in cols:
+                conn.execute("ALTER TABLE skills ADD COLUMN current_bonus REAL")
 
     def _load_existing_json(self) -> None:
         if not self.json_path.is_file():
@@ -140,8 +147,9 @@ class HeroStore:
                 conn.execute(
                     """
                     INSERT INTO skills (
-                        hero_name, slot, name, level, description, upgrade_preview, raw_text
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        hero_name, slot, name, level, description,
+                        upgrade_preview, current_bonus, raw_text
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         hero.name,
@@ -150,6 +158,7 @@ class HeroStore:
                         skill.level,
                         skill.description,
                         skill.upgrade_preview,
+                        skill.current_bonus,
                         skill.raw_text,
                     ),
                 )

@@ -257,6 +257,6 @@ def default_heroes_yaml_dict() -> dict[str, Any]:
             "escorts": {"x": 80, "y": 1550, "w": 200, "h": 60},
             "stars": {"x": 480, "y": 1480, "w": 120, "h": 50},
             "stats_panel": {"x": 520, "y": 520, "w": 500, "h": 700},
-            "skill_panel": {"x": 80, "y": 1180, "w": 920, "h": 280},
+            "skill_panel": {"x": 60, "y": 1220, "w": 960, "h": 300},
         },
     }

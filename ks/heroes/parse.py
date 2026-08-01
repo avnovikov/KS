@@ -94,12 +94,25 @@ def parse_stats_panel(text: str) -> HeroStats:
     return HeroStats(conquest=conquest, expedition=expedition, raw_text=text)
 
 
-def parse_skill_panel(text: str, *, slot: int) -> SkillRecord:
-    """Parse a skill detail panel OCR dump."""
+def parse_skill_panel(
+    text: str,
+    *,
+    slot: int,
+    current_bonus: float | None = None,
+) -> SkillRecord:
+    """Parse a skill detail panel OCR dump.
+
+    ``current_bonus`` is the teal/green highlighted percent from the panel
+    (pass through from ``extract_teal_current_percent``).
+    """
     if not isinstance(text, str):
         raise ValueError(f"text must be a string; got {type(text).__name__}")
     if slot < 0:
         raise ValueError(f"slot must be >= 0; got {slot}")
+    if current_bonus is not None and not (1.0 <= float(current_bonus) <= 400.0):
+        raise ValueError(
+            f"current_bonus must be in [1, 400] when set; got {current_bonus}"
+        )
 
     name: str | None = None
     level: int | None = None
@@ -126,5 +139,6 @@ def parse_skill_panel(text: str, *, slot: int) -> SkillRecord:
         level=level,
         description=description,
         upgrade_preview=upgrade_preview,
+        current_bonus=float(current_bonus) if current_bonus is not None else None,
         raw_text=text,
     )

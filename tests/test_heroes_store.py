@@ -19,7 +19,13 @@ def _sample() -> HeroRecord:
             expedition={"Cavalry Attack": 101.37},
         ),
         skills=(
-            SkillRecord(slot=0, name="Rally Flag", level=3, description="24% chance"),
+            SkillRecord(
+                slot=0,
+                name="Rally Flag",
+                level=3,
+                description="24% chance",
+                current_bonus=24.0,
+            ),
         ),
         roster_page=0,
         roster_index=0,
@@ -41,9 +47,11 @@ def test_hero_store_json_and_sqlite_round_trip(tmp_path: Path):
         ).fetchone()
         assert row == (123456, "SSR", 8)
         skills = conn.execute(
-            "SELECT name, level FROM skills WHERE hero_name = ?", ("Jabel",)
+            "SELECT name, level, current_bonus FROM skills WHERE hero_name = ?",
+            ("Jabel",),
         ).fetchall()
-        assert skills == [("Rally Flag", 3)]
+        assert skills == [("Rally Flag", 3, 24.0)]
+        assert raw["heroes"][0]["skills"][0]["current_bonus"] == 24.0
         stats = conn.execute(
             "SELECT section, label, value FROM hero_stats WHERE hero_name = ? ORDER BY section, label",
             ("Jabel",),

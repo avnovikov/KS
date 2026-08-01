@@ -17,6 +17,7 @@ from ks.heroes.parse import (
     parse_skill_panel,
     parse_stats_panel,
 )
+from ks.heroes.teal_ocr import extract_teal_current_percent
 from ks.vision.ocr import ocr_region
 
 OcrFn = Callable[[np.ndarray, tuple[int, int, int, int]], str]
@@ -106,7 +107,12 @@ def scrape_hero(
         if not panel_text or panel_text == previous_panel:
             continue
         previous_panel = panel_text
-        skills.append(parse_skill_panel(panel_text, slot=slot))
+        current_bonus = extract_teal_current_percent(
+            skill_img, cfg.ocr.skill_panel.as_tuple()
+        )
+        skills.append(
+            parse_skill_panel(panel_text, slot=slot, current_bonus=current_bonus)
+        )
 
     scraped_at = now().isoformat().replace("+00:00", "Z")
     return HeroRecord(

@@ -39,6 +39,7 @@ class SkillRecord:
     level: int | None = None
     description: str | None = None
     upgrade_preview: str | None = None
+    current_bonus: float | None = None
     raw_text: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -48,17 +49,20 @@ class SkillRecord:
             "level": self.level,
             "description": self.description,
             "upgrade_preview": self.upgrade_preview,
+            "current_bonus": self.current_bonus,
             "raw_text": self.raw_text,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> SkillRecord:
+        bonus = data.get("current_bonus")
         return cls(
             slot=int(data["slot"]),
             name=data.get("name"),
             level=int(data["level"]) if data.get("level") is not None else None,
             description=data.get("description"),
             upgrade_preview=data.get("upgrade_preview"),
+            current_bonus=float(bonus) if bonus is not None else None,
             raw_text=data.get("raw_text"),
         )
 
