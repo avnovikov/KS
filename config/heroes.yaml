@@ -1,0 +1,62 @@
+# Calibrated for BlueStacks portrait 1080x1920 (2026-08-01 live bring-up).
+adb:
+  serial: 127.0.0.1:5555
+
+delays_ms:
+  after_tap: 700
+  after_open: 1100
+  after_tab: 900
+  after_skill: 700
+
+roster:
+  max_pages: 10
+  cells:
+    - {x: 135, y: 380}
+    - {x: 405, y: 380}
+    - {x: 675, y: 380}
+    - {x: 945, y: 380}
+    - {x: 135, y: 700}
+    - {x: 405, y: 700}
+    - {x: 675, y: 700}
+    - {x: 945, y: 700}
+    - {x: 135, y: 1020}
+    - {x: 405, y: 1020}
+    - {x: 675, y: 1020}
+    - {x: 945, y: 1020}
+    - {x: 135, y: 1450}
+    - {x: 405, y: 1450}
+    - {x: 675, y: 1450}
+    - {x: 945, y: 1450}
+  page_swipe:
+    x1: 540
+    y1: 1400
+    x2: 540
+    y2: 500
+    duration_ms: 400
+
+nav:
+  back: {x: 55, y: 95}
+  stats_tab: {x: 270, y: 1850}
+  skills_tab: {x: 540, y: 1850}
+  stats_list_button: {x: 980, y: 1680}
+
+skills:
+  slots:
+    - {x: 160, y: 520}
+    - {x: 160, y: 720}
+    - {x: 160, y: 920}
+    - {x: 920, y: 520}
+    - {x: 920, y: 720}
+    - {x: 920, y: 920}
+
+ocr:
+  # y=26 skips Android "pointer location" light band; framing matches show_neg without it.
+  name: {x: 300, y: 26, w: 480, h: 64}
+  power: {x: 400, y: 1140, w: 320, h: 70}
+  rarity: {x: 20, y: 90, w: 200, h: 120}
+  troop_type: {x: 400, y: 200, w: 280, h: 50}
+  escorts: {x: 100, y: 1320, w: 200, h: 80}
+  # 5 star slots × 6 pellets; just under power, above Escorts/Level.
+  stars: {x: 300, y: 1270, w: 520, h: 85}
+  stats_panel: {x: 450, y: 340, w: 600, h: 980}
+  skill_panel: {x: 60, y: 1220, w: 960, h: 300}

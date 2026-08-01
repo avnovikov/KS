@@ -1,0 +1,78 @@
+source: https://kingshotoptimizer.com/
+source_version: 1.12.4
+extracted_on: '2026-08-01'
+notes:
+- Copied from Kingshot Optimizer public web app JS for local planning.
+- Default site optimizer optimizes ONE infantry+cavalry+archer set for Expedition.
+- For early Arena/Conquest, prefer early_game_combat weights and do NOT ignore conquest
+  imbuements (R+40/+80).
+formation_context: Designed for common 50:20:30 (Infantry:Cavalry:Archer) expedition
+  formation.
+weighted_value: stat_gain * stat_weight
+recommended_for_us: early_game_combat
+profiles:
+  early_game_growth:
+    id: earlyGameGrowth
+    label: Early Game Growth (Default)
+    best_for:
+    - Vikings
+    - Bear Hunt
+    - Mystic Trial
+    - expedition progression
+    weights:
+      Infantry_Health: 1.5
+      Infantry_Lethality: 0.7
+      Cavalry_Health: 0.2
+      Cavalry_Lethality: 0.4
+      Archery_Health: 0.7
+      Archery_Lethality: 1.4
+  early_game_combat:
+    id: earlyGameCombat
+    label: Early Game Combat
+    best_for:
+    - early PvP
+    - Arena
+    - Conquest with 50/20/30
+    weights:
+      Infantry_Health: 1.5
+      Infantry_Lethality: 0.7
+      Cavalry_Health: 0.4
+      Cavalry_Lethality: 1.2
+      Archery_Health: 0.6
+      Archery_Lethality: 1.3
+  future_proofed_gen4:
+    id: gen4NewNormal
+    label: Future-proofed build (gen 4+)
+    best_for:
+    - older kingdoms
+    - all-purpose / meta hedge
+    weights:
+      Infantry_Health: 1.5
+      Infantry_Lethality: 1.1
+      Cavalry_Health: 0.4
+      Cavalry_Lethality: 1.2
+      Archery_Health: 0.6
+      Archery_Lethality: 1.2
+  unweighted:
+    id: unweighted
+    label: Unweighted
+    weights:
+      Infantry_Health: 1.0
+      Infantry_Lethality: 1.0
+      Cavalry_Health: 1.0
+      Cavalry_Lethality: 1.0
+      Archery_Health: 1.0
+      Archery_Lethality: 1.0
+piece_weight_mapping:
+  Infantry_Helm: Infantry_Lethality
+  Infantry_Gloves: Infantry_Health
+  Infantry_Shroud: Infantry_Health
+  Infantry_Greaves: Infantry_Lethality
+  Cavalry_Armet: Cavalry_Lethality
+  Cavalry_Gauntlet: Cavalry_Health
+  Cavalry_Breastplate: Cavalry_Health
+  Cavalry_Boots: Cavalry_Lethality
+  Archery_Faceplate: Archery_Lethality
+  Archery_Bracers: Archery_Health
+  Archery_Leatherwear: Archery_Health
+  Archery_Riders: Archery_Lethality

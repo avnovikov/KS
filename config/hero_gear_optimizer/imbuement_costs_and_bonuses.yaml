@@ -1,0 +1,297 @@
+source: https://kingshotoptimizer.com/
+source_version: 1.12.4
+extracted_on: '2026-08-01'
+notes:
+- Copied from Kingshot Optimizer public web app JS for local planning.
+- Default site optimizer optimizes ONE infantry+cavalry+archer set for Expedition.
+- For early Arena/Conquest, prefer early_game_combat weights and do NOT ignore conquest
+  imbuements (R+40/+80).
+important_for_arena_conquest:
+- Site optimizer values expedition milestones (120/160/200) and skips conquest ones
+  (140/180).
+- Conquest bonuses are hero-wide (Hero Health/Attack/Defense Up) — useful for Arena/Conquest
+  even if expedition ROI is lower.
+- 'Early-stage: prioritize mythic sets + mastery on combat-weighted pieces before
+  red.'
+f2p_recommendation: Stop at red 120 per piece (10 mithril + 5 mythic including ascension).
+advanced_recommendation: Red 160 = 60 cumulative mithril + 15 mythic gear per piece.
+endgame_per_piece_mythic_100_to_red_200:
+  mithril: 150
+  mithril_breakdown:
+  - 10
+  - 20
+  - 30
+  - 40
+  - 50
+  mythic_gear: 35
+  mythic_breakdown:
+  - 2
+  - 3
+  - 5
+  - 5
+  - 10
+  - 10
+full_red_plus_mastery_20_per_piece_mythic_gear: 90
+full_12_piece_set_to_red_200_m20:
+  mithril: 1800
+  mythic_gear: 1080
+milestone_costs:
+- red_level: 100
+  event: ascension
+  mithril: 0
+  mythic_gear: 2
+  notes: Requires E100 + Mastery 10; then continues at 101
+- red_level: 120
+  event: imbuement
+  mithril: 10
+  mythic_gear: 3
+  mode_value: expedition
+  bonus: +20% troop attack/defense (piece-dependent)
+- red_level: 140
+  event: imbuement
+  mithril: 20
+  mythic_gear: 5
+  mode_value: conquest
+  bonus: hero-wide; site optimizer IGNORES by default
+- red_level: 160
+  event: imbuement
+  mithril: 30
+  mythic_gear: 5
+  mode_value: expedition
+  bonus: +30% troop attack/defense
+- red_level: 180
+  event: imbuement
+  mithril: 40
+  mythic_gear: 10
+  mode_value: conquest
+  bonus: hero-wide; site optimizer IGNORES by default
+- red_level: 200
+  event: imbuement
+  mithril: 50
+  mythic_gear: 10
+  mode_value: expedition
+  bonus: +50% troop attack/defense
+  requires_mastery: 15
+milestone_bonuses:
+- red_level: 120
+  display: '+20'
+  mode: expedition
+  stat: infantryAttack
+  value: +20.0%
+  applies_to_pieces: &id001
+  - Infantry_Helm
+  - Infantry_Shroud
+  group: infantryHelmChest
+- red_level: 140
+  display: '+40'
+  mode: conquest
+  stat: heroHealthUp
+  value: +7.5%
+  applies_to_pieces: *id001
+  group: infantryHelmChest
+- red_level: 160
+  display: '+60'
+  mode: expedition
+  stat: infantryDefense
+  value: +30.0%
+  applies_to_pieces: *id001
+  group: infantryHelmChest
+- red_level: 180
+  display: '+80'
+  mode: conquest
+  stat: heroAttackUp
+  value: +15.0%
+  applies_to_pieces: *id001
+  group: infantryHelmChest
+- red_level: 200
+  display: '+100'
+  mode: expedition
+  stat: infantryAttack
+  value: +50.0%
+  applies_to_pieces: *id001
+  group: infantryHelmChest
+- red_level: 120
+  display: '+20'
+  mode: expedition
+  stat: infantryDefense
+  value: +20.0%
+  applies_to_pieces: &id002
+  - Infantry_Gloves
+  - Infantry_Greaves
+  group: infantryGlovesBoots
+- red_level: 140
+  display: '+40'
+  mode: conquest
+  stat: heroHealthUp
+  value: +7.5%
+  applies_to_pieces: *id002
+  group: infantryGlovesBoots
+- red_level: 160
+  display: '+60'
+  mode: expedition
+  stat: infantryAttack
+  value: +30.0%
+  applies_to_pieces: *id002
+  group: infantryGlovesBoots
+- red_level: 180
+  display: '+80'
+  mode: conquest
+  stat: heroDefenseUp
+  value: +15.0%
+  applies_to_pieces: *id002
+  group: infantryGlovesBoots
+- red_level: 200
+  display: '+100'
+  mode: expedition
+  stat: infantryDefense
+  value: +50.0%
+  applies_to_pieces: *id002
+  group: infantryGlovesBoots
+- red_level: 120
+  display: '+20'
+  mode: expedition
+  stat: archerAttack
+  value: +20.0%
+  applies_to_pieces: &id003
+  - Archery_Faceplate
+  - Archery_Leatherwear
+  group: archerHelmChest
+- red_level: 140
+  display: '+40'
+  mode: conquest
+  stat: heroHealthUp
+  value: +7.5%
+  applies_to_pieces: *id003
+  group: archerHelmChest
+- red_level: 160
+  display: '+60'
+  mode: expedition
+  stat: archerDefense
+  value: +30.0%
+  applies_to_pieces: *id003
+  group: archerHelmChest
+- red_level: 180
+  display: '+80'
+  mode: conquest
+  stat: heroAttackUp
+  value: +15.0%
+  applies_to_pieces: *id003
+  group: archerHelmChest
+- red_level: 200
+  display: '+100'
+  mode: expedition
+  stat: archerAttack
+  value: +50.0%
+  applies_to_pieces: *id003
+  group: archerHelmChest
+- red_level: 120
+  display: '+20'
+  mode: expedition
+  stat: archerDefense
+  value: +20.0%
+  applies_to_pieces: &id004
+  - Archery_Bracers
+  - Archery_Riders
+  group: archerGlovesBoots
+- red_level: 140
+  display: '+40'
+  mode: conquest
+  stat: heroHealthUp
+  value: +7.5%
+  applies_to_pieces: *id004
+  group: archerGlovesBoots
+- red_level: 160
+  display: '+60'
+  mode: expedition
+  stat: archerAttack
+  value: +30.0%
+  applies_to_pieces: *id004
+  group: archerGlovesBoots
+- red_level: 180
+  display: '+80'
+  mode: conquest
+  stat: heroAttackUp
+  value: +15.0%
+  applies_to_pieces: *id004
+  group: archerGlovesBoots
+- red_level: 200
+  display: '+100'
+  mode: expedition
+  stat: archerDefense
+  value: +50.0%
+  applies_to_pieces: *id004
+  group: archerGlovesBoots
+- red_level: 120
+  display: '+20'
+  mode: expedition
+  stat: cavalryAttack
+  value: +20.0%
+  applies_to_pieces: &id005
+  - Cavalry_Armet
+  - Cavalry_Breastplate
+  group: cavalryHelmChest
+- red_level: 140
+  display: '+40'
+  mode: conquest
+  stat: heroHealthUp
+  value: +7.5%
+  applies_to_pieces: *id005
+  group: cavalryHelmChest
+- red_level: 160
+  display: '+60'
+  mode: expedition
+  stat: cavalryDefense
+  value: +30.0%
+  applies_to_pieces: *id005
+  group: cavalryHelmChest
+- red_level: 180
+  display: '+80'
+  mode: conquest
+  stat: heroAttackUp
+  value: +15.0%
+  applies_to_pieces: *id005
+  group: cavalryHelmChest
+- red_level: 200
+  display: '+100'
+  mode: expedition
+  stat: cavalryAttack
+  value: +50.0%
+  applies_to_pieces: *id005
+  group: cavalryHelmChest
+- red_level: 120
+  display: '+20'
+  mode: expedition
+  stat: cavalryDefense
+  value: +20.0%
+  applies_to_pieces: &id006
+  - Cavalry_Gauntlet
+  - Cavalry_Boots
+  group: cavalryGlovesBoots
+- red_level: 140
+  display: '+40'
+  mode: conquest
+  stat: heroHealthUp
+  value: +7.5%
+  applies_to_pieces: *id006
+  group: cavalryGlovesBoots
+- red_level: 160
+  display: '+60'
+  mode: expedition
+  stat: cavalryAttack
+  value: +30.0%
+  applies_to_pieces: *id006
+  group: cavalryGlovesBoots
+- red_level: 180
+  display: '+80'
+  mode: conquest
+  stat: heroDefenseUp
+  value: +15.0%
+  applies_to_pieces: *id006
+  group: cavalryGlovesBoots
+- red_level: 200
+  display: '+100'
+  mode: expedition
+  stat: cavalryDefense
+  value: +50.0%
+  applies_to_pieces: *id006
+  group: cavalryGlovesBoots

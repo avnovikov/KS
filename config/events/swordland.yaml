@@ -1,0 +1,104 @@
+# Swordland Showdown feature importance for the recommend scorer.
+# Not official game weights — derived from community guides (tunable).
+#
+# Sources:
+#   - https://kingshotmastery.com/guides/swordland-showdown
+#   - https://kingshotmastery.com/guides/kingshot-widget-guide
+#   - https://kingshotwiki.com/events/swordland-showdown/
+#   - https://kingshotguide.net/guides/joiner-hero-mechanics-no-one-told-you-about/
+
+name: swordland
+
+sources:
+  - https://kingshotmastery.com/guides/swordland-showdown
+  - https://kingshotmastery.com/guides/kingshot-widget-guide
+  - https://kingshotwiki.com/events/swordland-showdown/
+  - https://kingshotguide.net/guides/joiner-hero-mechanics-no-one-told-you-about/
+
+# Relative importance of skill *kinds* by recommended mode.
+# Buildings are ralliable → defensive widgets ON for garrison; offensive widgets
+# for rally_lead only when you start the rally.
+mode_kind_weights:
+  garrison:
+    defender_attack: 4.0
+    defender_health: 3.8
+    defender_defense: 3.8
+    damage_taken_down: 3.5   # Howard/Quinn classic Swordland hold join
+    defense_up: 3.0          # Saul/Gordon/Hilde
+    attack_up: 1.2
+    lethality_up: 1.5        # Chenko still useful in mixed joiner stacks
+    opp_damage_down: 1.8
+    rally_attack: 0.2
+    rally_lethality: 0.2
+
+  rally_lead:
+    rally_attack: 4.0
+    rally_lethality: 4.0
+    lethality_up: 2.5
+    attack_up: 2.5
+    damage_taken_down: 0.6
+    defense_up: 0.6
+    defender_attack: 0.2
+    defender_health: 0.2
+    defender_defense: 0.2
+    opp_damage_down: 1.5
+
+  joiner:
+    # Fill garrisons + join building rallies: prefer diverse effect_op first skills.
+    damage_taken_down: 3.2   # 111 Howard/Quinn for holds
+    defense_up: 3.0          # 112/113 Saul/Gordon
+    lethality_up: 2.8        # 101 Chenko/Yeonwoo for flips
+    attack_up: 2.8           # 102 Amane/Hilde/Margot
+    opp_damage_down: 2.2
+    defender_attack: 0.5
+    rally_attack: 0.5
+    rally_lethality: 0.5
+
+  solo:
+    attack_up: 2.5
+    lethality_up: 2.5
+    defense_up: 1.2
+    damage_taken_down: 1.2
+    opp_damage_down: 1.5
+    rally_attack: 0.0
+    rally_lethality: 0.0
+    defender_attack: 0.0
+    defender_health: 0.0
+    defender_defense: 0.0
+
+# Extra multiplier on first-expedition skills by effect_op (SkillMod families).
+# Same code adds; different codes multiply in-game — we bias diversity via ILP
+# indirectly by scoring the hero; op weights tune event relevance.
+effect_op_weights:
+  garrison:
+    111: 1.6   # DMG taken down
+    112: 1.5
+    113: 1.4
+    101: 1.1
+    102: 1.1
+    201: 1.2
+    202: 1.2
+  rally_lead:
+    101: 1.5
+    102: 1.5
+    201: 1.3
+    202: 1.3
+    111: 0.8
+    112: 0.8
+    113: 0.8
+  joiner:
+    111: 1.5
+    112: 1.45
+    113: 1.35
+    101: 1.4
+    102: 1.4
+    201: 1.25
+    202: 1.25
+  solo:
+    101: 1.2
+    102: 1.2
+    111: 1.0
+    112: 1.0
+    113: 1.0
+    201: 1.1
+    202: 1.1

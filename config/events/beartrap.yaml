@@ -1,0 +1,83 @@
+# Bear Trap / Bear Hunt feature importance (starter vs joiner).
+# expected_* points in scenarios are a damage-contribution proxy, not Relic Points.
+#
+# Sources:
+#   - https://kingshotmastery.com/guides/kingshot-hero-tier-list (Bear joiner S+/Not Useful)
+#   - https://kingshotmastery.com/guides/kingshot-widget-guide (widgets fire for host only)
+#   - https://kingshotguide.net/guides/joiner-hero-mechanics-no-one-told-you-about/
+
+name: beartrap
+
+sources:
+  - https://kingshotmastery.com/guides/kingshot-hero-tier-list
+  - https://kingshotmastery.com/guides/kingshot-widget-guide
+  - https://kingshotguide.net/guides/joiner-hero-mechanics-no-one-told-you-about/
+
+# Mode keys match point_scenarios_beartrap.yaml:
+#   rally_lead = starter / host (you open the bear rally)
+#   joiner     = first-slot first-expedition skill only (widgets OFF)
+
+mode_kind_weights:
+  rally_lead:
+    rally_attack: 4.5
+    rally_lethality: 4.5
+    lethality_up: 3.0
+    attack_up: 3.0
+    opp_damage_down: 2.0   # enemy DEF down helps bear damage
+    damage_taken_down: 0.2
+    defense_up: 0.2
+    defender_attack: 0.0
+    defender_health: 0.0
+    defender_defense: 0.0
+
+  joiner:
+    # Bear joiner S+: flat Attack/Lethality / damage amps — not defense.
+    lethality_up: 4.0      # effect_op 101 (Chenko, Yeonwoo, Amadeus)
+    attack_up: 4.0         # effect_op 102 (Amane, Margot)
+    opp_damage_down: 1.0   # Fahd-style: low for bear (tier lists mark weak)
+    damage_taken_down: 0.1 # Howard/Quinn: Not Useful for bear
+    defense_up: 0.1        # Saul/Gordon: Not Useful for bear
+    defender_attack: 0.0
+    defender_health: 0.0
+    defender_defense: 0.0
+    rally_attack: 0.0      # widgets do not fire when joining
+    rally_lethality: 0.0
+
+  # Kept so a shared CLI still works if someone merges full scenarios;
+  # beartrap point_scenarios file omits these.
+  garrison:
+    defender_attack: 0.1
+    damage_taken_down: 0.1
+    defense_up: 0.1
+    lethality_up: 0.5
+    attack_up: 0.5
+  solo:
+    attack_up: 2.0
+    lethality_up: 2.0
+    rally_attack: 0.0
+    defender_attack: 0.0
+
+effect_op_weights:
+  rally_lead:
+    101: 1.6
+    102: 1.6
+    201: 1.1
+    202: 1.1
+    111: 0.3
+    112: 0.3
+    113: 0.3
+  joiner:
+    101: 1.8   # Lethality DamageUp — mix with 102 for SkillMod prod
+    102: 1.8   # Attack DamageUp
+    201: 0.6   # OppDamageDown weak on bear
+    202: 0.6
+    111: 0.2
+    112: 0.2
+    113: 0.2
+  garrison:
+    111: 1.0
+    112: 1.0
+    113: 1.0
+  solo:
+    101: 1.2
+    102: 1.2

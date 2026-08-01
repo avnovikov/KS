@@ -1,0 +1,145 @@
+source: https://kingshotoptimizer.com/
+source_version: 1.12.4
+extracted_on: '2026-08-01'
+notes:
+- Copied from Kingshot Optimizer public web app JS for local planning.
+- Default site optimizer optimizes ONE infantry+cavalry+archer set for Expedition.
+- For early Arena/Conquest, prefer early_game_combat weights and do NOT ignore conquest
+  imbuements (R+40/+80).
+stat_formulas:
+  mythic_or_epic: enhanced = base + (enhancement/100)*(max-base); final = enhanced
+    * (1 + 0.1*mastery)
+  red_enhancement_gt_100: enhanced = 0.5 + (enhancement-100)*0.005; final = enhanced
+    * (1 + 0.1*mastery)
+  mastery_bonus: +10% multiplicative per mastery level
+  ui_shows_base_mythic_at_0: 0.15
+base_stats:
+  Epic:
+    base: 0.09
+    max_at_enhancement_100_equivalent: 0.258
+    pieces:
+      Infantry_Helm:
+        stat: lethality
+        base: 0.09
+        max: 0.258
+      Infantry_Gloves:
+        stat: health
+        base: 0.09
+        max: 0.258
+      Infantry_Shroud:
+        stat: health
+        base: 0.09
+        max: 0.258
+        ui_slot: chest
+      Infantry_Greaves:
+        stat: lethality
+        base: 0.09
+        max: 0.258
+        ui_slot: boots
+      Cavalry_Armet:
+        stat: lethality
+        base: 0.09
+        max: 0.258
+        ui_slot: helm
+      Cavalry_Gauntlet:
+        stat: health
+        base: 0.09
+        max: 0.258
+        ui_slot: gloves
+      Cavalry_Breastplate:
+        stat: health
+        base: 0.09
+        max: 0.258
+        ui_slot: chest
+      Cavalry_Boots:
+        stat: lethality
+        base: 0.09
+        max: 0.258
+      Archery_Faceplate:
+        stat: lethality
+        base: 0.09
+        max: 0.258
+        ui_slot: helm
+      Archery_Bracers:
+        stat: health
+        base: 0.09
+        max: 0.258
+        ui_slot: gloves
+      Archery_Leatherwear:
+        stat: health
+        base: 0.09
+        max: 0.258
+        ui_slot: chest
+      Archery_Riders:
+        stat: lethality
+        base: 0.09
+        max: 0.258
+        ui_slot: boots
+  Mythic:
+    base: 0.15
+    max: 0.5
+    pieces:
+      Infantry_Helm:
+        stat: lethality
+        base: 0.15
+        max: 0.5
+      Infantry_Gloves:
+        stat: health
+        base: 0.15
+        max: 0.5
+      Infantry_Shroud:
+        stat: health
+        base: 0.15
+        max: 0.5
+        ui_slot: chest
+      Infantry_Greaves:
+        stat: lethality
+        base: 0.15
+        max: 0.5
+        ui_slot: boots
+      Cavalry_Armet:
+        stat: lethality
+        base: 0.15
+        max: 0.5
+        ui_slot: helm
+      Cavalry_Gauntlet:
+        stat: health
+        base: 0.15
+        max: 0.5
+        ui_slot: gloves
+      Cavalry_Breastplate:
+        stat: health
+        base: 0.15
+        max: 0.5
+        ui_slot: chest
+      Cavalry_Boots:
+        stat: lethality
+        base: 0.15
+        max: 0.5
+      Archery_Faceplate:
+        stat: lethality
+        base: 0.15
+        max: 0.5
+        ui_slot: helm
+      Archery_Bracers:
+        stat: health
+        base: 0.15
+        max: 0.5
+        ui_slot: gloves
+      Archery_Leatherwear:
+        stat: health
+        base: 0.15
+        max: 0.5
+        ui_slot: chest
+      Archery_Riders:
+        stat: lethality
+        base: 0.15
+        max: 0.5
+        ui_slot: boots
+fodder_xp_values:
+  xp_part_green_10: 10
+  xp_part_purple_100: 100
+  grey_gear: 10
+  green_gear: 30
+  blue_gear: 60
+  purple_gear: 150

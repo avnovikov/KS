@@ -1,0 +1,243 @@
+# Battle base stats per troop type / tier / Truegold level.
+# Source: https://kingshotsimulator.com/troop-base-stats (SoS-shared combat numbers).
+# In-game UI stats are placeholders; Defense & Lethality stay 10; Attack/Health scale.
+# Verified T6 TG0 vs https://kingshotguides.com/guide/bear-trap-damage-mechanics-and-example-simulation/
+
+source: https://kingshotsimulator.com/troop-base-stats
+default_truegold: 0
+
+stats:
+  infantry:
+    1:
+      0: {attack: 63, defense: 10, lethality: 10, health: 189}
+      1: {attack: 66, defense: 10, lethality: 10, health: 197}
+      2: {attack: 69, defense: 10, lethality: 10, health: 206}
+      3: {attack: 72, defense: 10, lethality: 10, health: 217}
+      4: {attack: 76, defense: 10, lethality: 10, health: 228}
+      5: {attack: 80, defense: 10, lethality: 10, health: 239}
+    2:
+      0: {attack: 94, defense: 10, lethality: 10, health: 283}
+      1: {attack: 98, defense: 10, lethality: 10, health: 294}
+      2: {attack: 103, defense: 10, lethality: 10, health: 309}
+      3: {attack: 108, defense: 10, lethality: 10, health: 324}
+      4: {attack: 113, defense: 10, lethality: 10, health: 341}
+      5: {attack: 119, defense: 10, lethality: 10, health: 358}
+    3:
+      0: {attack: 132, defense: 10, lethality: 10, health: 397}
+      1: {attack: 137, defense: 10, lethality: 10, health: 413}
+      2: {attack: 144, defense: 10, lethality: 10, health: 434}
+      3: {attack: 151, defense: 10, lethality: 10, health: 455}
+      4: {attack: 159, defense: 10, lethality: 10, health: 478}
+      5: {attack: 167, defense: 10, lethality: 10, health: 502}
+    4:
+      0: {attack: 172, defense: 10, lethality: 10, health: 516}
+      1: {attack: 179, defense: 10, lethality: 10, health: 537}
+      2: {attack: 188, defense: 10, lethality: 10, health: 563}
+      3: {attack: 197, defense: 10, lethality: 10, health: 592}
+      4: {attack: 207, defense: 10, lethality: 10, health: 621}
+      5: {attack: 217, defense: 10, lethality: 10, health: 652}
+    5:
+      0: {attack: 206, defense: 10, lethality: 10, health: 619}
+      1: {attack: 214, defense: 10, lethality: 10, health: 644}
+      2: {attack: 225, defense: 10, lethality: 10, health: 676}
+      3: {attack: 236, defense: 10, lethality: 10, health: 710}
+      4: {attack: 248, defense: 10, lethality: 10, health: 745}
+      5: {attack: 260, defense: 10, lethality: 10, health: 782}
+    6:
+      0: {attack: 243, defense: 10, lethality: 10, health: 730}
+      1: {attack: 253, defense: 10, lethality: 10, health: 759}
+      2: {attack: 265, defense: 10, lethality: 10, health: 797}
+      3: {attack: 279, defense: 10, lethality: 10, health: 837}
+      4: {attack: 293, defense: 10, lethality: 10, health: 879}
+      5: {attack: 307, defense: 10, lethality: 10, health: 923}
+    7:
+      0: {attack: 287, defense: 10, lethality: 10, health: 862}
+      1: {attack: 298, defense: 10, lethality: 10, health: 896}
+      2: {attack: 313, defense: 10, lethality: 10, health: 941}
+      3: {attack: 329, defense: 10, lethality: 10, health: 988}
+      4: {attack: 346, defense: 10, lethality: 10, health: 1038}
+      5: {attack: 363, defense: 10, lethality: 10, health: 1090}
+    8:
+      0: {attack: 339, defense: 10, lethality: 10, health: 1017}
+      1: {attack: 353, defense: 10, lethality: 10, health: 1058}
+      2: {attack: 370, defense: 10, lethality: 10, health: 1111}
+      3: {attack: 389, defense: 10, lethality: 10, health: 1166}
+      4: {attack: 408, defense: 10, lethality: 10, health: 1224}
+      5: {attack: 429, defense: 10, lethality: 10, health: 1286}
+    9:
+      0: {attack: 400, defense: 10, lethality: 10, health: 1200}
+      1: {attack: 416, defense: 10, lethality: 10, health: 1248}
+      2: {attack: 437, defense: 10, lethality: 10, health: 1310}
+      3: {attack: 459, defense: 10, lethality: 10, health: 1376}
+      4: {attack: 482, defense: 10, lethality: 10, health: 1445}
+      5: {attack: 506, defense: 10, lethality: 10, health: 1517}
+    10:
+      0: {attack: 472, defense: 10, lethality: 10, health: 1416}
+      1: {attack: 491, defense: 10, lethality: 10, health: 1473}
+      2: {attack: 515, defense: 10, lethality: 10, health: 1546}
+      3: {attack: 541, defense: 10, lethality: 10, health: 1624}
+      4: {attack: 568, defense: 10, lethality: 10, health: 1705}
+      5: {attack: 597, defense: 10, lethality: 10, health: 1790}
+    11:
+      0: {attack: 566, defense: 10, lethality: 10, health: 1699}
+      1: {attack: 589, defense: 10, lethality: 10, health: 1767}
+      2: {attack: 618, defense: 10, lethality: 10, health: 1855}
+      3: {attack: 649, defense: 10, lethality: 10, health: 1948}
+      4: {attack: 681, defense: 10, lethality: 10, health: 2045}
+      5: {attack: 716, defense: 10, lethality: 10, health: 2148}
+  cavalry:
+    1:
+      0: {attack: 189, defense: 10, lethality: 10, health: 63}
+      1: {attack: 197, defense: 10, lethality: 10, health: 66}
+      2: {attack: 206, defense: 10, lethality: 10, health: 69}
+      3: {attack: 217, defense: 10, lethality: 10, health: 72}
+      4: {attack: 228, defense: 10, lethality: 10, health: 76}
+      5: {attack: 239, defense: 10, lethality: 10, health: 80}
+    2:
+      0: {attack: 283, defense: 10, lethality: 10, health: 94}
+      1: {attack: 294, defense: 10, lethality: 10, health: 98}
+      2: {attack: 309, defense: 10, lethality: 10, health: 103}
+      3: {attack: 324, defense: 10, lethality: 10, health: 108}
+      4: {attack: 341, defense: 10, lethality: 10, health: 113}
+      5: {attack: 358, defense: 10, lethality: 10, health: 119}
+    3:
+      0: {attack: 397, defense: 10, lethality: 10, health: 132}
+      1: {attack: 413, defense: 10, lethality: 10, health: 137}
+      2: {attack: 434, defense: 10, lethality: 10, health: 144}
+      3: {attack: 455, defense: 10, lethality: 10, health: 151}
+      4: {attack: 478, defense: 10, lethality: 10, health: 159}
+      5: {attack: 502, defense: 10, lethality: 10, health: 167}
+    4:
+      0: {attack: 516, defense: 10, lethality: 10, health: 172}
+      1: {attack: 537, defense: 10, lethality: 10, health: 179}
+      2: {attack: 563, defense: 10, lethality: 10, health: 188}
+      3: {attack: 592, defense: 10, lethality: 10, health: 197}
+      4: {attack: 621, defense: 10, lethality: 10, health: 207}
+      5: {attack: 652, defense: 10, lethality: 10, health: 217}
+    5:
+      0: {attack: 619, defense: 10, lethality: 10, health: 206}
+      1: {attack: 644, defense: 10, lethality: 10, health: 214}
+      2: {attack: 676, defense: 10, lethality: 10, health: 225}
+      3: {attack: 710, defense: 10, lethality: 10, health: 236}
+      4: {attack: 745, defense: 10, lethality: 10, health: 248}
+      5: {attack: 782, defense: 10, lethality: 10, health: 260}
+    6:
+      0: {attack: 730, defense: 10, lethality: 10, health: 243}
+      1: {attack: 759, defense: 10, lethality: 10, health: 253}
+      2: {attack: 797, defense: 10, lethality: 10, health: 265}
+      3: {attack: 837, defense: 10, lethality: 10, health: 279}
+      4: {attack: 879, defense: 10, lethality: 10, health: 293}
+      5: {attack: 923, defense: 10, lethality: 10, health: 307}
+    7:
+      0: {attack: 862, defense: 10, lethality: 10, health: 287}
+      1: {attack: 896, defense: 10, lethality: 10, health: 298}
+      2: {attack: 941, defense: 10, lethality: 10, health: 313}
+      3: {attack: 988, defense: 10, lethality: 10, health: 329}
+      4: {attack: 1038, defense: 10, lethality: 10, health: 346}
+      5: {attack: 1090, defense: 10, lethality: 10, health: 363}
+    8:
+      0: {attack: 1017, defense: 10, lethality: 10, health: 339}
+      1: {attack: 1058, defense: 10, lethality: 10, health: 353}
+      2: {attack: 1111, defense: 10, lethality: 10, health: 370}
+      3: {attack: 1166, defense: 10, lethality: 10, health: 389}
+      4: {attack: 1224, defense: 10, lethality: 10, health: 408}
+      5: {attack: 1286, defense: 10, lethality: 10, health: 429}
+    9:
+      0: {attack: 1200, defense: 10, lethality: 10, health: 400}
+      1: {attack: 1248, defense: 10, lethality: 10, health: 416}
+      2: {attack: 1310, defense: 10, lethality: 10, health: 437}
+      3: {attack: 1376, defense: 10, lethality: 10, health: 459}
+      4: {attack: 1445, defense: 10, lethality: 10, health: 482}
+      5: {attack: 1517, defense: 10, lethality: 10, health: 506}
+    10:
+      0: {attack: 1416, defense: 10, lethality: 10, health: 472}
+      1: {attack: 1473, defense: 10, lethality: 10, health: 491}
+      2: {attack: 1546, defense: 10, lethality: 10, health: 515}
+      3: {attack: 1624, defense: 10, lethality: 10, health: 541}
+      4: {attack: 1705, defense: 10, lethality: 10, health: 568}
+      5: {attack: 1790, defense: 10, lethality: 10, health: 597}
+    11:
+      0: {attack: 1699, defense: 10, lethality: 10, health: 566}
+      1: {attack: 1767, defense: 10, lethality: 10, health: 589}
+      2: {attack: 1855, defense: 10, lethality: 10, health: 618}
+      3: {attack: 1948, defense: 10, lethality: 10, health: 649}
+      4: {attack: 2045, defense: 10, lethality: 10, health: 681}
+      5: {attack: 2148, defense: 10, lethality: 10, health: 716}
+  archers:
+    1:
+      0: {attack: 252, defense: 10, lethality: 10, health: 47}
+      1: {attack: 262, defense: 10, lethality: 10, health: 49}
+      2: {attack: 275, defense: 10, lethality: 10, health: 51}
+      3: {attack: 289, defense: 10, lethality: 10, health: 54}
+      4: {attack: 303, defense: 10, lethality: 10, health: 57}
+      5: {attack: 319, defense: 10, lethality: 10, health: 59}
+    2:
+      0: {attack: 378, defense: 10, lethality: 10, health: 71}
+      1: {attack: 393, defense: 10, lethality: 10, health: 74}
+      2: {attack: 413, defense: 10, lethality: 10, health: 78}
+      3: {attack: 433, defense: 10, lethality: 10, health: 81}
+      4: {attack: 455, defense: 10, lethality: 10, health: 85}
+      5: {attack: 478, defense: 10, lethality: 10, health: 90}
+    3:
+      0: {attack: 529, defense: 10, lethality: 10, health: 99}
+      1: {attack: 550, defense: 10, lethality: 10, health: 103}
+      2: {attack: 578, defense: 10, lethality: 10, health: 108}
+      3: {attack: 607, defense: 10, lethality: 10, health: 114}
+      4: {attack: 637, defense: 10, lethality: 10, health: 119}
+      5: {attack: 669, defense: 10, lethality: 10, health: 125}
+    4:
+      0: {attack: 688, defense: 10, lethality: 10, health: 129}
+      1: {attack: 716, defense: 10, lethality: 10, health: 134}
+      2: {attack: 751, defense: 10, lethality: 10, health: 141}
+      3: {attack: 789, defense: 10, lethality: 10, health: 148}
+      4: {attack: 828, defense: 10, lethality: 10, health: 155}
+      5: {attack: 870, defense: 10, lethality: 10, health: 163}
+    5:
+      0: {attack: 825, defense: 10, lethality: 10, health: 155}
+      1: {attack: 858, defense: 10, lethality: 10, health: 161}
+      2: {attack: 901, defense: 10, lethality: 10, health: 169}
+      3: {attack: 946, defense: 10, lethality: 10, health: 178}
+      4: {attack: 993, defense: 10, lethality: 10, health: 187}
+      5: {attack: 1043, defense: 10, lethality: 10, health: 196}
+    6:
+      0: {attack: 974, defense: 10, lethality: 10, health: 183}
+      1: {attack: 1013, defense: 10, lethality: 10, health: 190}
+      2: {attack: 1064, defense: 10, lethality: 10, health: 200}
+      3: {attack: 1117, defense: 10, lethality: 10, health: 210}
+      4: {attack: 1173, defense: 10, lethality: 10, health: 220}
+      5: {attack: 1231, defense: 10, lethality: 10, health: 231}
+    7:
+      0: {attack: 1149, defense: 10, lethality: 10, health: 215}
+      1: {attack: 1195, defense: 10, lethality: 10, health: 224}
+      2: {attack: 1255, defense: 10, lethality: 10, health: 235}
+      3: {attack: 1317, defense: 10, lethality: 10, health: 247}
+      4: {attack: 1383, defense: 10, lethality: 10, health: 259}
+      5: {attack: 1452, defense: 10, lethality: 10, health: 272}
+    8:
+      0: {attack: 1356, defense: 10, lethality: 10, health: 254}
+      1: {attack: 1410, defense: 10, lethality: 10, health: 264}
+      2: {attack: 1481, defense: 10, lethality: 10, health: 277}
+      3: {attack: 1555, defense: 10, lethality: 10, health: 291}
+      4: {attack: 1633, defense: 10, lethality: 10, health: 306}
+      5: {attack: 1714, defense: 10, lethality: 10, health: 321}
+    9:
+      0: {attack: 1600, defense: 10, lethality: 10, health: 300}
+      1: {attack: 1664, defense: 10, lethality: 10, health: 312}
+      2: {attack: 1747, defense: 10, lethality: 10, health: 328}
+      3: {attack: 1835, defense: 10, lethality: 10, health: 344}
+      4: {attack: 1926, defense: 10, lethality: 10, health: 361}
+      5: {attack: 2023, defense: 10, lethality: 10, health: 379}
+    10:
+      0: {attack: 1888, defense: 10, lethality: 10, health: 354}
+      1: {attack: 1964, defense: 10, lethality: 10, health: 368}
+      2: {attack: 2062, defense: 10, lethality: 10, health: 387}
+      3: {attack: 2165, defense: 10, lethality: 10, health: 406}
+      4: {attack: 2273, defense: 10, lethality: 10, health: 426}
+      5: {attack: 2387, defense: 10, lethality: 10, health: 448}
+    11:
+      0: {attack: 2266, defense: 10, lethality: 10, health: 390}
+      1: {attack: 2357, defense: 10, lethality: 10, health: 406}
+      2: {attack: 2474, defense: 10, lethality: 10, health: 426}
+      3: {attack: 2598, defense: 10, lethality: 10, health: 447}
+      4: {attack: 2728, defense: 10, lethality: 10, health: 470}
+      5: {attack: 2865, defense: 10, lethality: 10, health: 493}
