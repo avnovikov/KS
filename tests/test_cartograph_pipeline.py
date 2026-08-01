@@ -10,8 +10,10 @@ from ks.cartograph.labels import hits_from_label_boxes, infer_kind
 from ks.cartograph.mask import MaskConfig
 from ks.cartograph.pipeline import (
     dry_run_plan,
+    find_seed_calibration_path,
     format_dry_run,
     hits_to_blockers_yaml,
+    resolve_capture_stitch_route,
     run_fixture_dir,
 )
 
@@ -34,6 +36,36 @@ def test_hits_to_yaml_roundtrip() -> None:
     hits = [StructureHit.from_kind("ACE", "city", 696, 814)]
     raw = yaml.safe_load(hits_to_blockers_yaml(hits))
     assert raw["blocks"][0]["w"] == 2
+
+
+def test_find_seed_and_stitch_route_prefers_exact_click(tmp_path: Path) -> None:
+    assert find_seed_calibration_path(tmp_path) is None
+    route = resolve_capture_stitch_route(tmp_path)
+    assert route.mode == "viewport_fallback"
+    assert route.seed_path is None
+    assert "weak" in route.detail.lower() or "fallback" in route.detail.lower()
+
+    other = tmp_path / "exact-coordinate-calibration-v1.yaml"
+    other.write_text("matrix: [[1,0],[0,1]]\nframe_offsets: {}\n", encoding="utf-8")
+    preferred = tmp_path / "exact-coordinate-calibration-v3.yaml"
+    preferred.write_text("matrix: [[1,0],[0,1]]\nframe_offsets: {}\n", encoding="utf-8")
+    assert find_seed_calibration_path(tmp_path) == preferred
+    route2 = resolve_capture_stitch_route(tmp_path)
+    assert route2.mode == "register"
+    assert route2.seed_path == preferred
+
+
+def test_cli_map_require_registration_fails_without_seed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from ks.cartograph.cli import main
+
+    code = main(
+        ["--map", "--require-registration", "--capture-dir", str(tmp_path)]
+    )
+    assert code == 1
+    err = capsys.readouterr().err
+    assert "exact-click" in err.lower() or "seed" in err.lower()
 
 
 def test_fixture_pipeline_with_injected_labels(tmp_path: Path) -> None:

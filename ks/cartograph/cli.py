@@ -11,6 +11,8 @@ from ks.cartograph.pipeline import (
     format_dry_run,
     load_viewports_yaml,
     mask_config_from_calibration,
+    register_and_digitize_capture,
+    resolve_capture_stitch_route,
     run_fixture_dir,
     run_live_frames,
 )
@@ -102,18 +104,53 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--map",
         action="store_true",
-        help="Render map from entities.yaml (+ panorama.png if present) in --capture-dir.",
+        help=(
+            "Build/render map in --capture-dir. Prefers exact-click registration "
+            "when exact-coordinate-calibration*.yaml exists; otherwise weak "
+            "viewport-OCR fallback."
+        ),
+    )
+    p.add_argument(
+        "--require-registration",
+        action="store_true",
+        help=(
+            "With --map: fail if no exact-click seed YAML (do not use viewport "
+            "OCR fallback)."
+        ),
     )
     return p
 
 
-def _render_map_from_entities(capture_dir: Path) -> int:
+def _render_map_from_entities(
+    capture_dir: Path, *, require_registration: bool = False
+) -> int:
     import yaml
     from ks.cartograph.mosaic import MosaicResult, stitch_viewport_mosaic
     from ks.cartograph.live_capture import CapturedFrame
     from ks.cartograph.render_map import MapEntity, write_map_bundle
     from ks.cartograph.viewport import ocr_viewport_from_image
     import cv2
+
+    route = resolve_capture_stitch_route(capture_dir)
+    print(f"stitch_route={route.mode}: {route.detail}")
+    if route.mode == "register":
+        assert route.seed_path is not None
+        result = register_and_digitize_capture(
+            capture_dir,
+            seed_calibration_path=route.seed_path,
+        )
+        print(
+            f"registered mosaic {result.mosaic.image.shape[1]}x"
+            f"{result.mosaic.image.shape[0]} → {result.mosaic.path} "
+            f"entities={len(result.entities)}"
+        )
+        return 0
+    if require_registration:
+        print(
+            f"Error: {route.detail}",
+            file=sys.stderr,
+        )
+        return 1
 
     path = capture_dir / "entities.yaml"
     if not path.is_file():
@@ -161,6 +198,11 @@ def _render_map_from_entities(capture_dir: Path) -> int:
             )
         )
     if len(frames) >= 2 and any(f.viewport for f in frames):
+        print(
+            "WARNING: viewport-OCR fallback stitch (not canonical scale); "
+            "add exact-coordinate-calibration*.yaml from live clicks",
+            file=sys.stderr,
+        )
         mosaic = stitch_viewport_mosaic(frames, pan)
         print(
             f"mosaic {mosaic.image.shape[1]}x{mosaic.image.shape[0]} "
@@ -192,7 +234,10 @@ def _render_map_from_entities(capture_dir: Path) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.map:
-        return _render_map_from_entities(args.capture_dir)
+        return _render_map_from_entities(
+            args.capture_dir,
+            require_registration=args.require_registration,
+        )
 
     if not (20 <= args.radius <= 50):
         print(f"Error: --radius must be 20..50; got {args.radius}", file=sys.stderr)
@@ -269,62 +314,82 @@ def main(argv: list[str] | None = None) -> int:
                     return 0
 
                 pan = args.capture_dir / "panorama.png"
-                mosaic = stitch_viewport_mosaic(frames, pan)
-                print(
-                    f"mosaic {mosaic.image.shape[1]}x{mosaic.image.shape[0]} "
-                    f"→ {pan}"
-                )
-
-                # Keep / seed entities.yaml
-                ent_path = args.capture_dir / "entities.yaml"
-                if ent_path.is_file():
-                    raw = yaml.safe_load(ent_path.read_text(encoding="utf-8"))
-                    ents = [
-                        MapEntity(
-                            kind=e["kind"],
-                            x=int(e["x"]),
-                            y=int(e["y"]),
-                            label=str(e["label"]),
-                            level=e.get("level"),
-                            w=int(e.get("w", 1)),
-                            h=int(e.get("h", 1)),
-                        )
-                        for e in raw.get("entities") or []
-                    ]
-                    kingdom = str(raw.get("kingdom", ""))
+                route = resolve_capture_stitch_route(args.capture_dir)
+                print(f"stitch_route={route.mode}: {route.detail}")
+                if route.mode == "register":
+                    digitized = register_and_digitize_capture(
+                        args.capture_dir,
+                        seed_calibration_path=route.seed_path,
+                    )
+                    mosaic = digitized.mosaic
+                    print(
+                        f"registered mosaic {mosaic.image.shape[1]}x"
+                        f"{mosaic.image.shape[0]} → {pan}"
+                    )
+                    cx, cy = digitized.center
+                    html = args.capture_dir / "map.html"
                 else:
-                    ents = []
-                    kingdom = ""
-                    # Update center in a fresh yaml
-                    ent_path.write_text(
-                        yaml.safe_dump(
-                            {
-                                "kingdom": kingdom,
-                                "center": {"x": cx, "y": cy},
-                                "entities": [],
-                            },
-                            sort_keys=False,
-                        ),
-                        encoding="utf-8",
+                    print(
+                        "WARNING: live capture has no exact-click seed; "
+                        "viewport-OCR mosaic is non-canonical until clicks",
+                        file=sys.stderr,
+                    )
+                    mosaic = stitch_viewport_mosaic(frames, pan)
+                    print(
+                        f"mosaic {mosaic.image.shape[1]}x{mosaic.image.shape[0]} "
+                        f"→ {pan}"
                     )
 
-                # Refresh center in entities.yaml
-                if ent_path.is_file():
-                    raw = yaml.safe_load(ent_path.read_text(encoding="utf-8")) or {}
-                    raw["center"] = {"x": cx, "y": cy}
-                    if "kingdom" not in raw:
-                        raw["kingdom"] = kingdom
-                    ent_path.write_text(
-                        yaml.safe_dump(raw, sort_keys=False), encoding="utf-8"
-                    )
+                    # Keep / seed entities.yaml
+                    ent_path = args.capture_dir / "entities.yaml"
+                    if ent_path.is_file():
+                        raw = yaml.safe_load(ent_path.read_text(encoding="utf-8"))
+                        ents = [
+                            MapEntity(
+                                kind=e["kind"],
+                                x=int(e["x"]),
+                                y=int(e["y"]),
+                                label=str(e["label"]),
+                                level=e.get("level"),
+                                w=int(e.get("w", 1)),
+                                h=int(e.get("h", 1)),
+                            )
+                            for e in raw.get("entities") or []
+                        ]
+                        kingdom = str(raw.get("kingdom", ""))
+                    else:
+                        ents = []
+                        kingdom = ""
+                        # Update center in a fresh yaml
+                        ent_path.write_text(
+                            yaml.safe_dump(
+                                {
+                                    "kingdom": kingdom,
+                                    "center": {"x": cx, "y": cy},
+                                    "entities": [],
+                                },
+                                sort_keys=False,
+                            ),
+                            encoding="utf-8",
+                        )
 
-                html, grid, ent = write_map_bundle(
-                    args.capture_dir,
-                    ents,
-                    center=(cx, cy),
-                    kingdom=kingdom or "?",
-                    mosaic=mosaic,
-                )
+                    # Refresh center in entities.yaml
+                    if ent_path.is_file():
+                        raw = yaml.safe_load(ent_path.read_text(encoding="utf-8")) or {}
+                        raw["center"] = {"x": cx, "y": cy}
+                        if "kingdom" not in raw:
+                            raw["kingdom"] = kingdom
+                        ent_path.write_text(
+                            yaml.safe_dump(raw, sort_keys=False), encoding="utf-8"
+                        )
+
+                    html, grid, ent = write_map_bundle(
+                        args.capture_dir,
+                        ents,
+                        center=(cx, cy),
+                        kingdom=kingdom or "?",
+                        mosaic=mosaic,
+                    )
                 result = run_live_frames(
                     frames,
                     radius=args.radius,

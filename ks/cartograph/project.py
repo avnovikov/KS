@@ -144,6 +144,101 @@ class AffineProjection:
         )
 
 
+@dataclass(frozen=True)
+class DiamondTileSides:
+    """Two pixel sides of one world diamond tile (shared by every tile).
+
+    ``side_x`` / ``side_y`` are the image vectors for +1 world X / +1 world Y.
+    Angles are derived from those sides. Every tile uses the same sides in its
+    affine: ``pixel = origin + side_x * dx + side_y * dy``.
+    """
+
+    side_x: tuple[float, float]
+    side_y: tuple[float, float]
+
+    def __post_init__(self) -> None:
+        sx = _validated_pair(self.side_x, name="side_x")
+        sy = _validated_pair(self.side_y, name="side_y")
+        if float(np.hypot(*sx)) < 1e-6 or float(np.hypot(*sy)) < 1e-6:
+            raise ValueError("diamond sides must be nonzero")
+        det = sx[0] * sy[1] - sx[1] * sy[0]
+        if abs(det) < 1e-8:
+            raise ValueError("diamond sides must be linearly independent")
+        object.__setattr__(self, "side_x", sx)
+        object.__setattr__(self, "side_y", sy)
+
+    @property
+    def length_x(self) -> float:
+        return float(np.hypot(*self.side_x))
+
+    @property
+    def length_y(self) -> float:
+        return float(np.hypot(*self.side_y))
+
+    @property
+    def angle_x_deg(self) -> float:
+        return float(np.degrees(np.arctan2(self.side_x[1], self.side_x[0])))
+
+    @property
+    def angle_y_deg(self) -> float:
+        return float(np.degrees(np.arctan2(self.side_y[1], self.side_y[0])))
+
+    @property
+    def included_angle_deg(self) -> float:
+        """Interior angle between the two diamond sides (degrees)."""
+        a = np.asarray(self.side_x, dtype=float)
+        b = np.asarray(self.side_y, dtype=float)
+        cos = float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+        cos = float(np.clip(cos, -1.0, 1.0))
+        return float(np.degrees(np.arccos(cos)))
+
+    def matrix(self) -> Matrix2x2:
+        """2×2 world→pixel matrix with columns = diamond sides."""
+        return (
+            (self.side_x[0], self.side_y[0]),
+            (self.side_x[1], self.side_y[1]),
+        )
+
+    def affine_for_tile(
+        self,
+        world_x: float,
+        world_y: float,
+        *,
+        pixel_origin: tuple[float, float],
+        center: tuple[float, float],
+    ) -> np.ndarray:
+        """2×3 affine mapping local tile coords (u,v) → panorama pixels.
+
+        Local (0,0) is world ``(world_x, world_y)`` relative to ``center``;
+        local (1,0)/(0,1) follow ``side_x`` / ``side_y``.
+        """
+        origin = _validated_pair(pixel_origin, name="pixel_origin")
+        ctr = _validated_pair(center, name="center")
+        dx = float(world_x) - ctr[0]
+        dy = float(world_y) - ctr[1]
+        px0 = origin[0] + self.side_x[0] * dx + self.side_y[0] * dy
+        py0 = origin[1] + self.side_x[1] * dx + self.side_y[1] * dy
+        return np.array(
+            [
+                [self.side_x[0], self.side_y[0], px0],
+                [self.side_x[1], self.side_y[1], py0],
+            ],
+            dtype=float,
+        )
+
+    def projection(
+        self,
+        *,
+        center: tuple[float, float],
+        pixel_origin: tuple[float, float],
+    ) -> AffineProjection:
+        return AffineProjection(
+            center=center,
+            pixel_origin=pixel_origin,
+            matrix=self.matrix(),
+        )
+
+
 def world_from_pixel(
     px: float,
     py: float,

@@ -44,6 +44,27 @@ def test_bluestacks_mask_crops_map_band() -> None:
     cfg = bluestacks_mask_config()
     img = np.full((1920, 1080, 3), 100, dtype=np.uint8)
     band = mask_and_crop(img, cfg)
-    assert band.shape[0] == int(round(1920 * (cfg.crop_bottom - cfg.crop_top)))
-    assert band.shape[1] == int(round(1080 * (cfg.crop_right - cfg.crop_left)))
+    h, w = img.shape[:2]
+    y0 = int(round(h * cfg.crop_top))
+    y1 = int(round(h * cfg.crop_bottom))
+    x0 = int(round(w * cfg.crop_left))
+    x1 = int(round(w * cfg.crop_right))
+    assert band.shape == (y1 - y0, x1 - x0, 3)
     assert band.shape[1] < 1080
+    # PC Marching / Events chrome must be outside the kept band.
+    assert cfg.crop_left >= 0.28
+    assert cfg.crop_right <= 0.80
+
+
+def test_bluestacks_mask_excludes_marching_column() -> None:
+    """Marching 3/4 column (left ~0.34×W) is cropped out of the map band."""
+    cfg = bluestacks_mask_config()
+    img = np.full((1920, 1080, 3), 180, dtype=np.uint8)
+    img[420:460, 80:120] = (200, 180, 40)
+    band = mask_and_crop(img, cfg)
+    h, w = img.shape[:2]
+    x0 = int(round(w * cfg.crop_left))
+    assert x0 > 120
+    assert cfg.crop_left >= 0.34
+    assert band.shape[1] < w * 0.5
+

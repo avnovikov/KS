@@ -198,3 +198,26 @@ def test_affine_projection_exposes_matrix_as_immutable_values() -> None:
     assert isinstance(projection.matrix, tuple)
     with pytest.raises(TypeError):
         projection.matrix[0][0] = 2.0
+
+
+def test_diamond_tile_sides_angles_and_affine_for_each_tile():
+    from ks.cartograph.project import DiamondTileSides
+
+    # +X goes right-down, +Y goes left-down (classic iso diamond).
+    sides = DiamondTileSides(side_x=(40.0, 20.0), side_y=(-30.0, 25.0))
+    assert sides.length_x == pytest.approx(np.hypot(40, 20))
+    assert sides.angle_x_deg == pytest.approx(np.degrees(np.arctan2(20, 40)))
+    assert sides.angle_y_deg == pytest.approx(np.degrees(np.arctan2(25, -30)))
+    assert 0.0 < sides.included_angle_deg < 180.0
+
+    # Every tile uses the same sides in its affine.
+    a00 = sides.affine_for_tile(10, 20, pixel_origin=(100, 200), center=(10, 20))
+    assert a00[0, 2] == pytest.approx(100.0)
+    assert a00[1, 2] == pytest.approx(200.0)
+    # Local (1,0) lands at origin + side_x
+    assert a00[0, 0] == pytest.approx(40.0) and a00[1, 0] == pytest.approx(20.0)
+
+    a11 = sides.affine_for_tile(11, 21, pixel_origin=(100, 200), center=(10, 20))
+    # Tile (11,21) origin = (100,200) + side_x + side_y
+    assert a11[0, 2] == pytest.approx(100 + 40 - 30)
+    assert a11[1, 2] == pytest.approx(200 + 20 + 25)
