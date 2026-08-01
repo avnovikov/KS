@@ -116,9 +116,14 @@ def create_app(gear_dir: Path) -> Any:
     app = FastAPI(title="KS Heroes Gear UI", version="0.1.0")
     app.state.gear_dir = resolved
     app.state.store = store
+    static_dir = Path(__file__).resolve().parent / "static"
+    if static_dir.is_dir():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+    icons_path = resolved / "icons"
+    icons_path.mkdir(parents=True, exist_ok=True)
     app.mount(
         "/icons",
-        StaticFiles(directory=str(resolved / "icons")),
+        StaticFiles(directory=str(icons_path)),
         name="icons",
     )
 

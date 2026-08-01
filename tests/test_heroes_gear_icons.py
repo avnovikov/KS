@@ -8,7 +8,7 @@ from ks.heroes.gear_models import GearRecord
 from ks.heroes.ui.icons import ensure_all_icons, ensure_piece_icon
 
 
-def test_svg_icon_created_for_each_piece(tmp_path: Path) -> None:
+def test_bundled_web_icons_preferred(tmp_path: Path) -> None:
     pieces = [
         GearRecord(
             piece_id="page0-cell0",
@@ -28,17 +28,20 @@ def test_svg_icon_created_for_each_piece(tmp_path: Path) -> None:
         ),
     ]
     mapping = ensure_all_icons(pieces, tmp_path)
-    assert len(mapping) == 2
-    for piece_id, url in mapping.items():
-        assert url.startswith("/icons/")
-        disk = tmp_path / "icons" / url.rsplit("/", 1)[-1]
-        assert disk.is_file()
-        text = disk.read_text(encoding="utf-8")
-        assert "<svg" in text
+    assert mapping["page0-cell0"] == "/static/gear-pieces/cavalry-helm.png"
+    assert mapping["page0-cell1"] == "/static/gear-pieces/archer-boots.png"
+    assert (tmp_path / "icons" / "page0-cell0.png").is_file()
 
 
 def test_icon_url_stable(tmp_path: Path) -> None:
-    piece = GearRecord(piece_id="x", name="Warrior's Helm", slot="helmet", rarity="green")
+    piece = GearRecord(
+        piece_id="x",
+        name="Warrior's Helm",
+        troop_type="infantry",
+        slot="helmet",
+        rarity="green",
+    )
     a = ensure_piece_icon(piece, tmp_path)
     b = ensure_piece_icon(piece, tmp_path)
     assert a == b
+    assert a == "/static/gear-pieces/infantry-helm.png"

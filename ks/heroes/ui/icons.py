@@ -1,15 +1,18 @@
-"""Gear icons for the UI: crop from detail screenshots when present, else SVG."""
+"""Gear icons for the UI: bundled web icons, detail crops, then SVG fallback."""
 
 from __future__ import annotations
 
 import hashlib
 import re
+import shutil
 from pathlib import Path
 
 from ks.heroes.gear_models import GearRecord
 
 # Detail-modal icon region (1080×1920 portrait calibrations in gear.yaml).
 _DETAIL_ICON_BOX = (100, 280, 200, 200)  # x, y, w, h
+
+_STATIC_GEAR_PIECES = Path(__file__).resolve().parent / "static" / "gear-pieces"
 
 _RARITY_COLORS = {
     "mythic": ("#f0c674", "#8a6a20"),
@@ -38,6 +41,14 @@ _SLOT_GLYPH = {
     "boots": "B",
 }
 
+_SLOT_FILE = {
+    "helmet": "helm",
+    "helm": "helm",
+    "chest": "chest",
+    "gloves": "gloves",
+    "boots": "boots",
+}
+
 
 def icons_dir_for(gear_dir: Path) -> Path:
     path = gear_dir / "icons"
@@ -50,12 +61,60 @@ def icon_filename(piece_id: str) -> str:
     return f"{safe}.svg"
 
 
-def ensure_piece_icon(piece: GearRecord, gear_dir: Path) -> str:
-    """Ensure an icon file exists; return URL path ``/icons/<file>``."""
-    out_dir = icons_dir_for(gear_dir)
-    name = icon_filename(piece.piece_id)
-    dest = out_dir / name
+def _normalize_troop_key(troop: str | None) -> str | None:
+    if not troop:
+        return None
+    key = troop.strip().lower()
+    if key in ("archer", "archers"):
+        return "archer"
+    if key in ("infantry", "cavalry"):
+        return key
+    return None
 
+
+def bundled_piece_icon(piece: GearRecord) -> Path | None:
+    """Path to downloaded troop+slot PNG from Kingshot Optimizer, if present."""
+    troop = _normalize_troop_key(piece.troop_type)
+    slot = _SLOT_FILE.get((piece.slot or "").lower())
+    if troop is None or slot is None:
+        # Infer slot from name when OCR slot missing
+        name = (piece.name or "").lower()
+        for needle, key in (
+            ("armet", "helm"),
+            ("faceplate", "helm"),
+            ("helm", "helm"),
+            ("hel", "helm"),
+            ("shroud", "chest"),
+            ("leatherwear", "chest"),
+            ("breastplate", "chest"),
+            ("gloves", "gloves"),
+            ("gauntlet", "gloves"),
+            ("bracers", "gloves"),
+            ("boots", "boots"),
+            ("greaves", "boots"),
+            ("riders", "boots"),
+        ):
+            if needle in name:
+                slot = key
+                break
+    if troop is None or slot is None:
+        return None
+    path = _STATIC_GEAR_PIECES / f"{troop}-{slot}.png"
+    return path if path.is_file() else None
+
+
+def ensure_piece_icon(piece: GearRecord, gear_dir: Path) -> str:
+    """Ensure an icon is available; return URL path under /static or /icons."""
+    bundled = bundled_piece_icon(piece)
+    if bundled is not None:
+        # Also copy into gear_dir/icons for offline browse of that inventory
+        out_dir = icons_dir_for(gear_dir)
+        dest = out_dir / f"{piece.piece_id}.png"
+        if not dest.is_file() or dest.stat().st_size != bundled.stat().st_size:
+            shutil.copy2(bundled, dest)
+        return f"/static/gear-pieces/{bundled.name}"
+
+    out_dir = icons_dir_for(gear_dir)
     png_override = out_dir / f"{piece.piece_id}.png"
     if png_override.is_file():
         return f"/icons/{png_override.name}"
@@ -64,6 +123,8 @@ def ensure_piece_icon(piece: GearRecord, gear_dir: Path) -> str:
     if cropped is not None:
         return f"/icons/{cropped.name}"
 
+    name = icon_filename(piece.piece_id)
+    dest = out_dir / name
     dest.write_text(_svg_for_piece(piece), encoding="utf-8")
     return f"/icons/{name}"
 
@@ -102,13 +163,12 @@ def _try_crop_detail_icon(
 
 def _svg_for_piece(piece: GearRecord) -> str:
     rarity = (piece.rarity or "blue").lower()
-    edge, ink = _RARITY_COLORS.get(rarity, ("#9aa0a6", "#3a3f4b"))
+    edge, _ink = _RARITY_COLORS.get(rarity, ("#9aa0a6", "#3a3f4b"))
     troop = (piece.troop_type or "").lower()
     fill = _TROOP_FILL.get(troop, "#3a3f4b")
     slot = (piece.slot or "").lower()
     glyph = _SLOT_GLYPH.get(slot, "?")
     label = _set_abbrev(piece.name)
-    # Stable accent from name hash
     digest = hashlib.md5((piece.name or piece.piece_id).encode()).hexdigest()
     accent = f"#{digest[:6]}"
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
@@ -128,14 +188,12 @@ def _svg_for_piece(piece: GearRecord) -> str:
 def _set_abbrev(name: str | None) -> str:
     if not name:
         return "??"
-    # "Judicator's Armet" → JUD; "TV RP" → TV; "Warrior's Hel" → WAR
     cleaned = re.sub(r"[^A-Za-z0-9\s]", " ", name)
     parts = [p for p in cleaned.split() if p]
     if not parts:
         return "??"
     if len(parts[0]) <= 3 and len(parts) == 1:
         return parts[0].upper()[:3]
-    # skip possessive tails like Armet/Boots for set word
     skip = {
         "armet",
         "helm",

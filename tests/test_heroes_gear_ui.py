@@ -88,7 +88,7 @@ def test_fastapi_patch_roundtrip(tmp_path: Path) -> None:
     page = client.get("/gear")
     assert page.status_code == 200
     assert "Judicator" in page.text
-    assert "/icons/" in page.text
+    assert "/static/gear-pieces/" in page.text
 
 
 def test_compute_gear_power_known_anchors() -> None:

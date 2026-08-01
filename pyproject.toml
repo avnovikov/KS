@@ -31,6 +31,9 @@ ks-heroes = "ks.heroes.cli:main"
 [tool.setuptools.packages.find]
 include = ["ks*"]
 
+[tool.setuptools.package-data]
+"ks.heroes.ui" = ["templates/*", "static/**/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
