@@ -42,8 +42,8 @@ _ENHANCEMENT_RE = re.compile(
     r"(?:enhancement\s*(?:lv\.?|level)?\s*|[+]?\s*)(\d{1,3})\b",
     re.I,
 )
-# Enhancement badge "+30" — do not match expedition "+30.60%" (or partial +3).
-_PLUS_LEVEL_RE = re.compile(r"\+(\d{1,3})(?!\d)(?!\.\d)")
+# Enhancement badge "+30" — never expedition "+30.60%" / "+30%" / "+3" prefixes.
+_PLUS_LEVEL_RE = re.compile(r"\+(\d{1,3})(?!\d)(?!\.\d)(?!\s*%)")
 _MASTERY_RE = re.compile(
     r"(?:mastery\s*(?:lv\.?|level)?\s*[+]?\s*|lv\.?\s*)(\d{1,2})\b",
     re.I,
@@ -99,12 +99,12 @@ def parse_gear_detail(text: str, *, page: int, index: int) -> GearRecord:
         raise ValueError(f"page/index must be >= 0; got page={page} index={index}")
 
     rarity = _parse_rarity(text)
-    enhancement = _parse_enhancement(text)
     mastery = _parse_mastery(text)
     troop = _parse_troop(text)
     slot = _parse_slot(text)
     name = _parse_name(text)
     power = _parse_power(text)
+    enhancement = _resolve_enhancement(text, rarity=rarity, power=power, mastery=mastery)
     equipped = _parse_equipped(text)
     stats = _parse_stats(text)
 
@@ -136,32 +136,115 @@ def _parse_rarity(text: str) -> str | None:
     return _RARITY_MAP[match.group(1).lower()]
 
 
+def _detail_header(text: str) -> str:
+    """Text above Conquest/Expedition — name / power / icon badge live here."""
+    return re.split(
+        r"conquest\s+stats|expedition\s+stats",
+        text,
+        maxsplit=1,
+        flags=re.I,
+    )[0]
+
+
+def _enhancement_search_text(text: str) -> str:
+    """Detail-phase text where +N means enhancement — not expedition +N.NN% lines.
+
+    Keeps the header (icon badge / glued title) and footer action lines
+    (``Enhance`` / bare ``+30``) while dropping percent stats.
+    """
+    header = _detail_header(text)
+    footer_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if re.search(r"\+\s*\d+(?:\.\d+)?\s*%", stripped):
+            continue
+        lower = stripped.lower()
+        if lower.startswith(
+            ("enhance", "mastery forging", "reforge", "unequip", "equip")
+        ) or re.fullmatch(r"\+?\d{1,3}", stripped) or re.fullmatch(
+            r"lv\.?\s*\d{1,2}", stripped, flags=re.I
+        ):
+            footer_lines.append(stripped)
+    return header + "\n" + "\n".join(footer_lines)
+
+
 def _parse_enhancement(text: str) -> int | None:
-    # Prefer explicit +N badges (enhancement), never expedition "+30.60%".
-    plus_vals = [int(m.group(1)) for m in _PLUS_LEVEL_RE.finditer(text)]
+    # Detail-phase only: header badge / Enhance footer — never expedition %.
+    search = _enhancement_search_text(text)
+    plus_vals = [int(m.group(1)) for m in _PLUS_LEVEL_RE.finditer(search)]
     plus_vals = [v for v in plus_vals if 0 <= v <= 200]
     if plus_vals:
         # Badge values are usually the largest +N that isn't a tiny OCR speck.
         return max(plus_vals)
 
+    # Digits immediately before a known gear title: "Qt23 Crusader…" / "pt20 praetorian…".
+    lower_search = search.lower().replace("'", "")
+    for known in _KNOWN_GEAR_NAMES:
+        key = known.lower().replace("'", "")
+        idx = lower_search.find(key)
+        if idx <= 0:
+            continue
+        prefix = search[max(0, idx - 6) : idx]
+        m = re.search(r"(\d{1,3})\s*$", prefix)
+        if m:
+            level = int(m.group(1))
+            if 0 <= level <= 200:
+                return level
+
     # OCR often glues enhancement onto the title: "aer30 Judicator's Armet".
     glued = re.search(
-        r"(?<![0-9.,])(\d{2,3})\s+([A-Z][A-Za-z]+(?:'[sd])?(?:\s+[A-Z][A-Za-z]+)+)",
-        text,
+        r"(?<![0-9.,])(\d{1,3})\s+([A-Za-z][A-Za-z']+(?:\s+[A-Za-z][A-Za-z']+)+)",
+        _detail_header(text),
     )
     if glued:
         title = glued.group(2).lower()
-        if "stat" not in title and "mastery" not in title and "detail" not in title:
-            return int(glued.group(1))
+        level = int(glued.group(1))
+        if (
+            0 <= level <= 200
+            and "stat" not in title
+            and "mastery" not in title
+            and "detail" not in title
+            and "hero" not in title
+            and "escort" not in title
+            and "stonewall" not in title  # escort-digit false positives
+        ):
+            return level
 
     explicit = re.search(
         r"enhancement\s*(?:lv\.?|level)?\s*[+]?\s*(\d{1,3})\b",
-        text,
+        search,
         re.I,
     )
     if explicit:
         return int(explicit.group(1))
     return None
+
+
+def _resolve_enhancement(
+    text: str,
+    *,
+    rarity: str | None,
+    power: int | None,
+    mastery: int | None,
+) -> int | None:
+    """Detail-phase OCR +N, validated against power when both are available.
+
+    Noisy detail OCR often invents digits (escort stats, partial badges). When
+    the power curve disagrees by more than 2 levels, trust the curve.
+    """
+    from ks.heroes.ui.power import estimate_enhancement_from_power
+
+    ocr_level = _parse_enhancement(text)
+    inferred = estimate_enhancement_from_power(rarity, power, mastery)
+    if ocr_level is None:
+        return inferred
+    if inferred is None:
+        return ocr_level
+    if abs(ocr_level - inferred) > 2:
+        return inferred
+    return ocr_level
 
 
 def _parse_mastery(text: str) -> int | None:

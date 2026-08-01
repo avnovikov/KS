@@ -97,7 +97,10 @@ class HeroStore:
         raw = json.loads(self.json_path.read_text(encoding="utf-8"))
         heroes = raw.get("heroes") if isinstance(raw, dict) else raw
         if not isinstance(heroes, list):
-            return
+            raise ValueError(
+                f"{self.json_path} must be a list or "
+                f'{{"heroes": [...]}}; refusing to load (would wipe on upsert)'
+            )
         for item in heroes:
             hero = HeroRecord.from_dict(item)
             self._heroes[hero.name] = hero

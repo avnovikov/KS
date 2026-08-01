@@ -85,6 +85,10 @@ def sync_piece_power(piece: GearRecord) -> GearRecord:
     """
     if piece.enhancement_level is None or not piece.rarity:
         return piece
+    from ks.heroes.ui.power import known_rarity
+
+    if not known_rarity(piece.rarity):
+        return piece
     power = compute_gear_power(
         piece.rarity, piece.enhancement_level, piece.mastery_level
     )

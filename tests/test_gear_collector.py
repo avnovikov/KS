@@ -34,6 +34,10 @@ def _png() -> bytes:
 
 def test_collect_gear_pages_then_stops(tmp_path):
     cfg = load_gear_config()
+    # Config may set max_pages=1 for live runs; exercise paging explicitly.
+    from dataclasses import replace
+
+    cfg = replace(cfg, grid=replace(cfg.grid, max_pages=2))
     device = RecordingDevice(png_bytes=_png())
     store = GearStore(tmp_path)
 

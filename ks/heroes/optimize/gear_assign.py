@@ -1,4 +1,4 @@
-"""Assign best owned gear sets per troop class (fungible within class)."""
+"""Assign owned gear: fungible class sets (marches) or exclusive pieces (arena)."""
 
 from __future__ import annotations
 

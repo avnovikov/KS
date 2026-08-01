@@ -62,7 +62,10 @@ class GearStore:
         raw = json.loads(self.json_path.read_text(encoding="utf-8"))
         items = raw.get("gear") if isinstance(raw, dict) else raw
         if not isinstance(items, list):
-            return
+            raise ValueError(
+                f"{self.json_path} must be a list or "
+                f'{{"gear": [...]}}; refusing to load (would wipe on upsert)'
+            )
         for item in items:
             piece = GearRecord.from_dict(item)
             self._pieces[piece.piece_id] = piece

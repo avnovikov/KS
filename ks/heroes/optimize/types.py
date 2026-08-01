@@ -75,6 +75,12 @@ class EffectTag:
 
 @dataclass(frozen=True)
 class CatalogEntry:
+    """Static hero semantics — single source of truth from hero_catalog.yaml.
+
+    Live roster power/stars/skills live in scraped heroes.json; this entry is
+    the shared identity + widget/effect/arena overlay used by recommend + arena.
+    """
+
     name: str
     gen: int | None = None
     troop: str | None = None
@@ -88,6 +94,12 @@ class CatalogEntry:
     garrison_tier: str | None = None
     joiner_tier: str | None = None
     effects: tuple[EffectTag, ...] = ()
+    # Arena ILP hints (formerly config/arena_roles.yaml heroes:)
+    arena_role: str | None = None
+    arena_value: float | None = None
+    arena_tags: tuple[str, ...] = ()
+    obtain: str | None = None
+    notes: str | None = None
 
 
 @dataclass(frozen=True)

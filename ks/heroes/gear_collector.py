@@ -59,6 +59,10 @@ def collect_gear(
 
             dedupe_key = _dedupe_key(piece)
             if dedupe_key in seen:
+                print(
+                    f"warn: gear dedupe skip page={page} index={index} "
+                    f"key={dedupe_key}"
+                )
                 continue
             seen.add(dedupe_key)
             store.upsert(piece)

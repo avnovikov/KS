@@ -12,24 +12,41 @@ from ks.heroes.store import HeroStore
 
 
 def _sanitize_power(power: int | None, *, previous: int | None) -> int | None:
-    """Drop OCR leading-digit glitches (e.g. 172650 → 8172650)."""
+    """Drop OCR leading-digit glitches (e.g. 8172650 → 172650).
+
+    Prefer raw OCR when it is plausible. Only strip a leading digit when that
+    looks like a glitch relative to a previous scrape — never by default for
+    legitimate ≥1M powers.
+    """
     if power is None:
         return None
     if power < 1_000_000:
         return power
-    stripped = int(str(power)[1:])
+    text = str(power)
+    stripped = int(text[1:])
+    leading = text[0]
+
+    def _near(candidate: int, ref: int) -> bool:
+        return ref / 3.0 <= candidate <= ref * 3.0
+
     if previous is not None and previous > 0:
-        # Prefer value within ~3× of previous scrape.
-        for candidate in (stripped, power):
-            if previous / 3.0 <= candidate <= previous * 3.0:
-                if candidate != power:
-                    print(f"power OCR sanitize {power} → {candidate} (prev={previous})")
-                return candidate
+        raw_near = _near(power, previous)
+        stripped_near = _near(stripped, previous)
+        stripped_close = abs(stripped - previous) <= max(int(previous * 0.2), 25_000)
+        glitch = (
+            leading in "23456789"
+            and stripped_near
+            and stripped_close
+            and (not raw_near or abs(stripped - previous) < abs(power - previous))
+        )
+        if glitch:
+            print(f"power OCR sanitize {power} → {stripped} (prev={previous})")
+            return stripped
+        if raw_near:
+            return power
         print(f"power OCR reject {power} (prev={previous}); keeping previous")
         return previous
-    if 50_000 <= stripped <= 900_000:
-        print(f"power OCR sanitize {power} → {stripped}")
-        return stripped
+    # No prior value: keep raw (avoid corrupting legitimate ≥1M first scrapes).
     return power
 
 
@@ -95,6 +112,10 @@ def collect_heroes(
             if hero is None:
                 continue
             if hero.name in seen:
+                print(
+                    f"warn: duplicate hero skip page={page} index={index} "
+                    f"name={hero.name!r}"
+                )
                 continue
             seen.add(hero.name)
             store.upsert(hero)

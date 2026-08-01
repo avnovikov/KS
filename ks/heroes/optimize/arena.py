@@ -13,7 +13,8 @@ from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.gear_assign import (
     assign_exclusive_sets,
     assignment_to_dict,
-    gear_bonus_by_troop,
+    load_profile_weights,
+    piece_score,
 )
 from ks.heroes.optimize.scoring import (
     normalize_troop,
@@ -53,11 +54,28 @@ class ArenaResult:
         }
 
 
-def load_arena_roles(path: Path | str) -> dict[str, Any]:
+def load_arena_roles(
+    path: Path | str,
+    catalog: dict[str, CatalogEntry] | None = None,
+) -> dict[str, Any]:
+    """Load arena placement config; hero roles come from hero_catalog (SoT).
+
+    ``arena_roles.yaml`` keeps slots/placement only. Hero ``arena_role`` /
+    ``arena_value`` / ``arena_tags`` are always taken from the catalog.
+    """
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
         raise ValueError("arena_roles.yaml must be a mapping")
-    return raw
+    out = dict(raw)
+    from ks.heroes.optimize.catalog import arena_heroes_from_catalog, load_catalog
+
+    if catalog is None:
+        # Default SoT: config/hero_catalog.yaml (YAML-only; pro cache optional).
+        root = Path(__file__).resolve().parents[3]
+        catalog = load_catalog(None, root / "config" / "hero_catalog.yaml")
+    out["heroes"] = arena_heroes_from_catalog(catalog)
+    # Drop any legacy heroes block from the placement file.
+    return out
 
 
 def _hero_base_score(
@@ -69,7 +87,10 @@ def _hero_base_score(
     gear_bonus: float,
 ) -> float:
     meta = (roles.get("heroes") or {}).get(hero.name) or {}
-    arena_value = float(meta.get("arena_value") or 40.0)
+    if entry is not None and entry.arena_value is not None:
+        arena_value = float(entry.arena_value)
+    else:
+        arena_value = float(meta.get("arena_value") or 40.0)
     star = star_progress_factor(hero.stars, hero.pellets)
     power = effective_power if effective_power is not None else hero.power
     power_term = (float(power) / 1_000_000.0) if power else 0.0
@@ -94,11 +115,11 @@ def _placement_mult(
     key = f"{troop}_{family}"
     mult = float(place.get(key, 1.0))
     meta = (roles.get("heroes") or {}).get(hero_name) or {}
-    role = str(meta.get("role") or "")
+    role = str(meta.get("role") or meta.get("arena_role") or "")
     if family == "front" and role.startswith("front"):
         mult *= float(place.get("front_tank_bonus", 1.0))
     carry_slot = str(roles.get("slots", {}).get("carry_slot") or "B2")
-    tags = set(meta.get("tags") or [])
+    tags = set(meta.get("tags") or meta.get("arena_tags") or [])
     if slot == carry_slot and ("dps" in tags or "aoe" in tags or role.startswith("back")):
         mult *= float(place.get("carry_slot_bonus", 1.0))
     return mult
@@ -130,9 +151,28 @@ def optimize_arena_attack(
         or "infantry"
         for h in usable
     }
-    # Arena scores each hero on their own power (unlike marches, gear is not
-    # shared mid-fight). Gear bonus still reflects best available set per class.
-    gear_bonus = gear_bonus_by_troop(gear, profile=gear_profile) if gear else {}
+    # Arena scores each hero on their own power. Gear is exclusive (one piece →
+    # one hero), so score with a provisional exclusive assign by power priority
+    # rather than giving every same-troop hero the full class-best set.
+    gear_bonus_by_hero: dict[str, float] = {h.name: 0.0 for h in usable}
+    if gear:
+        weights = load_profile_weights(gear_profile)
+        score_priority = [
+            h.name for h in sorted(usable, key=lambda row: -(row.power or 0))
+        ]
+        provisional = assign_exclusive_sets(
+            usable,
+            catalog,
+            gear,
+            selected=[h.name for h in usable],
+            priority=score_priority,
+            profile=gear_profile,
+        )
+        for name, slots in provisional.items():
+            gear_bonus_by_hero[name] = 0.15 * sum(
+                piece_score(piece, profile=gear_profile, weights=weights)
+                for piece in slots.values()
+            )
 
     base: dict[str, float] = {}
     for h in usable:
@@ -142,7 +182,7 @@ def optimize_arena_attack(
             catalog.get(h.name),
             roles,
             effective_power=h.power,
-            gear_bonus=float(gear_bonus.get(troop, 0.0)),
+            gear_bonus=float(gear_bonus_by_hero.get(h.name, 0.0)),
         )
 
     prob = pulp.LpProblem("arena_attack", pulp.LpMaximize)

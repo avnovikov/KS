@@ -723,7 +723,7 @@ def _cmd_arena(args: argparse.Namespace) -> int:
             pro_path.parent.mkdir(parents=True, exist_ok=True)
             pro_path.write_text('{"heroes": []}\n', encoding="utf-8")
         catalog = load_catalog(pro_path, args.catalog)
-        roles = load_arena_roles(args.roles)
+        roles = load_arena_roles(args.roles, catalog=catalog)
         gear_pieces = None
         if args.gear is not None:
             from ks.heroes.optimize.gear_assign import load_gear_pieces

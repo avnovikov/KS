@@ -32,6 +32,12 @@ def solve_mode(
     gear_bonus_by_troop: dict[str, float] | None = None,
 ) -> ModeSolution:
     usable = [h for h in heroes if h.name in catalog]
+    dropped = sorted({h.name for h in heroes} - {h.name for h in usable})
+    if dropped:
+        print(
+            f"warn: dropped {len(dropped)} hero(es) not in catalog: "
+            f"{', '.join(dropped[:12])}{'…' if len(dropped) > 12 else ''}"
+        )
     if len(usable) < 3:
         return ModeSolution(
             mode=scenario.mode,
@@ -61,6 +67,13 @@ def solve_mode(
         )
         for h in usable
     }
+    missing_escorts = [h.name for h in usable if h.escorts is None]
+    if missing_escorts:
+        print(
+            "warn: missing escorts OCR for "
+            f"{', '.join(missing_escorts[:12])}"
+            f"{'…' if len(missing_escorts) > 12 else ''}; treating as 0"
+        )
     escorts = {h.name: int(h.escorts or 0) for h in usable}
     widget = {
         h.name: (catalog[h.name].widget_type or "none") for h in usable
