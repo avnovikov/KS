@@ -472,3 +472,29 @@ def test_warp_iso_samples_panorama_through_affine_projection(tmp_path: Path):
     sample_y = round(origin_y + 10.0)
 
     assert image[sample_y, sample_x] == pytest.approx((255, 255, 255))
+
+
+def test_fit_world_matrix_uses_ncc_two_point_edges(monkeypatch: pytest.MonkeyPatch):
+    """M must come from OCR world Δ + NCC pixel Δ, not overlap*band heuristic."""
+    import ks.cartograph.mosaic as mosaic_module
+    from ks.cartograph.mosaic import fit_world_to_pixel_matrix_from_viewports
+
+    true_m = np.array([[40.0, 10.0], [12.0, 55.0]], dtype=float)
+    w1 = np.array([4.0, -4.0])
+    w2 = np.array([-3.0, -8.0])
+    p1 = true_m @ w1
+    p2 = true_m @ w2
+
+    monkeypatch.setattr(
+        mosaic_module,
+        "_collect_ncc_world_pixel_edges",
+        lambda *a, **k: [(w1, p1), (w2, p2)],
+    )
+    frames = [
+        _frame("c0_center", 700, 800, (40, 80, 40)),
+        _frame("g_1_0", 704, 796, (80, 40, 40)),
+        _frame("g_0_1", 697, 792, (40, 40, 80)),
+    ]
+    matrix = fit_world_to_pixel_matrix_from_viewports(frames, 400, 800, overlap=0.55)
+    recovered = np.asarray(matrix, dtype=float)
+    assert recovered == pytest.approx(true_m, abs=0.5)

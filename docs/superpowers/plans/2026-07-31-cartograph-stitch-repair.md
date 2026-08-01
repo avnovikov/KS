@@ -5,7 +5,9 @@
 
 **Goal:** Fix bad panorama merges for isometric World-map grid captures: world-affine placement, hardened step calibration, viewport audit/dedupe, and OCR-gated swipe verification — then offline-restitch `artifacts/cartograph-grid17x17/` without live recapture.
 
-**Architecture:** World OCR viewports (after outlier/dup filter) are the placement authority. Fit a 2×2 `world_to_pixel` matrix; paste bands at `M @ (vp - center)`. Cell-index lattice and landmark BFS become optional refine only after a valid diamond basis. Capture must refuse saves when OCR tile delta is insufficient.
+**Architecture (superseded for canonical scale — 2026-07-31):** Offline viewport-OCR world-affine was used to restitch without live clicks. **Canonical authority is restored** to exact-click popup + selected-diamond seed, then name landmarks + static SIFT; viewport OCR is fallback only. See `docs/superpowers/specs/2026-07-31-cartograph-registration-authority.md` and `pipeline.resolve_capture_stitch_route`.
+
+**Architecture (historical repair sprint):** World OCR viewports (after outlier/dup filter) as placement for offline 17×17 restitch. Fit a 2×2 `world_to_pixel` matrix; paste bands at `M @ (vp - center)`. Cell-index lattice and landmark BFS optional refine. Capture refuses saves when OCR tile delta is insufficient.
 
 **Tech Stack:** Python 3.13, NumPy, OpenCV, pytest, YAML.
 
@@ -89,5 +91,5 @@ python -m ks.cartograph.cli map --capture-dir artifacts/cartograph-grid17x17
 
 ## Out of scope
 
-- Full live 17×17 recapture (blocked without device network / user request).
-- Replacing registration solver (already correct path; wire CLI to it later if needed).
+- Full live 17×17 recapture (blocked without device network / user request); live click+swipe calibration when device time is available.
+- Replacing registration solver (already correct path). **CLI now prefers it** via `--map` when `exact-coordinate-calibration*.yaml` exists (`resolve_capture_stitch_route`).

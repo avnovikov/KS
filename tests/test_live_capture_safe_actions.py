@@ -60,6 +60,64 @@ def test_never_plans_android_back():
         assert action.kind != "back", text
 
 
+def test_find_panel_close_candidates_targets_pale_card_top_right():
+    import numpy as np
+    import cv2
+    from ks.cartograph.live_capture import find_panel_close_candidates
+
+    img = np.full((1920, 1080, 3), (40, 90, 50), dtype=np.uint8)
+    # Pale lord/profile-style panel on the right-middle.
+    cv2.rectangle(img, (420, 520), (980, 1280), (230, 230, 225), -1)
+    hits = find_panel_close_candidates(img)
+    assert hits, "expected at least one close candidate on pale panel"
+    cx, cy = hits[0]
+    assert cx > 850, f"close should be near panel top-right; got {cx}"
+    assert 520 <= cy <= 650, f"close should be near panel top; got {cy}"
+
+
+def test_resolve_blocking_screens_taps_panel_close_then_clears(monkeypatch):
+    """Resolver prefers pale-panel close; never Android Back."""
+    from types import SimpleNamespace
+
+    import numpy as np
+    import cv2
+    from ks.cartograph import live_capture as lc
+
+    blocked = np.full((1920, 1080, 3), (40, 90, 50), dtype=np.uint8)
+    cv2.rectangle(blocked, (420, 520), (980, 1280), (230, 230, 225), -1)
+    clear = np.full((1920, 1080, 3), (40, 90, 50), dtype=np.uint8)
+    frames = [blocked, clear]
+    taps: list[tuple[int, int]] = []
+
+    class FakeDevice:
+        def tap(self, x, y):
+            taps.append((int(x), int(y)))
+
+    monkeypatch.setattr(lc, "screencap_bgr", lambda _d: frames.pop(0))
+    monkeypatch.setattr(lc, "time", SimpleNamespace(sleep=lambda _s: None))
+    monkeypatch.setattr(lc, "mail_modal_visible", lambda _img: False)
+    monkeypatch.setattr(lc, "march_ui_visible", lambda _img: False)
+    monkeypatch.setattr(lc, "alliance_invite_visible", lambda _img: False)
+    monkeypatch.setattr(lc, "find_alliance_invite_close", lambda _img: None)
+    monkeypatch.setattr(lc, "find_popup_corner_close", lambda _img: None)
+    monkeypatch.setattr(
+        lc,
+        "tile_popup_visible",
+        lambda img: float(np.mean(img[700:900, 600:800, 0])) > 200,
+    )
+    monkeypatch.setattr(
+        lc,
+        "find_panel_close_candidates",
+        lambda img: [(930, 560)] if lc.tile_popup_visible(img) else [],
+    )
+
+    result = lc.resolve_blocking_screens(FakeDevice(), settle_s=0.01, require_clear=True)
+    assert result.cleared is True
+    assert result.remaining is None
+    assert taps == [(930, 560)]
+    assert any(a.startswith("tap_panel_close:") for a in result.actions)
+
+
 def test_tile_popup_coords_preferred_from_mid_banner():
     """Badland-style mid-screen X:Y must parse (not only bottom search bar)."""
     import numpy as np
@@ -177,6 +235,11 @@ def test_swipe_camera_verified_rejects_pixel_only_flicker(monkeypatch):
     monkeypatch.setattr(mosaic, "screencap_bgr", lambda _d: next(shots))
     monkeypatch.setattr(mosaic, "swipe_camera", lambda *a, **k: None)
     monkeypatch.setattr(mosaic, "dismiss_map_blockers", lambda _d: None)
+    monkeypatch.setattr(
+        mosaic,
+        "resolve_blocking_screens",
+        lambda *_a, **_k: type("R", (), {"image": before, "cleared": True, "actions": (), "remaining": None})(),
+    )
     monkeypatch.setattr(mosaic.time, "sleep", lambda _s: None)
     monkeypatch.setattr(
         "ks.cartograph.viewport.ocr_viewport_from_image",
@@ -208,6 +271,13 @@ def test_swipe_camera_verified_requires_ocr_tile_delta(monkeypatch):
 
     monkeypatch.setattr(mosaic, "screencap_bgr", lambda _d: frame)
     monkeypatch.setattr(mosaic, "swipe_camera", lambda *a, **k: None)
+    monkeypatch.setattr(
+        mosaic,
+        "resolve_blocking_screens",
+        lambda *_a, **_k: type(
+            "R", (), {"image": frame, "cleared": True, "actions": (), "remaining": None}
+        )(),
+    )
     monkeypatch.setattr(mosaic.time, "sleep", lambda _s: None)
     monkeypatch.setattr(
         "ks.cartograph.viewport.ocr_viewport_from_image",

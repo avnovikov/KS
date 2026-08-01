@@ -65,20 +65,16 @@ def mask_and_crop(image: np.ndarray, cfg: MaskConfig) -> np.ndarray:
 def bluestacks_mask_config() -> MaskConfig:
     """UI mask for BlueStacks 1080×1920 KingShot portrait.
 
-    Never-touch = HUD / side chrome / search / chat, removed by **crop**.
-    A few screen-fixed bubbles inside the map band are painted fill so they
-    never contribute to pairwise alignment or mosaic paste.
+    Never-touch = HUD / side chrome / search / chat / Marching panel, removed
+    by **crop**. PC BlueStacks layouts put Marching 3/4 + return arrows further
+    into the map than phone-safe crops (~0.14); ``crop_left`` must clear that
+    column (~0.34×W) so buttons never enter the mosaic band.
     """
     return MaskConfig(
-        rects=(
-            # Full-frame fractions for on-map fixed chrome.
-            (0.05, 0.15, 0.28, 0.28),  # my-city / km
-            (0.72, 0.12, 0.95, 0.28),  # path-of-growth
-            (0.04, 0.55, 0.16, 0.68),  # magnifier
-        ),
+        rects=(),
         crop_top=0.14,
-        crop_bottom=0.70,
-        crop_left=0.14,
-        crop_right=0.84,
+        crop_bottom=0.68,
+        crop_left=0.34,
+        crop_right=0.78,
         fill=(0, 0, 0),
     )
