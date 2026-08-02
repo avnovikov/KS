@@ -642,6 +642,49 @@ def _cmd_train_names(args: argparse.Namespace) -> int:
     return 0 if report["total"] else 1
 
 
+def _ensure_pro_cache(pro_path: Path) -> None:
+    if pro_path.exists():
+        return
+    # Empty pro cache — YAML-only catalog still works.
+    pro_path.parent.mkdir(parents=True, exist_ok=True)
+    pro_path.write_text('{"heroes": []}\n', encoding="utf-8")
+
+
+def _resolve_truegold(args: argparse.Namespace, troop_stats: object | None) -> int:
+    raw_troops = __import__("yaml").safe_load(
+        args.troops.read_text(encoding="utf-8")
+    ) or {}
+    if args.truegold is not None:
+        return int(args.truegold)
+    default = getattr(troop_stats, "default_truegold", 0) if troop_stats else 0
+    return int(raw_troops.get("truegold", default))
+
+
+def _print_recommend_result(result: object, out: Path) -> None:
+    print(f"recommended_mode: {result.recommended_mode}")  # type: ignore[attr-defined]
+    print(f"expected_personal_points: {result.expected_personal_points:.1f}")  # type: ignore[attr-defined]
+    print(f"heroes: {', '.join(h['name'] for h in result.heroes)}")  # type: ignore[attr-defined]
+    print(
+        "troops: "
+        f"I={result.troops['infantry']} "  # type: ignore[attr-defined]
+        f"C={result.troops['cavalry']} "
+        f"A={result.troops['archers']}"
+    )
+    if result.gear_assignment:  # type: ignore[attr-defined]
+        print("gear:")
+        for name, rows in result.gear_assignment.items():  # type: ignore[attr-defined]
+            if not rows:
+                print(f"  {name}: (no pieces for class)")
+                continue
+            bits = [
+                f"{r['slot']}={r.get('name') or r['piece_id']}"
+                f"+{r.get('enhancement_level') or 0}"
+                for r in rows
+            ]
+            print(f"  {name}: {', '.join(bits)}")
+    print(f"wrote: {out}")
+
+
 def _cmd_recommend(args: argparse.Namespace) -> int:
     from ks.heroes.optimize.catalog import load_catalog
     from ks.heroes.optimize.events import load_event_profile
@@ -656,20 +699,12 @@ def _cmd_recommend(args: argparse.Namespace) -> int:
         scenarios = load_scenarios(args.scenarios)
         event = load_event_profile(args.event) if args.event else None
         troop_stats = load_troop_stats(args.troop_stats) if args.troop_stats else None
-        # truegold: CLI > troops.yaml > stats default
-        raw_troops = __import__("yaml").safe_load(args.troops.read_text(encoding="utf-8")) or {}
-        tg = args.truegold
-        if tg is None:
-            tg = int(raw_troops.get("truegold", troop_stats.default_truegold if troop_stats else 0))
+        tg = _resolve_truegold(args, troop_stats)
         force_mode = args.force_mode
         if force_mode == "starter":
             force_mode = "rally_lead"
-        pro_path = args.pro_cache
-        if not pro_path.exists():
-            # Empty pro cache — YAML-only catalog still works.
-            pro_path.parent.mkdir(parents=True, exist_ok=True)
-            pro_path.write_text('{"heroes": []}\n', encoding="utf-8")
-        catalog = load_catalog(pro_path, args.catalog)
+        _ensure_pro_cache(args.pro_cache)
+        catalog = load_catalog(args.pro_cache, args.catalog)
         gear_pieces = None
         if args.gear is not None:
             from ks.heroes.optimize.gear_assign import load_gear_pieces
@@ -693,28 +728,7 @@ def _cmd_recommend(args: argparse.Namespace) -> int:
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result.to_dict(), indent=2) + "\n", encoding="utf-8")
-    print(f"recommended_mode: {result.recommended_mode}")
-    print(f"expected_personal_points: {result.expected_personal_points:.1f}")
-    print(f"heroes: {', '.join(h['name'] for h in result.heroes)}")
-    print(
-        "troops: "
-        f"I={result.troops['infantry']} "
-        f"C={result.troops['cavalry']} "
-        f"A={result.troops['archers']}"
-    )
-    if result.gear_assignment:
-        print("gear:")
-        for name, rows in result.gear_assignment.items():
-            if not rows:
-                print(f"  {name}: (no pieces for class)")
-                continue
-            bits = [
-                f"{r['slot']}={r.get('name') or r['piece_id']}"
-                f"+{r.get('enhancement_level') or 0}"
-                for r in rows
-            ]
-            print(f"  {name}: {', '.join(bits)}")
-    print(f"wrote: {args.out}")
+    _print_recommend_result(result, args.out)
     return 0
 
 
@@ -776,6 +790,28 @@ def _cmd_arena(args: argparse.Namespace) -> int:
     return 0
 
 
+def _validate_inventory_path(
+    path: Path, *, kind: str, json_name: str, collect_hint: str
+) -> int | None:
+    """Return an error exit code, or None when the inventory path is usable."""
+    if not path.exists():
+        print(
+            f"error: {kind} path not found: {path}\n"
+            f"Re-run {collect_hint} or pass --{kind} <dir>.",
+            file=sys.stderr,
+        )
+        return 1
+    json_path = path if path.is_file() else path / json_name
+    if path.is_dir() and not json_path.is_file():
+        print(
+            f"error: missing {json_path}\n"
+            f"Re-run {collect_hint} or pass --{kind} <dir-with-{json_name}>.",
+            file=sys.stderr,
+        )
+        return 1
+    return None
+
+
 def _cmd_ui(args: argparse.Namespace) -> int:
     from ks.heroes.ui import run_ui
 
@@ -786,38 +822,18 @@ def _cmd_ui(args: argparse.Namespace) -> int:
         gear = ROOT / "artifacts" / "gear" / "full-run"
 
     if gear is not None:
-        if not gear.exists():
-            print(
-                f"error: gear path not found: {gear}\n"
-                "Re-run collect-gear or pass --gear <dir>.",
-                file=sys.stderr,
-            )
-            return 1
-        gear_json = gear if gear.is_file() else gear / "gear.json"
-        if gear.is_dir() and not gear_json.is_file():
-            print(
-                f"error: missing {gear_json}\n"
-                "Re-run collect-gear or pass --gear <dir-with-gear.json>.",
-                file=sys.stderr,
-            )
-            return 1
+        err = _validate_inventory_path(
+            gear, kind="gear", json_name="gear.json", collect_hint="collect-gear"
+        )
+        if err is not None:
+            return err
 
     if heroes is not None:
-        if not heroes.exists():
-            print(
-                f"error: heroes path not found: {heroes}\n"
-                "Re-run collect or pass --heroes <dir>.",
-                file=sys.stderr,
-            )
-            return 1
-        heroes_json = heroes if heroes.is_file() else heroes / "heroes.json"
-        if heroes.is_dir() and not heroes_json.is_file():
-            print(
-                f"error: missing {heroes_json}\n"
-                "Re-run collect or pass --heroes <dir-with-heroes.json>.",
-                file=sys.stderr,
-            )
-            return 1
+        err = _validate_inventory_path(
+            heroes, kind="heroes", json_name="heroes.json", collect_hint="collect"
+        )
+        if err is not None:
+            return err
 
     run_ui(
         gear,

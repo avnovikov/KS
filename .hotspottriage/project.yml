@@ -4,9 +4,10 @@
 # Default inverse_piecewise for maintainability treats high MI as high risk,
 # so maintainability_burden is zeroed until upstream is fixed.
 
-# Current development only (heroes/gear/optimize UI). Cartograph out of scope.
+# Current development only (heroes/gear/optimize). Cartograph + UI out of scope.
 filter:
   - ks/heroes/**
+  - "!ks/heroes/ui/**"
 
 score_metrics:
   - cyclomatic

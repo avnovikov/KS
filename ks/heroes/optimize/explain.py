@@ -302,6 +302,41 @@ def explain_selected_heroes(
     return tuple(rows)
 
 
+def _arena_placement_bits(
+    slot: str,
+    family: str,
+    role: str,
+    troop: str,
+    base_score: float,
+    tags: list[str],
+) -> list[str]:
+    bits = [
+        f"Placed {slot} ({family}) as {role.replace('_', ' ')}",
+        f"troop={troop}",
+        f"arena base score={base_score:.1f}",
+    ]
+    if tags:
+        bits.append("tags=" + "+".join(tags))
+    return bits
+
+
+def _arena_side_bias_bits(
+    side: str, tags: list[str], family: str, slot: str, carry_slot: str
+) -> list[str]:
+    """Extra why-card bits from tag/slot synergy with attack vs. defense side."""
+    bits: list[str] = []
+    if side == "defense":
+        if "tank" in tags and family == "front":
+            bits.append("Defense bias: tanks preferred on front")
+        if "heal" in tags:
+            bits.append("Defense bias: heal valued for offline sustain")
+        if "team_def" in tags:
+            bits.append("Defense bias: team defense tag boosted")
+    elif ("dps" in tags or "aoe" in tags) and slot == carry_slot:
+        bits.append(f"Attack carry slot ({carry_slot}) favors DPS/AoE")
+    return bits
+
+
 def fits_because_arena(
     name: str,
     slot: str,
@@ -318,22 +353,9 @@ def fits_because_arena(
     troop = normalize_troop(entry.troop if entry else None) or "unknown"
     family = "front" if slot.startswith("F") else "back"
     carry_slot = str(roles.get("slots", {}).get("carry_slot") or "B2")
-    bits = [
-        f"Placed {slot} ({family}) as {role.replace('_', ' ')}",
-        f"troop={troop}",
-        f"arena base score={base_score:.1f}",
-    ]
-    if tags:
-        bits.append("tags=" + "+".join(tags))
-    if side == "defense":
-        if "tank" in tags and family == "front":
-            bits.append("Defense bias: tanks preferred on front")
-        if "heal" in tags:
-            bits.append("Defense bias: heal valued for offline sustain")
-        if "team_def" in tags:
-            bits.append("Defense bias: team defense tag boosted")
-    elif ("dps" in tags or "aoe" in tags) and slot == carry_slot:
-        bits.append(f"Attack carry slot ({carry_slot}) favors DPS/AoE")
+
+    bits = _arena_placement_bits(slot, family, role, troop, base_score, tags)
+    bits.extend(_arena_side_bias_bits(side, tags, family, slot, carry_slot))
     if entry and entry.rarity:
         bits.append(f"rarity={entry.rarity}")
     return role, bits

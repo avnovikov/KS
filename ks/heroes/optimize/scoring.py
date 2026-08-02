@@ -63,6 +63,50 @@ def max_power_by_troop(
     return best
 
 
+def _resolve_mode_weights(
+    mode: str, event: EventProfile | None
+) -> tuple[dict[str, float], dict[int, float]]:
+    """Pick per-kind and per-effect-op weight tables for ``mode``."""
+    defaults = default_kind_weights()
+    if event and event.mode_kind_weights and mode in event.mode_kind_weights:
+        weights = event.mode_kind_weights[mode]
+    else:
+        weights = defaults.get(mode) or defaults["solo"]
+    op_weights: dict[int, float] = {}
+    if event and event.effect_op_weights and mode in event.effect_op_weights:
+        op_weights = event.effect_op_weights[mode]
+    return weights, op_weights
+
+
+def _effect_tag_value(
+    tag: EffectTag,
+    hero: HeroRecord,
+    mode: str,
+    weights: dict[str, float],
+    op_weights: dict[int, float],
+) -> float:
+    """Score one catalog effect tag for ``hero`` in ``mode`` (0.0 if inapplicable)."""
+    if tag.applies_to == "widget" and mode in ("solo", "joiner"):
+        return 0.0
+    if mode == "joiner" and not tag.first_expedition and tag.applies_to == "expedition":
+        weight = 0.15 * weights.get(tag.kind, 0.5)
+    else:
+        weight = weights.get(tag.kind, 0.5)
+    value = weight * _effect_value(tag, hero.stars, hero.pellets)
+    if tag.effect_op is not None and tag.first_expedition:
+        value *= op_weights.get(tag.effect_op, 1.0)
+    return value
+
+
+def _widget_priority_bonus(entry: CatalogEntry, mode: str) -> float:
+    """Flat bonus for defense/attack widgets prioritized by garrison/rally modes."""
+    if entry.widget_type == "defense" and mode == "garrison" and entry.garrison_widget_priority:
+        return 5.0 * entry.garrison_widget_priority
+    if entry.widget_type == "attack" and mode == "rally_lead" and entry.rally_widget_priority:
+        return 5.0 * entry.rally_widget_priority
+    return 0.0
+
+
 def hero_strength(
     hero: HeroRecord,
     entry: CatalogEntry,
@@ -72,35 +116,12 @@ def hero_strength(
     effective_power: int | None = None,
     gear_bonus: float = 0.0,
 ) -> float:
-    defaults = default_kind_weights()
-    if event and event.mode_kind_weights and mode in event.mode_kind_weights:
-        weights = event.mode_kind_weights[mode]
-    else:
-        weights = defaults.get(mode) or defaults["solo"]
-
-    op_weights: dict[int, float] = {}
-    if event and event.effect_op_weights and mode in event.effect_op_weights:
-        op_weights = event.effect_op_weights[mode]
-
-    total = 0.0
-    for tag in entry.effects:
-        if mode == "solo" and tag.applies_to == "widget":
-            continue
-        if mode == "joiner" and tag.applies_to == "widget":
-            continue
-        if mode == "joiner" and not tag.first_expedition and tag.applies_to == "expedition":
-            w = 0.15 * weights.get(tag.kind, 0.5)
-        else:
-            w = weights.get(tag.kind, 0.5)
-        value = w * _effect_value(tag, hero.stars, hero.pellets)
-        if tag.effect_op is not None and tag.first_expedition:
-            value *= op_weights.get(tag.effect_op, 1.0)
-        total += value
-
-    if entry.widget_type == "defense" and mode == "garrison" and entry.garrison_widget_priority:
-        total += 5.0 * entry.garrison_widget_priority
-    if entry.widget_type == "attack" and mode == "rally_lead" and entry.rally_widget_priority:
-        total += 5.0 * entry.rally_widget_priority
+    weights, op_weights = _resolve_mode_weights(mode, event)
+    total = sum(
+        _effect_tag_value(tag, hero, mode, weights, op_weights)
+        for tag in entry.effects
+    )
+    total += _widget_priority_bonus(entry, mode)
 
     power = effective_power if effective_power is not None else hero.power
     if power:

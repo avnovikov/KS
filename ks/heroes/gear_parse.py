@@ -238,17 +238,18 @@ def _enhancement_search_text(text: str) -> str:
     return header + "\n" + "\n".join(footer_lines)
 
 
-def _parse_enhancement(text: str, *, power: int | None = None) -> int | None:
-    # Detail-phase only: header badge / Enhance footer — never expedition %.
-    search = _enhancement_search_text(text)
+def _enhancement_from_plus_badge(search: str, power: int | None) -> int | None:
     plus_vals = [int(m.group(1)) for m in _PLUS_LEVEL_RE.finditer(search)]
     plus_vals = [v for v in plus_vals if 0 <= v <= 200]
     plus_vals = _reject_power_prefix_badges(plus_vals, power)
-    if plus_vals:
-        # Badge values are usually the largest +N that isn't a tiny OCR speck.
-        return max(plus_vals)
+    if not plus_vals:
+        return None
+    # Badge values are usually the largest +N that isn't a tiny OCR speck.
+    return max(plus_vals)
 
-    # Digits immediately before a known gear title: "Qt23 Crusader…" / "pt20 praetorian…".
+
+def _enhancement_from_known_title_prefix(search: str) -> int | None:
+    """Digits immediately before a known gear title: "Qt23 Crusader…"."""
     lower_search = search.lower().replace("'", "")
     for known in _KNOWN_GEAR_NAMES:
         key = known.lower().replace("'", "")
@@ -261,33 +262,47 @@ def _parse_enhancement(text: str, *, power: int | None = None) -> int | None:
             level = int(m.group(1))
             if 0 <= level <= 200:
                 return level
+    return None
 
-    # OCR often glues enhancement onto the title: "aer30 Judicator's Armet".
+
+def _enhancement_from_glued_title(text: str) -> int | None:
+    """OCR often glues enhancement onto the title: "aer30 Judicator's Armet"."""
     glued = re.search(
         r"(?<![0-9.,])(\d{1,3})\s+([A-Za-z][A-Za-z']+(?:\s+[A-Za-z][A-Za-z']+)+)",
         _detail_header(text),
     )
-    if glued:
-        title = glued.group(2).lower()
-        level = int(glued.group(1))
-        if (
-            0 <= level <= 200
-            and "stat" not in title
-            and "mastery" not in title
-            and "detail" not in title
-            and "hero" not in title
-            and "escort" not in title
-            and "stonewall" not in title  # escort-digit false positives
-        ):
-            return level
+    if not glued:
+        return None
+    title = glued.group(2).lower()
+    level = int(glued.group(1))
+    excluded_words = ("stat", "mastery", "detail", "hero", "escort", "stonewall")
+    if 0 <= level <= 200 and not any(word in title for word in excluded_words):
+        return level
+    return None
 
+
+def _enhancement_from_explicit_label(search: str) -> int | None:
     explicit = re.search(
         r"enhancement\s*(?:lv\.?|level)?\s*[+]?\s*(\d{1,3})\b",
         search,
         re.I,
     )
-    if explicit:
-        return int(explicit.group(1))
+    return int(explicit.group(1)) if explicit else None
+
+
+def _parse_enhancement(text: str, *, power: int | None = None) -> int | None:
+    # Detail-phase only: header badge / Enhance footer — never expedition %.
+    search = _enhancement_search_text(text)
+
+    for finder in (
+        lambda: _enhancement_from_plus_badge(search, power),
+        lambda: _enhancement_from_known_title_prefix(search),
+        lambda: _enhancement_from_glued_title(text),
+        lambda: _enhancement_from_explicit_label(search),
+    ):
+        level = finder()
+        if level is not None:
+            return level
     return None
 
 
@@ -392,15 +407,12 @@ _SLOT_HINTS: frozenset[str] = frozenset({
 })
 
 
-def _parse_name(text: str) -> str | None:
-    lower = text.lower().replace("'", "")
-
-    # Fuzzy OCR fragment matching for known ambiguous titles.
+def _match_known_gear_name(lower: str) -> str | None:
+    """Fuzzy fragments, then exact known titles embedded in noisy OCR."""
     for fragment, canonical in _KNOWN_GEAR_FUZZY:
         if fragment in lower:
             return canonical
 
-    # Exact known gear titles embedded in noisy OCR.
     for known in _KNOWN_GEAR_NAMES:
         key = known.lower().replace("'", "")
         if key in lower:
@@ -409,49 +421,70 @@ def _parse_name(text: str) -> str | None:
             if known == "Praetorian s Gloves":
                 return "Praetorian's Gloves"
             return known.replace(" s ", "'s ") if " s " in known else known
+    return None
 
-    # OCR often splits titles across lines: "Berserker's B" + "Bracers".
+
+def _match_split_title(lower: str) -> str | None:
+    """OCR often splits titles across lines: "Berserker's B" + "Bracers"."""
     if "berserker" in lower and "bracer" in lower:
         return "Berserker's Bracers"
     if "cuirassier" in lower and "breast" in lower:
         return "Cuirassier's Breastplate"
     if "cuirassier" in lower and "armet" in lower:
         return "Cuirassier's Armet"
+    return None
 
-    # Prefer multi-word Title Case titles — prefer candidates with slot hints.
-    candidates: list[str] = []
-    for match in _NAME_TITLE_RE.finditer(text):
-        candidate = " ".join(match.group(1).split()).strip()
-        if candidate.lower() in _SKIP_NAME:
-            continue
-        if "detail" in candidate.lower():
-            continue
-        if any(ch.isdigit() for ch in candidate):
-            continue
-        candidates.append(candidate)
 
-    if candidates:
-        # Slot-hinted candidates first, then others.
-        def _slot_score(c: str) -> int:
-            cl = c.lower()
-            return 0 if any(h in cl for h in _SLOT_HINTS) else 1
+def _is_skippable_name_candidate(candidate: str) -> bool:
+    lower = candidate.lower()
+    return lower in _SKIP_NAME or "detail" in lower or any(ch.isdigit() for ch in candidate)
 
-        candidates.sort(key=_slot_score)
-        return candidates[0]
 
+def _title_case_name_candidates(text: str) -> list[str]:
+    """Multi-word Title Case candidates, slot-hinted ones sorted first."""
+    candidates = [
+        " ".join(match.group(1).split()).strip()
+        for match in _NAME_TITLE_RE.finditer(text)
+    ]
+    candidates = [c for c in candidates if not _is_skippable_name_candidate(c)]
+
+    def _slot_score(c: str) -> int:
+        cl = c.lower()
+        return 0 if any(h in cl for h in _SLOT_HINTS) else 1
+
+    candidates.sort(key=_slot_score)
+    return candidates
+
+
+def _fallback_name_candidate(text: str) -> str | None:
+    """Last-resort single-line name match requiring an apostrophe or space."""
     for match in _NAME_RE.finditer(text):
         candidate = " ".join(match.group(1).split()).strip()
-        if candidate.lower() in _SKIP_NAME:
-            continue
-        if "detail" in candidate.lower():
-            continue
-        if any(ch.isdigit() for ch in candidate):
+        if _is_skippable_name_candidate(candidate):
             continue
         if candidate == candidate.lower():
             continue
         if "'" in candidate or " " in candidate:
             return candidate
     return None
+
+
+def _parse_name(text: str) -> str | None:
+    lower = text.lower().replace("'", "")
+
+    known = _match_known_gear_name(lower)
+    if known is not None:
+        return known
+
+    split_title = _match_split_title(lower)
+    if split_title is not None:
+        return split_title
+
+    title_candidates = _title_case_name_candidates(text)
+    if title_candidates:
+        return title_candidates[0]
+
+    return _fallback_name_candidate(text)
 
 
 def _parse_power(text: str) -> int | None:

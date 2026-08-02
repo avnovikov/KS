@@ -52,6 +52,58 @@ def load_name_templates(names_dir: Path) -> list[NameTemplate]:
     return templates
 
 
+def _resize_mask_height(mask: np.ndarray, *, target_h: int = 64) -> np.ndarray:
+    scale = target_h / max(1, mask.shape[0])
+    return cv2.resize(
+        mask,
+        (max(8, int(mask.shape[1] * scale)), target_h),
+        interpolation=cv2.INTER_NEAREST,
+    )
+
+
+def _pad_masks_equal_width(
+    probe: np.ndarray, template: np.ndarray, *, target_h: int
+) -> tuple[np.ndarray, np.ndarray]:
+    width = max(probe.shape[1], template.shape[1])
+    probe_p = np.zeros((target_h, width), dtype=np.uint8)
+    tmpl_p = np.zeros((target_h, width), dtype=np.uint8)
+    ox = (width - probe.shape[1]) // 2
+    tx = (width - template.shape[1]) // 2
+    probe_p[:, ox : ox + probe.shape[1]] = probe
+    tmpl_p[:, tx : tx + template.shape[1]] = template
+    return probe_p, tmpl_p
+
+
+def _mask_correlation(a_mask: np.ndarray, b_mask: np.ndarray) -> float | None:
+    a = a_mask.astype(np.float32) / 255.0
+    b = b_mask.astype(np.float32) / 255.0
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    if denom < 1e-6:
+        return None
+    return float(np.tensordot(a, b) / denom)
+
+
+def _best_template_match(
+    probe_r: np.ndarray, templates: list[NameTemplate], *, target_h: int
+) -> tuple[str | None, float, float]:
+    best_name: str | None = None
+    best_score = -1.0
+    second = -1.0
+    for tmpl in templates:
+        t_r = _resize_mask_height(tmpl.mask, target_h=target_h)
+        probe_p, t_p = _pad_masks_equal_width(probe_r, t_r, target_h=target_h)
+        score = _mask_correlation(probe_p, t_p)
+        if score is None:
+            continue
+        if score > best_score:
+            second = best_score
+            best_score = score
+            best_name = tmpl.name
+        elif score > second:
+            second = score
+    return best_name, best_score, second
+
+
 def match_name_template(
     image: np.ndarray,
     box: tuple[int, int, int, int],
@@ -68,49 +120,11 @@ def match_name_template(
     crop = image[y : y + h, x : x + w]
     if crop.size == 0:
         return None, 0.0
-    probe = _bright_name_mask(crop)
-    # Normalize probe to a fixed height for scale-tolerant compare.
     target_h = 64
-    scale = target_h / max(1, probe.shape[0])
-    probe_r = cv2.resize(
-        probe,
-        (max(8, int(probe.shape[1] * scale)), target_h),
-        interpolation=cv2.INTER_NEAREST,
+    probe_r = _resize_mask_height(_bright_name_mask(crop), target_h=target_h)
+    best_name, best_score, second = _best_template_match(
+        probe_r, templates, target_h=target_h
     )
-
-    best_name: str | None = None
-    best_score = -1.0
-    second = -1.0
-    for tmpl in templates:
-        t = tmpl.mask
-        scale_t = target_h / max(1, t.shape[0])
-        t_r = cv2.resize(
-            t,
-            (max(8, int(t.shape[1] * scale_t)), target_h),
-            interpolation=cv2.INTER_NEAREST,
-        )
-        # Compare equal-width center crops / pads.
-        width = max(probe_r.shape[1], t_r.shape[1])
-        probe_p = np.zeros((target_h, width), dtype=np.uint8)
-        t_p = np.zeros((target_h, width), dtype=np.uint8)
-        ox = (width - probe_r.shape[1]) // 2
-        tx = (width - t_r.shape[1]) // 2
-        probe_p[:, ox : ox + probe_r.shape[1]] = probe_r
-        t_p[:, tx : tx + t_r.shape[1]] = t_r
-        # Correlation of float masks
-        a = probe_p.astype(np.float32) / 255.0
-        b = t_p.astype(np.float32) / 255.0
-        denom = float(np.linalg.norm(a) * np.linalg.norm(b))
-        if denom < 1e-6:
-            continue
-        score = float(np.tensordot(a, b) / denom)
-        if score > best_score:
-            second = best_score
-            best_score = score
-            best_name = tmpl.name
-        elif score > second:
-            second = score
-
     if best_name is None or best_score < cutoff:
         return None, best_score
     if best_score - second < 0.04 and best_score < 0.75:

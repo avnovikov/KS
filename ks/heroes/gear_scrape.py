@@ -109,26 +109,19 @@ def is_gear_detail_open(image: np.ndarray, *, ocr_fn: OcrFn | None = None) -> bo
     return False
 
 
-def scrape_gear_piece(
-    device: DeviceProtocol,
+def _ocr_gear_detail_text(
+    img: np.ndarray,
     cfg: GearConfig,
-    *,
-    page: int,
-    index: int,
-    ocr_fn: OcrFn | None = None,
-    sleep_fn: Callable[[float], None] | None = None,
-    details_dir: Path | None = None,
-) -> GearRecord | None:
-    """OCR the open Gear Details modal. Caller taps the cell and closes afterward."""
-    del sleep_fn  # reserved for future settle retries
-    ocr = ocr_fn or _default_ocr
+    ocr: OcrFn,
+    ocr_fn: OcrFn | None,
+) -> str:
+    """Gather OCR text from the open Gear Details modal.
 
-    img = decode_screencap(device.screencap())
-    if not is_gear_detail_open(img, ocr_fn=ocr):
-        return None
-
-    # Focused crops first so name/rarity/power beat noisy full-panel OCR.
-    # Enhancement must be read in the detail-modal icon-badge phase (not expedition %).
+    Focused crops first so name/rarity/power beat noisy full-panel OCR.
+    Enhancement must be read from the detail-modal icon badge (not the
+    expedition ``+N.NN%`` line); the full panel text is appended last as a
+    fallback source for the parser.
+    """
     texts: list[str] = []
     for box, use_digits in (
         (cfg.ocr.name, False),
@@ -148,8 +141,45 @@ def scrape_gear_piece(
     if badge is not None:
         texts.insert(0, f"+{badge}")
     texts.append(ocr(img, cfg.ocr.detail_panel.as_tuple()))
+    return "\n".join(t for t in texts if t).strip()
 
-    combined = "\n".join(t for t in texts if t).strip()
+
+def _save_gear_detail_screenshot(
+    img: np.ndarray,
+    details_dir: Path | None,
+    cfg: GearConfig,
+    piece_id: str,
+) -> str | None:
+    """Write the detail-screen PNG under ``details_dir``; returns its relative path."""
+    if details_dir is None or not cfg.save_screenshots:
+        return None
+    details_dir.mkdir(parents=True, exist_ok=True)
+    out_path = details_dir / f"{piece_id}.png"
+    if not cv2.imwrite(str(out_path), img):
+        print(f"warn: failed to write gear detail screenshot {out_path}")
+        return None
+    return f"details/{piece_id}.png"
+
+
+def scrape_gear_piece(
+    device: DeviceProtocol,
+    cfg: GearConfig,
+    *,
+    page: int,
+    index: int,
+    ocr_fn: OcrFn | None = None,
+    sleep_fn: Callable[[float], None] | None = None,
+    details_dir: Path | None = None,
+) -> GearRecord | None:
+    """OCR the open Gear Details modal. Caller taps the cell and closes afterward."""
+    del sleep_fn  # reserved for future settle retries
+    ocr = ocr_fn or _default_ocr
+
+    img = decode_screencap(device.screencap())
+    if not is_gear_detail_open(img, ocr_fn=ocr):
+        return None
+
+    combined = _ocr_gear_detail_text(img, cfg, ocr, ocr_fn)
     if not combined:
         raise DetailOpenError(
             f"gear detail open but OCR empty (page={page} index={index})"
@@ -157,17 +187,7 @@ def scrape_gear_piece(
 
     piece = parse_gear_detail(combined, page=page, index=index)
     scraped_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    detail_shot: str | None = None
-    if details_dir is not None and cfg.save_screenshots:
-        details_dir.mkdir(parents=True, exist_ok=True)
-        out_path = details_dir / f"{piece.piece_id}.png"
-        ok = cv2.imwrite(str(out_path), img)
-        if not ok:
-            print(f"warn: failed to write gear detail screenshot {out_path}")
-            detail_shot = None
-        else:
-            detail_shot = f"details/{piece.piece_id}.png"
+    detail_shot = _save_gear_detail_screenshot(img, details_dir, cfg, piece.piece_id)
 
     return GearRecord(
         piece_id=piece.piece_id,

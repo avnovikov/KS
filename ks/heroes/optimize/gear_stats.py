@@ -63,6 +63,34 @@ def load_stat_tiers(path: str | None = None) -> dict[str, dict[str, float | int]
     return tiers
 
 
+def _enhanced_red_fraction(
+    level: int,
+    *,
+    max_stat: float,
+    red_from: object,
+    table: dict[str, dict[str, float | int]],
+) -> float:
+    anchor = int(red_from or 100)
+    if level < anchor:
+        mythic = table.get("mythic") or _DEFAULT_TIERS["mythic"]
+        m_base = float(mythic["base"])
+        m_max = float(mythic["max"])
+        m_cap = float(mythic["cap"])
+        return m_base + (level / m_cap) * (m_max - m_base)
+    if level == anchor:
+        return 0.5
+    return min(0.5 + (level - anchor) * 0.005, max_stat)
+
+
+def _enhanced_tier_fraction(
+    level: int, *, base: float, max_stat: float, cap: int, rarity_key: str
+) -> float:
+    if cap <= 0:
+        raise ValueError(f"invalid cap for rarity {rarity_key!r}: {cap}")
+    level_clamped = min(level, cap)
+    return base + (level_clamped / float(cap)) * (max_stat - base)
+
+
 def expedition_stat_fraction(
     rarity: str | None,
     enhancement_level: int | None,
@@ -92,26 +120,14 @@ def expedition_stat_fraction(
     base = float(entry["base"])
     max_stat = float(entry["max"])
     cap = int(entry["cap"])
-    red_from = entry.get("red_from")
-
     if key == "red":
-        anchor = int(red_from or 100)
-        if level < anchor:
-            mythic = table.get("mythic") or _DEFAULT_TIERS["mythic"]
-            m_base = float(mythic["base"])
-            m_max = float(mythic["max"])
-            m_cap = float(mythic["cap"])
-            enhanced = m_base + (level / m_cap) * (m_max - m_base)
-        elif level == anchor:
-            enhanced = 0.5
-        else:
-            enhanced = min(0.5 + (level - anchor) * 0.005, max_stat)
+        enhanced = _enhanced_red_fraction(
+            level, max_stat=max_stat, red_from=entry.get("red_from"), table=table
+        )
     else:
-        if cap <= 0:
-            raise ValueError(f"invalid cap for rarity {key!r}: {cap}")
-        level_clamped = min(level, cap)
-        enhanced = base + (level_clamped / float(cap)) * (max_stat - base)
-
+        enhanced = _enhanced_tier_fraction(
+            level, base=base, max_stat=max_stat, cap=cap, rarity_key=key
+        )
     return enhanced * (1.0 + 0.1 * mastery)
 
 

@@ -189,6 +189,63 @@ def assign_best_sets(
     return out
 
 
+def _ordered_priority_names(
+    selected: list[str], priority: list[str] | None
+) -> list[str]:
+    """Selected heroes in claim order, deduplicated with ``selected`` as fallback."""
+    order = list(priority) if priority else list(selected)
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for name in order + list(selected):
+        if name in selected and name not in seen:
+            ordered.append(name)
+            seen.add(name)
+    return ordered
+
+
+def _score_pool_by_troop_slot(
+    pieces: list[GearRecord],
+    profile: str,
+    weights: dict[str, float],
+) -> dict[tuple[str, str], list[tuple[float, GearRecord]]]:
+    """Group pieces by (troop, slot), best-scoring piece first."""
+    pool: dict[tuple[str, str], list[tuple[float, GearRecord]]] = {}
+    for piece in pieces:
+        troop = normalize_troop(piece.troop_type)
+        slot = infer_slot(piece)
+        if troop is None or slot is None:
+            continue
+        score = piece_score(piece, profile=profile, weights=weights)
+        pool.setdefault((troop, slot), []).append((score, piece))
+    for key in pool:
+        pool[key].sort(key=lambda row: row[0], reverse=True)
+    return pool
+
+
+def _claim_exclusive_gear(
+    ordered: list[str],
+    by_name: dict[str, HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    pool: dict[tuple[str, str], list[tuple[float, GearRecord]]],
+) -> dict[str, dict[str, GearRecord]]:
+    """Let heroes claim their best still-unclaimed piece per slot, in priority order."""
+    used: set[str] = set()
+    out: dict[str, dict[str, GearRecord]] = {name: {} for name in ordered}
+    for name in ordered:
+        troop = _hero_troop(name, by_name.get(name), catalog)
+        if troop is None:
+            continue
+        for slot in SLOTS:
+            candidates = pool.get((troop, slot)) or []
+            for _score, piece in candidates:
+                if piece.piece_id in used:
+                    continue
+                out[name][slot] = piece
+                used.add(piece.piece_id)
+                break
+    return out
+
+
 def assign_exclusive_sets(
     heroes: list[HeroRecord],
     catalog: dict[str, CatalogEntry],
@@ -207,41 +264,9 @@ def assign_exclusive_sets(
         return {}
     weights = load_profile_weights(profile)
     by_name = {h.name: h for h in heroes}
-    order = list(priority) if priority else list(selected)
-    # Keep every selected hero exactly once; append any missing at the end.
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for name in order + list(selected):
-        if name in selected and name not in seen:
-            ordered.append(name)
-            seen.add(name)
-
-    pool: dict[tuple[str, str], list[tuple[float, GearRecord]]] = {}
-    for piece in pieces:
-        troop = normalize_troop(piece.troop_type)
-        slot = infer_slot(piece)
-        if troop is None or slot is None:
-            continue
-        score = piece_score(piece, profile=profile, weights=weights)
-        pool.setdefault((troop, slot), []).append((score, piece))
-    for key in pool:
-        pool[key].sort(key=lambda row: row[0], reverse=True)
-
-    used: set[str] = set()
-    out: dict[str, dict[str, GearRecord]] = {name: {} for name in ordered}
-    for name in ordered:
-        troop = _hero_troop(name, by_name.get(name), catalog)
-        if troop is None:
-            continue
-        for slot in SLOTS:
-            candidates = pool.get((troop, slot)) or []
-            for _score, piece in candidates:
-                if piece.piece_id in used:
-                    continue
-                out[name][slot] = piece
-                used.add(piece.piece_id)
-                break
-    return out
+    ordered = _ordered_priority_names(selected, priority)
+    pool = _score_pool_by_troop_slot(pieces, profile, weights)
+    return _claim_exclusive_gear(ordered, by_name, catalog, pool)
 
 
 def _hero_troop(
