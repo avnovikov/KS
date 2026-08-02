@@ -11,6 +11,13 @@
   --ok: #34c759;
   --warn: #ff9f0a;
   --err: #ff3b30;
+  /* --ok/--err are the iOS system hues: right for borders and fills, but
+     both fail contrast as *text* on white. These are the darkened variants
+     used wherever the state is spelled out in words. */
+  --ok-text: #1c6b32;
+  --err-text: #b3261e;
+  /* Faint --err wash behind a field the editor has flagged. */
+  --err-tint: #fff6f5;
 
   --radius-lg: 16px;
   --radius: 12px;
@@ -277,7 +284,7 @@ a:focus-visible {
 input.invalid,
 input[aria-invalid="true"] {
   border-color: var(--err);
-  background: #fff6f5;
+  background: var(--err-tint);
 }
 
 /* --- forms (troops editor) ----------------------------------------------- */
@@ -309,11 +316,11 @@ input[aria-invalid="true"] {
 }
 
 .save-status.ok {
-  color: #1c6b32;
+  color: var(--ok-text);
 }
 
 .save-status.err {
-  color: #b3261e;
+  color: var(--err-text);
 }
 
 .banner-err {
@@ -322,7 +329,7 @@ input[aria-invalid="true"] {
   border: 1px solid var(--err);
   border-radius: var(--radius);
   background: var(--panel);
-  color: #b3261e;
+  color: var(--err-text);
   font-size: 0.85rem;
 }
 
@@ -623,13 +630,13 @@ table.data-table {
 #toast.ok {
   display: block;
   border-color: var(--ok);
-  color: #1c6b32;
+  color: var(--ok-text);
 }
 
 #toast.err {
   display: block;
   border-color: var(--err);
-  color: #b3261e;
+  color: var(--err-text);
 }
 
 /* --- modal / detail sheet ------------------------------------------------ */

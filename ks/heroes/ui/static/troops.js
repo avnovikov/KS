@@ -11,6 +11,10 @@
  * rightly 422s). While a field is empty or half-typed no PUT is scheduled at
  * all, and on blur an empty field is filled in with a visible 0 and saved —
  * so what is stored is always what is shown.
+ *
+ * Out-of-range inputs: `max` is a client-only bound the API does not enforce,
+ * so a document already over it on load is clamped (visibly, and saved) rather
+ * than left to block every *other* field's save.
  */
 (function () {
   "use strict";
@@ -100,9 +104,19 @@
     return label + " must be a whole number, 0 or more";
   }
 
+  /* Group digits the way the server-rendered total already is.
+   * The template formats with Python's `"{:,}".format`, which is always
+   * comma-grouped regardless of locale; a bare toLocaleString() would follow
+   * the *browser's* locale and flip 33.858 <-> 33,858 the moment the user
+   * typed. Pinning en-US keeps the live total identical to the one Jinja
+   * rendered a moment earlier. */
+  function groupDigits(value) {
+    return Number(value).toLocaleString("en-US");
+  }
+
   function setTotal(type, value) {
     var el = form.querySelector('[data-total-for="' + type + '"]');
-    if (el) el.textContent = Number(value).toLocaleString();
+    if (el) el.textContent = groupDigits(value);
   }
 
   function recomputeTotals() {
@@ -149,15 +163,25 @@
       return;
     }
 
+    // Order matters: in-flight *before* dedupe. lastSavedBody is only
+    // refreshed when a PUT succeeds, so while one is in flight it still
+    // describes the pre-save document. Deduping against it first would drop
+    // an edit that reverts the form back to that stale value (type A, blur,
+    // type back to A, blur) — the in-flight PUT would then land, set
+    // lastSavedBody to the value the user just undid, and the status line
+    // would say "Saved" while the server held something else. Queueing
+    // instead re-runs save() after lastSavedBody has been refreshed, where
+    // the dedupe below is finally comparing against the truth.
+    if (saving) {
+      queued = true;
+      return;
+    }
+
     var body = JSON.stringify(readDoc());
     if (body === lastSavedBody) {
       // Nothing to send — e.g. an edit typed and undone. Clear "Editing…"
       // so the page never claims unsaved work it does not have.
       setStatus(savedOnce ? "Saved" : "", savedOnce ? "ok" : "");
-      return;
-    }
-    if (saving) {
-      queued = true;
       return;
     }
     saving = true;
@@ -223,18 +247,50 @@
     });
   });
 
-  // 35 fields and no submit button means Enter cannot implicitly submit —
-  // but if that ever changes, save instead of navigating away with the form
-  // serialized into the query string.
-  form.addEventListener("submit", function (event) {
-    event.preventDefault();
-    save();
-  });
+  /** Pull any box already over its `max` back to the bound, and say so.
+   *
+   *  `max` is a client-only bound (truegold is outside the schema /api/troops
+   *  validates), so a hand-edited or future-version troops.yaml can render a
+   *  value the editor considers unsendable. readInt() would return null for
+   *  it, and save() blocks on *any* null — which used to brick the whole
+   *  form: no tier was saveable until the user found the one bad field.
+   *  Clamping on load keeps the page usable, and the immediate save below
+   *  keeps the promise that what is stored is always what is shown.
+   *  @returns {string[]} human-readable descriptions of what was clamped
+   */
+  function clampOutOfRange() {
+    var clamped = [];
+    allInputs.forEach(function (input) {
+      var max = input.getAttribute("max");
+      if (max === null) return;
+      var raw = String(input.value).trim();
+      if (!/^\d+$/.test(raw)) return; // not a number we can clamp; save() nags
+      if (Number(raw) <= Number(max)) return;
+      input.value = max;
+      clamped.push(
+        (input.dataset.label || input.id) + " was " + raw + ", set to " + max
+      );
+    });
+    return clamped;
+  }
 
   // Trust the server's own sum once it answers, but start from what was
   // rendered so a stale total can never sit on screen.
   recomputeTotals();
+  // Snapshot *before* clamping, so a clamp reads as a real pending change
+  // that the save below actually sends rather than dedupes away.
   lastSavedBody = JSON.stringify(readDoc());
+
+  var clampedOnLoad = clampOutOfRange();
+  if (clampedOnLoad.length) {
+    recomputeTotals();
+    toast(
+      clampedOnLoad.join("; ") + " — outside the supported range, saving the " +
+        "corrected value.",
+      false
+    );
+    save();
+  }
 
   window.addEventListener("pagehide", function () {
     if (timer) save();

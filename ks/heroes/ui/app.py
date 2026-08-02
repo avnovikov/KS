@@ -26,6 +26,7 @@ from ks.heroes.ui.icons import ensure_all_icons
 from ks.heroes.ui.power import compute_gear_power
 from ks.heroes.ui.rescan import rescan_gear_from_ocr
 from ks.heroes.ui.troop_store import TroopStore
+from ks.heroes.ui.troops_form import troops_form_model
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -396,11 +397,31 @@ def create_app(
 
     @app.get("/inventory/troops", response_class=HTMLResponse)
     def inventory_troops_page(request: Request) -> HTMLResponse:
+        """Server-render the troops editor from the store.
+
+        Unlike GET /api/troops, an unreadable or invalid document must not
+        take the *page* down: the editor is where a user repairs it (a
+        complete PUT is self-healing over corrupt YAML), so a load failure
+        renders the form with whatever was readable plus a banner carrying
+        the validator's message. Validation runs through _troop_totals, the
+        same path the API uses, so page and API never disagree about what
+        counts as broken.
+        """
+        raw: dict[str, Any] = {}
+        load_error: str | None = None
+        try:
+            raw = troop_store.load_raw()
+            _troop_totals(raw)
+        except (yaml.YAMLError, ValueError, TypeError) as exc:
+            load_error = str(exc)
         return _shell_page(
             request,
             "inventory_troops.html",
             primary="inventory",
             subtab="troops",
+            form=troops_form_model(raw),
+            troops_path=str(troop_store.path),
+            load_error=load_error,
         )
 
     @app.get("/optimiser/events", response_class=HTMLResponse)

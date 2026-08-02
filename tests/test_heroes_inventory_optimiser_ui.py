@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -19,6 +20,7 @@ from ks.heroes.optimize.troops import load_troops_config  # noqa: E402
 from ks.heroes.store import HeroStore  # noqa: E402
 from ks.heroes.ui.app import create_app  # noqa: E402
 from ks.heroes.ui.troop_store import TroopStore  # noqa: E402
+from ks.heroes.ui.troops_form import troops_form_model  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -679,6 +681,238 @@ def test_troops_file_lives_in_gear_dir_when_heroes_not_configured(
     c = _client(tmp_path, with_heroes=False)
     assert c.get("/api/troops").status_code == 200
     assert (tmp_path / "gear" / "troops.yaml").is_file()
+
+
+# --- troops editor page ----------------------------------------------------
+
+
+def test_troops_page_renders_form(tmp_path: Path) -> None:
+    c = _client(tmp_path)
+    r = c.get("/inventory/troops")
+    assert r.status_code == 200
+    assert "march_capacity" in r.text or "March" in r.text
+
+
+def test_troops_page_renders_seeded_values(tmp_path: Path) -> None:
+    """The form is server-rendered from the store, so the page is useful
+    before any JS runs and never flashes empty inputs."""
+    body = _client(tmp_path).get("/inventory/troops").text
+    assert 'data-field="march_capacity"' in body
+    assert 'value="80280"' in body  # seeded march_capacity
+    assert 'data-field="truegold"' in body
+    # Seeded infantry T3 = 1015 (config/troops.yaml).
+    assert re.search(
+        r'data-type="infantry"[^>]*data-tier="3"[^>]*value="1015"', body
+    )
+
+
+def test_troops_page_shows_per_type_totals(tmp_path: Path) -> None:
+    body = _client(tmp_path).get("/inventory/troops").text
+    for key, total in (
+        ("infantry", "33,858"),
+        ("cavalry", "27,924"),
+        ("archers", "29,386"),
+    ):
+        assert f'data-total-for="{key}"' in body
+        assert total in body
+
+
+def test_troops_page_stacks_one_card_per_type_not_a_matrix(tmp_path: Path) -> None:
+    """Phone-first: three stacked per-type cards, never a squeezed 3x11
+    table."""
+    body = _client(tmp_path).get("/inventory/troops").text
+    for key in ("infantry", "cavalry", "archers"):
+        assert f'data-troop-type="{key}"' in body
+    assert body.count("data-tier=") == 33  # 3 types x tiers 1..11
+    assert "<table" not in body
+
+
+def test_troops_page_inputs_are_non_negative_integer_fields(tmp_path: Path) -> None:
+    body = _client(tmp_path).get("/inventory/troops").text
+    tier_inputs = re.findall(r"<input[^>]*data-tier=[^>]*>", body)
+    assert len(tier_inputs) == 33
+    for tag in tier_inputs:
+        assert 'type="number"' in tag
+        assert 'min="0"' in tag
+        assert 'step="1"' in tag
+        assert 'inputmode="numeric"' in tag
+
+
+def test_troops_page_survives_unreadable_troops_file(tmp_path: Path) -> None:
+    """A hand-mangled or half-written troops.yaml must not 500 the editor —
+    it renders with a banner and zeroed fields the user can repair (PUT is
+    self-healing over corrupt YAML)."""
+    c = _client(tmp_path)
+    assert c.get("/inventory/troops").status_code == 200  # seeds the file
+    (tmp_path / "heroes" / "troops.yaml").write_text(
+        "march_capacity: [unterminated\n", encoding="utf-8"
+    )
+    r = c.get("/inventory/troops")
+    assert r.status_code == 200
+    assert "troops-load-error" in r.text
+    assert 'data-field="march_capacity"' in r.text
+
+
+def test_troops_page_flags_invalid_content_but_keeps_readable_fields(
+    tmp_path: Path,
+) -> None:
+    c = _client(tmp_path)
+    assert c.get("/inventory/troops").status_code == 200  # seeds the file
+    (tmp_path / "heroes" / "troops.yaml").write_text(
+        yaml.safe_dump({"march_capacity": 4242, "infantry": 0, "cavalry": 0}),
+        encoding="utf-8",
+    )
+    r = c.get("/inventory/troops")
+    assert r.status_code == 200
+    assert "troops-load-error" in r.text
+    assert "archers" in r.text
+    assert 'value="4242"' in r.text  # readable field survives the failure
+
+
+def test_troops_page_fields_round_trip_through_the_api(tmp_path: Path) -> None:
+    """The rendered field names must themselves be a valid PUT body.
+
+    troops.js saves the whole document scraped out of these data attributes,
+    so this walks the same path in Python: scrape the form, change a tier,
+    PUT it, and check the page re-renders the saved value. Catches drift
+    between the template's attribute names and the API contract, which no
+    amount of HTML-substring smoke testing would.
+    """
+    c = _client(tmp_path)
+    body = c.get("/inventory/troops").text
+    doc: dict[str, Any] = {}
+    for field, value in re.findall(r'data-field="(\w+)"[^>]*?value="(\d+)"', body):
+        doc[field] = int(value)
+    for troop, tier, value in re.findall(
+        r'data-type="(\w+)"\s+data-tier="(\d+)"[^>]*?value="(\d+)"', body
+    ):
+        doc.setdefault(troop, {})[tier] = int(value)
+    assert sorted(doc) == ["archers", "cavalry", "infantry", "march_capacity", "truegold"]
+    assert doc["march_capacity"] == 80280
+    assert len(doc["infantry"]) == 11
+
+    doc["infantry"]["6"] = 42  # seeded 30084
+    r = c.put("/api/troops", json=doc)
+    assert r.status_code == 200, r.text
+    assert r.json()["totals"]["infantry"] == 33858 - 30084 + 42
+
+    reloaded = c.get("/inventory/troops").text
+    assert re.search(r'data-type="infantry"\s+data-tier="6"[^>]*?value="42"', reloaded)
+    assert 'value="80280"' in reloaded  # untouched fields survived the save
+
+
+def test_troops_editor_script_is_served(tmp_path: Path) -> None:
+    """The page asks for troops.js and the mount hands back that exact file.
+
+    Deliberately not a substring grep for "PUT" or "/api/troops": what the
+    script *does* is executed for real in tests/test_heroes_troops_editor_js.py,
+    and the API contract is covered by the round trip above. What is left for
+    this test is the wiring — that the page's <script src> resolves, that the
+    static mount serves it as JavaScript, and that the bytes on the wire are
+    the same file the JS harness runs, so neither can drift from the other.
+    """
+    c = _client(tmp_path)
+    page = c.get("/inventory/troops").text
+    assert 'src="/static/troops.js"' in page
+    # The save URL is the page's to declare; the script only falls back to it.
+    assert 'data-save-url="/api/troops"' in page
+
+    r = c.get("/static/troops.js")
+    assert r.status_code == 200
+    assert "javascript" in r.headers["content-type"]
+    on_disk = (
+        REPO_ROOT / "ks" / "heroes" / "ui" / "static" / "troops.js"
+    ).read_text(encoding="utf-8")
+    assert r.text == on_disk
+
+
+def test_shared_app_js_is_loaded_by_every_shell_page(tmp_path: Path) -> None:
+    """Task 5 extracts the duplicated inline showToast; this task lands the
+    shared file and wires it into the layout so no third copy is added."""
+    c = _client(tmp_path)
+    for path in SHELL_PAGES:
+        assert 'src="/static/app.js"' in c.get(path).text
+    r = c.get("/static/app.js")
+    assert r.status_code == 200
+    assert "window.showToast" in r.text
+
+    # The live region must have `hidden` toggled as a property alongside the
+    # class, and the message written only once it is visible.
+    #
+    # Pinned to the two exact statements. `text.index(sub, start) > start` can
+    # never be false, so the obvious spelling of this check is a tautology: it
+    # keeps passing even with the assignments swapped, because the `el.
+    # textContent = ""` inside the hide timeout always follows anyway. The
+    # ordering is *executed* in tests/test_heroes_troops_editor_js.py, which
+    # records the writes app.js actually performs; this is the cheap
+    # source-level twin of that.
+    unhide = r.text.index("el.hidden = false;")
+    written = r.text.index("el.textContent = String(message);")
+    assert written > unhide, "the message is written before the region is shown"
+
+
+def test_troops_form_styles_are_phone_friendly(tmp_path: Path) -> None:
+    css = _client(tmp_path).get("/static/app.css").text
+    summary = _css_rule_body(css, ".troop-summary {")
+    assert "var(--tap)" in summary
+    grid = _css_rule_body(css, ".tier-grid {")
+    assert "auto-fill" in grid  # reflows to 1-2 columns at 390px
+
+
+# --- troops form model -----------------------------------------------------
+
+
+def test_troops_form_model_covers_tiers_1_to_11_for_every_type() -> None:
+    form = troops_form_model({})
+    assert form.march_capacity == 0
+    assert form.truegold == 0
+    assert [t.key for t in form.types] == ["infantry", "cavalry", "archers"]
+    for troop_type in form.types:
+        assert [row.tier for row in troop_type.tiers] == list(range(1, 12))
+        assert troop_type.total == 0
+
+
+def test_troops_form_model_reads_int_and_string_tier_keys() -> None:
+    """YAML seeds int keys; every PUT round-trip writes JSON string keys."""
+    form = troops_form_model({"infantry": {3: 5, "6": 7}})
+    infantry = form.types[0]
+    counts = {row.tier: row.count for row in infantry.tiers}
+    assert counts[3] == 5
+    assert counts[6] == 7
+    assert infantry.total == 12
+
+
+def test_troops_form_model_keeps_tiers_beyond_eleven() -> None:
+    """Saving replaces a whole type block, so a tier the form did not render
+    would be silently deleted."""
+    form = troops_form_model({"cavalry": {13: 4}})
+    cavalry = form.types[1]
+    assert [row.tier for row in cavalry.tiers] == list(range(1, 12)) + [13]
+    assert cavalry.total == 4
+
+
+def test_troops_form_model_treats_flat_int_block_as_tier_one() -> None:
+    """Matches _parse_type_block: a bare int means that many tier-1 troops."""
+    form = troops_form_model({"archers": 500})
+    archers = form.types[2]
+    assert archers.tiers[0].count == 500
+    assert archers.total == 500
+
+
+def test_troops_form_model_tolerates_junk_without_raising() -> None:
+    form = troops_form_model(
+        {
+            "march_capacity": "nope",
+            "truegold": None,
+            "infantry": {"x": 1, "2": "3"},
+            "cavalry": ["not", "a", "block"],
+        }
+    )
+    assert form.march_capacity == 0
+    assert form.truegold == 0
+    counts = {row.tier: row.count for row in form.types[0].tiers}
+    assert counts[2] == 3  # string count coerced
+    assert form.types[1].total == 0  # unusable block renders as zeros
 
 
 # --- optimisers read the edited troops copy, not config/troops.yaml -------
