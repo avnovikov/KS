@@ -740,6 +740,146 @@ def test_row_state_tints_out_specify_row_hover_rather_than_racing_it(
     assert f".data-table tbody tr{state}:hover > td" in css
 
 
+# --- Optimiser event lineups, layout B (Task 6) -----------------------------
+#
+# What the board *does* once it has data is executed for real in
+# tests/test_heroes_optimiser_events_js.py. What is left here is the server
+# half: the page renders, the API it calls still answers, the markup declares
+# every hook the script reaches for, and the stylesheet gives the new controls
+# phone-sized targets.
+
+
+def _events_client(tmp_path: Path) -> TestClient:
+    heroes_dir = tmp_path / "heroes"
+    heroes_dir.mkdir(parents=True)
+    _seed_catalog_heroes(heroes_dir)
+    return TestClient(create_app(heroes_dir=heroes_dir))
+
+
+def test_optimiser_events_page_and_api_smoke(tmp_path: Path) -> None:
+    c = _events_client(tmp_path)
+    assert c.get("/optimiser/events").status_code == 200
+
+    api = c.get("/api/optimize")
+    assert api.status_code == 200
+    payload = api.json()
+    # The contract the board is written against, unchanged by this task.
+    assert {"sword", "bear", "arena", "errors", "warnings"} <= set(payload)
+    assert "modes" in payload["sword"]
+    assert {"attack", "defense"} <= set(payload["arena"])
+
+
+def test_events_page_renders_the_three_event_segments(tmp_path: Path) -> None:
+    """Server-rendered, not drawn by the script: these are the page's only
+    copy of the event labels — the board reads them back off the buttons."""
+    body = _events_client(tmp_path).get("/optimiser/events").text
+    # The same .segmented control the subnav uses; `aria-label="Event"` is
+    # what tells the two apart on a page that renders both.
+    assert '<div class="segmented" role="group" aria-label="Event">' in body
+    for key, label in (("sword", "Swordland"), ("bear", "Bear Trap"), ("arena", "Arena")):
+        assert f'data-event="{key}"' in body
+        assert f">{label}</button>" in body
+
+
+def test_events_page_ships_no_inline_style(tmp_path: Path) -> None:
+    """Global constraint: every rule lives in app.css. The script is inline
+    (see the module docstring in tests/test_heroes_optimiser_events_js.py);
+    styling is not."""
+    body = _events_client(tmp_path).get("/optimiser/events").text
+    assert "<style" not in body
+    assert "style=" not in body
+
+
+def test_every_element_the_board_script_looks_up_exists_in_the_page(
+    tmp_path: Path,
+) -> None:
+    """The template/script contract, derived rather than transcribed: every
+    `getElementById("x")` in the shipped script must have a matching `id="x"`
+    in the shipped markup, and every attribute selector must match something.
+    A rename on either side fails here instead of silently rendering an empty
+    page in the browser (the JS harness supplies its own DOM, so it cannot
+    notice)."""
+    body = _events_client(tmp_path).get("/optimiser/events").text
+
+    looked_up = set(re.findall(r'getElementById\("([^"]+)"\)', body))
+    assert len(looked_up) >= 8, looked_up
+    assert not sorted(i for i in looked_up if f'id="{i}"' not in body)
+
+    selectors = set(re.findall(r'querySelectorAll\("\[([a-z-]+)\]"\)', body))
+    assert selectors == {"data-event", "data-regen"}, selectors
+    assert not sorted(a for a in selectors if f"{a}=" not in body)
+
+
+def test_event_lineups_styles_are_phone_first(tmp_path: Path) -> None:
+    css = _client(tmp_path).get("/static/app.css").text
+
+    # Mode chips are tap targets, and they reflow to two columns at 390px
+    # rather than pushing the page sideways.
+    assert "var(--tap)" in _css_rule_body(css, ".mode-chip {")
+    assert "auto-fill" in _css_rule_body(css, ".mode-chips {")
+
+    # So are hero slots, and the row wraps rather than widening the page.
+    assert "var(--tap)" in _css_rule_body(css, ".hero-slot {")
+    assert "flex-wrap: wrap" in _css_rule_body(css, ".hero-row {")
+
+    # The event picker reuses .segmented with <button>s, so the shared pill
+    # chrome every button gets has to be cleared — otherwise three pills
+    # render inside a pill. Bound to the button variant specifically: the
+    # `.segmented .seg` rule above it carries the tap target and would
+    # satisfy a looser needle while this rule was deleted outright.
+    seg = _css_rule_body(css, ".segmented button.seg {")
+    assert "border: 0" in seg
+    assert "background: transparent" in seg
+    assert "overflow-x: auto" in _css_rule_body(css, ".seg-scroll {")
+
+    # The portrait layers over its initials fallback, which is what a hero
+    # with no artwork in /static/heroes falls back to.
+    assert "position: absolute" in _css_rule_body(css, ".portrait img {")
+    assert "position: relative" in _css_rule_body(css, ".portrait {")
+
+
+def test_the_hero_detail_is_a_sheet_on_a_phone_and_a_modal_on_a_wide_screen(
+    tmp_path: Path,
+) -> None:
+    """The design's own split, and the reason the backdrop carries `.sheet`:
+    the rules must live inside the narrow breakpoint (a wide screen keeps the
+    centred modal) and must not touch the inventory hero modal, which shares
+    `.modal-backdrop` but not `.sheet`."""
+    # Three apps, three directories: `_client`/`_seeded_client` each mkdir
+    # their own `heroes`/`gear` under whatever root they are handed.
+    for name in ("events", "shell", "inventory"):
+        (tmp_path / name).mkdir()
+
+    body = _events_client(tmp_path / "events").get("/optimiser/events").text
+    assert 'class="modal-backdrop sheet"' in body
+
+    css = _client(tmp_path / "shell").get("/static/app.css").text
+    narrow_at = css.index("@media (max-width: 640px)")
+    assert ".modal-backdrop.sheet" not in css[:narrow_at], (
+        "the bottom sheet is leaking onto wide screens"
+    )
+    assert "align-items: flex-end" in _css_rule_body(css, ".modal-backdrop.sheet {")
+    assert "width: 100%" in _css_rule_body(css, ".modal-backdrop.sheet .modal {")
+
+    # Task 5's inventory modal shares the base class and must keep its shape.
+    assert "align-items: center" in _css_rule_body(css, ".modal-backdrop {")
+    assert 'class="modal-backdrop sheet"' not in _seeded_client(
+        tmp_path / "inventory"
+    ).get("/inventory/heroes").text
+
+
+def test_events_page_names_the_heroes_directory_it_solved_from(
+    tmp_path: Path,
+) -> None:
+    """Same page-meta line every other screen carries: which artifacts
+    directory these numbers came out of."""
+    heroes_dir = tmp_path / "heroes"
+    heroes_dir.mkdir()
+    _seed_catalog_heroes(heroes_dir)
+    body = TestClient(create_app(heroes_dir=heroes_dir)).get("/optimiser/events").text
+    assert str(heroes_dir) in body
+
+
 # --- trust diff helpers (Task 4) --------------------------------------------
 #
 # Precedence pin: when a row is both "new" (absent from `before`) and

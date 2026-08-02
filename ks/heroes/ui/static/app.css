@@ -336,6 +336,7 @@ input[aria-invalid="true"] {
   background: var(--panel);
   color: var(--err-text);
   font-size: 0.85rem;
+  overflow-wrap: anywhere;
 }
 
 /* Load-time repair notice. A warning, not an error — the page works, the file
@@ -945,6 +946,316 @@ table.data-table {
   font-size: 0.8rem;
 }
 
+/* --- optimiser: event lineups (layout B) --------------------------------- */
+
+/* The event picker reuses .segmented, but with <button>s rather than the
+   subnav's <a>s — so the pill chrome every button gets from the shared
+   `button` rule has to be cleared or the segments render as three pills
+   inside a pill. `.segmented .seg.on` is (0,3,0) and still wins the
+   background back for the selected one. */
+.segmented button.seg {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: inherit;
+}
+
+/* Three segments fit 390px today; a longer event name must scroll rather
+   than widen the page, same rule the subnav follows. */
+.seg-scroll {
+  margin-bottom: 0.7rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.seg-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+/* Whole-page state for the last /api/optimize call. `warn` stays at --text:
+   --warn is a border/fill hue that fails contrast as body copy, and unlike
+   ok/err the palette has no darkened text variant for it. */
+.status-line {
+  margin: 0 0 0.7rem;
+  min-height: 1.2em;
+  color: var(--muted);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.status-line.ok {
+  color: var(--ok-text);
+}
+
+.status-line.warn {
+  color: var(--text);
+}
+
+.status-line.err {
+  color: var(--err-text);
+}
+
+/* Mode chips: a grid that reflows to two columns at 390px rather than a
+   scroller, because unlike the inventory filter chips these carry two lines
+   and the user compares points across them. */
+.mode-chips {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.45rem;
+  margin: 0 0 0.7rem;
+}
+
+.mode-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.1rem;
+  min-height: var(--tap);
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.83rem;
+  text-align: left;
+}
+
+.mode-chip.on {
+  border-color: var(--accent);
+  background: rgba(0, 113, 227, 0.1);
+}
+
+.mode-chip.is-error {
+  border-color: var(--err);
+}
+
+.mode-name {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.mode-score {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.mode-chip.on .mode-score {
+  color: var(--accent);
+}
+
+.mode-chip.is-error .mode-score {
+  color: var(--err-text);
+}
+
+.mode-note {
+  margin: -0.3rem 0 0.7rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+/* --- formation board ------------------------------------------------------ */
+
+.board {
+  padding: 1rem 1.05rem 1.1rem;
+}
+
+.board:empty {
+  display: none;
+}
+
+.board-title {
+  font-size: 1.05rem;
+  text-transform: capitalize;
+}
+
+.board-meta {
+  margin: 0.25rem 0 0.9rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.board-row + .board-row {
+  margin-top: 0.9rem;
+}
+
+.row-label {
+  margin-bottom: 0.35rem;
+  color: var(--muted);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.hero-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* Portraits scale down on a phone but Front/Back keep their own rows: three
+   back slots at 5.5rem plus two 0.5rem gaps is 17.5rem, inside the ~22rem a
+   390px viewport leaves after the gutters and the panel padding. */
+.hero-slot {
+  display: flex;
+  flex: 0 1 5.5rem;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 4.25rem;
+  min-height: var(--tap);
+  padding: 0.4rem 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.78rem;
+}
+
+button.hero-slot {
+  cursor: pointer;
+}
+
+button.hero-slot:hover {
+  border-color: var(--accent);
+  background: rgba(0, 113, 227, 0.06);
+}
+
+.hero-slot.is-empty {
+  border-style: dashed;
+  color: var(--muted-soft);
+}
+
+/* Initials sit underneath; the portrait is layered over them, so a hero with
+   no artwork in /static/heroes still reads as a filled slot instead of a
+   browser's broken-image glyph. */
+.portrait {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.25rem;
+  height: 3.25rem;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--canvas);
+  color: var(--muted);
+  font-weight: 600;
+  overflow: hidden;
+}
+
+.portrait img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.hero-slot-name {
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.slot-tag {
+  color: var(--muted-soft);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+}
+
+/* --- hero sheet: why + gear ----------------------------------------------- */
+
+.why {
+  margin: 0 0 0.7rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--canvas);
+}
+
+.why-role {
+  margin: 0 0 0.3rem;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.why ul {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.why li {
+  margin: 0.1rem 0;
+}
+
+.why-marginal {
+  margin: 0.4rem 0 0;
+  color: var(--ok-text);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.why-marginal.critical {
+  color: var(--err-text);
+}
+
+.gear-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.5rem;
+}
+
+.gear-cell {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  /* Lets the text column shrink below its longest word instead of pushing
+     the two-up grid past the viewport at 390px. */
+  min-width: 0;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+
+.gear-cell img {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--canvas);
+  object-fit: cover;
+}
+
+.gear-slot-label {
+  color: var(--muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.gear-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.gear-meta {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
 /* --- narrow phones -------------------------------------------------------- */
 
 @media (max-width: 640px) {
@@ -983,5 +1294,30 @@ table.data-table {
   .data-table th,
   .data-table td {
     padding: 0.5rem 0.55rem;
+  }
+
+  /* The hero detail is a bottom sheet on a phone and a centred modal on a
+     wide screen — the design's own split. Opted into with `.sheet` rather
+     than applied to every `.modal-backdrop`, so the inventory hero modal
+     keeps the shape Task 5 shipped. */
+  .modal-backdrop.sheet {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal-backdrop.sheet .modal {
+    width: 100%;
+    max-height: 86vh;
+    border-bottom: 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+
+  .hero-slot {
+    flex-basis: 4.75rem;
+  }
+
+  .portrait {
+    width: 2.9rem;
+    height: 2.9rem;
   }
 }

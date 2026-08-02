@@ -164,23 +164,24 @@ def test_optimize_page_cache_control(tmp_path: Path) -> None:
     events = client.get("/optimize/events")
     assert events.status_code == 200
     assert events.headers.get("cache-control") == "no-store"
-    # The board's client-side rendering (and its esc() helper) lands with the
-    # Event lineups task; the shell must stay uncached either way.
+    # The board's client-side rendering (and its esc() helper) is asserted by
+    # test_optimiser_events_page_has_esc_helper below; the shell must stay
+    # uncached either way.
     assert b"Event lineups" in events.content
 
 
 # --- restoration tracking ----------------------------------------------------
 #
 # Task 1 (Apple shell) stubbed /optimiser/events, which forced this assertion
-# out of test_optimize_page_cache_control above. Kept alive as a strict xfail
-# against the new route: it's a no-op while the stub stands, and the moment
-# Task 6 ships the real client-side board, strict=True turns the XPASS into a
-# failure so the implementer must drop this mark instead of the coverage
-# silently vanishing.
-@pytest.mark.xfail(
-    reason="restored by Task 6: event lineups board ships its client-side esc() escaping helper",
-    strict=True,
-)
+# out of test_optimize_page_cache_control above. It was kept alive as a strict
+# xfail against the new route until the page that owes it shipped; Task 6
+# shipped it, so the mark is gone and this is an ordinary test again.
+#
+# The helper has to be *in the page*, which is why the board's script is
+# inline rather than a /static module: a <script src> would leave this
+# assertion permanently unsatisfiable. What esc() actually escapes is
+# executed in tests/test_heroes_optimiser_events_js.py; this end pins that
+# the page ships it at all.
 def test_optimiser_events_page_has_esc_helper(tmp_path: Path) -> None:
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient

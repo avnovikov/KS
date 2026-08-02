@@ -1,9 +1,648 @@
 {% extends "_layout.html" %}
 {% block title %}Event lineups · Optimiser · KS{% endblock %}
 
+{% block actions %}
+{# One control, not the legacy page's four. /api/optimize has no per-section
+   endpoint, so `data-regen="sword"`, `"bear"` and `"arena"` all fired the
+   same whole-bundle recompute as `"all"` did — three buttons promising a
+   narrower refresh than the API can give. #}
+<button type="button" id="regen-btn" data-regen="all"
+        title="Recompute from the current heroes, gear and troops">Regenerate</button>
+{% endblock %}
+
 {% block content %}
-<section class="panel">
-  <h1>Event lineups</h1>
-  <p class="muted">The lineup solver arrives here in a later step.</p>
-</section>
+<p class="page-meta">{{ heroes_dir }} · lineups solved from the current roster, gear and troops</p>
+
+{# Labels live here, not in the script: the page must name its three events in
+   server-rendered HTML (Swordland / Bear Trap / Arena), and the board reads
+   them straight back off these buttons so there is only ever one copy. #}
+<div class="seg-scroll">
+  <div class="segmented" role="group" aria-label="Event">
+    <button type="button" class="seg on" data-event="sword" aria-pressed="true">Swordland</button>
+    <button type="button" class="seg" data-event="bear" aria-pressed="false">Bear Trap</button>
+    <button type="button" class="seg" data-event="arena" aria-pressed="false">Arena</button>
+  </div>
+</div>
+
+<p class="status-line" id="lineup-status" role="status">Solving lineups…</p>
+
+<div class="mode-chips" id="mode-chips" role="group" aria-label="Modes"></div>
+<p class="mode-note" id="mode-note" hidden></p>
+<p class="banner-err" id="section-error" hidden></p>
+
+<section class="panel board" id="board"></section>
+
+{# Bottom sheet on a phone, centred modal on a wide screen — `.sheet` opts
+   into the narrow-width rules in app.css. #}
+<div class="modal-backdrop sheet" id="gear-detail-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="gear-modal-title">
+    <div class="modal-header">
+      <div>
+        <h2 id="gear-modal-title">Hero</h2>
+        <div class="modal-sub" id="gear-modal-sub"></div>
+      </div>
+      <button type="button" class="modal-close" id="gear-modal-close">Close</button>
+    </div>
+    <div class="modal-body" id="gear-modal-body"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{# Inline rather than /static/optimiser_events.js: this page's escaping helper
+   is asserted in the *rendered HTML* (tests/test_heroes_optimize_hardening.py
+   ::test_optimiser_events_page_has_esc_helper), which a <script src> could not
+   satisfy. tests/test_heroes_optimiser_events_js.py lifts this block out of
+   the template and runs it for real, and asserts the served page ships it
+   byte for byte, so "inline" costs no coverage. Nothing below may contain a
+   Jinja delimiter — a test pins that too. #}
+<script>
+/* Event lineups board (layout B).
+ *
+ * Renders one screen at a time from a single GET /api/optimize: an event
+ * segmented control, a grid of mode chips carrying that mode's points (or
+ * the arena side's score), and a formation board for whichever chip is
+ * selected. Tapping a hero opens the why + gear sheet.
+ *
+ * Text discipline: anything derived from the API reaches the DOM either via
+ * `textContent` (single-node text — cannot inject) or through `esc()` (the
+ * two places that assemble nested markup: the chips and the sheet body).
+ * Hero names, mode keys, gear names and solver error strings all come from
+ * config files and OCR, so none of them are trusted here.
+ */
+(function () {
+  "use strict";
+
+  var boardEl = document.getElementById("board");
+  if (!boardEl) return;
+
+  var statusEl = document.getElementById("lineup-status");
+  var chipsEl = document.getElementById("mode-chips");
+  var noteEl = document.getElementById("mode-note");
+  var sectionErrEl = document.getElementById("section-error");
+  var modal = document.getElementById("gear-detail-modal");
+  var modalTitle = document.getElementById("gear-modal-title");
+  var modalSub = document.getElementById("gear-modal-sub");
+  var modalBody = document.getElementById("gear-modal-body");
+  var modalClose = document.getElementById("gear-modal-close");
+
+  var GEAR_SLOTS = [
+    { key: "helmet", label: "Helm" },
+    { key: "gloves", label: "Gloves" },
+    { key: "chest", label: "Body" },
+    { key: "boots", label: "Boots" }
+  ];
+  var ARENA_SIDES = ["attack", "defense"];
+  var FRONT_SLOTS = ["F1", "F2"];
+  var BACK_SLOTS = ["B1", "B2", "B3"];
+  var ALL_SLOTS = FRONT_SLOTS.concat(BACK_SLOTS);
+
+  function slice(list) {
+    return Array.prototype.slice.call(list);
+  }
+
+  var eventButtons = slice(document.querySelectorAll("[data-event]"));
+  var regenButtons = slice(document.querySelectorAll("[data-regen]"));
+
+  /** Event labels come off the markup so the page has exactly one copy. */
+  var eventLabels = {};
+  eventButtons.forEach(function (btn) {
+    eventLabels[btn.dataset.event] = String(btn.textContent).trim();
+  });
+
+  var bundle = null;
+  var activeEvent = eventButtons.length ? eventButtons[0].dataset.event : "sword";
+  /** Per-event chip selection, so switching events and back keeps the pick. */
+  var chosen = {};
+
+  /* --- helpers -------------------------------------------------------------- */
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  /** Same-origin path or an absolute http(s) URL, else "".
+   *
+   *  "//host/x" is rejected explicitly: it starts with "/" but is a
+   *  protocol-relative URL, i.e. off-site. */
+  function safeUrl(u) {
+    if (!u) return "";
+    var s = String(u);
+    if (s.indexOf("//") === 0) return "";
+    if (s.charAt(0) === "/") return s;
+    if (s.indexOf("http://") === 0 || s.indexOf("https://") === 0) return s;
+    return "";
+  }
+
+  function fmtPoints(n) {
+    if (n == null || !Number.isFinite(Number(n))) return "—";
+    return Math.round(Number(n)).toLocaleString();
+  }
+
+  function fmtScore(n) {
+    if (n == null || !Number.isFinite(Number(n))) return "—";
+    return Number(n).toFixed(1);
+  }
+
+  function humanKey(key) {
+    return String(key).replace(/_/g, " ");
+  }
+
+  function heroName(hero) {
+    if (hero == null) return "";
+    if (typeof hero === "string") return hero;
+    return hero.name == null ? "" : String(hero.name);
+  }
+
+  /** Mirrors ks/heroes/ui/hero_icons.py:hero_slug, which named the files in
+   *  /static/heroes. Diverging would silently fall back to initials. */
+  function heroSlug(name) {
+    var slug = String(name).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    slug = slug.replace(/^-+/, "").replace(/-+$/, "");
+    return slug || "hero";
+  }
+
+  function portraitUrl(hero) {
+    var provided = safeUrl(hero && hero.icon_url);
+    if (provided) return provided;
+    return "/static/heroes/" + heroSlug(heroName(hero)) + ".webp";
+  }
+
+  function initials(name) {
+    var parts = String(name).trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return "?";
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+  }
+
+  function troopsLine(row) {
+    var t = row.troops || {};
+    function n(v) {
+      return v == null ? "—" : fmtPoints(v);
+    }
+    return (
+      "I " + n(t.infantry) + " · C " + n(t.cavalry) + " · A " + n(t.archers) +
+      " · cap " + n(row.effective_capacity)
+    );
+  }
+
+  function breakdownLine(row) {
+    var bd = row.breakdown || {};
+    return ["combat", "occupation", "first_control", "loot"]
+      .filter(function (k) {
+        return bd[k] != null;
+      })
+      .map(function (k) {
+        return humanKey(k) + " " + fmtPoints(bd[k]);
+      })
+      .join(" · ");
+  }
+
+  /* --- reading the bundle --------------------------------------------------- */
+
+  /** [{key, label, row}] for the active event: one per mode, or per arena
+   *  side. Arena sides are listed even when they failed, so a broken side
+   *  can still be selected and read rather than vanishing. */
+  function entriesFor(eventKey) {
+    if (!bundle) return [];
+    if (eventKey === "arena") {
+      var arena = bundle.arena || {};
+      return ARENA_SIDES.filter(function (side) {
+        return arena[side];
+      }).map(function (side) {
+        return { key: side, label: side, row: arena[side] };
+      });
+    }
+    var modes = (bundle[eventKey] || {}).modes || {};
+    return Object.keys(modes).map(function (mode) {
+      return { key: mode, label: humanKey(mode), row: modes[mode] };
+    });
+  }
+
+  /** A whole section the solver could not produce at all. */
+  function sectionError(eventKey) {
+    if (!bundle) return "";
+    if (eventKey === "arena") {
+      var arena = bundle.arena || {};
+      var parts = [];
+      ARENA_SIDES.forEach(function (side) {
+        var row = arena[side] || {};
+        if (row.error) parts.push(side + ": " + row.error);
+      });
+      return parts.join(" · ");
+    }
+    var section = bundle[eventKey] || {};
+    if (section.status === "Error" || section.error) {
+      return section.error || "unknown error";
+    }
+    return "";
+  }
+
+  function rowIsOk(row) {
+    return !row.status || row.status === "Optimal";
+  }
+
+  function hasFormation(row) {
+    var f = row.formation;
+    if (!f) return false;
+    return ALL_SLOTS.some(function (s) {
+      return !!f[s];
+    });
+  }
+
+  function heroesByName(row) {
+    var map = {};
+    (row.heroes || []).forEach(function (hero) {
+      var name = heroName(hero);
+      if (name) map[name] = hero;
+    });
+    return map;
+  }
+
+  function explainFor(row, name) {
+    if (row.explanations && row.explanations[name]) return row.explanations[name];
+    var hero = (row.heroes || []).find(function (h) {
+      return heroName(h) === name;
+    });
+    return (hero && hero.explain) || null;
+  }
+
+  /* --- the sheet ------------------------------------------------------------ */
+
+  function pieceForSlot(pieces, slot) {
+    return (pieces || []).find(function (p) {
+      return p.slot === slot;
+    }) || null;
+  }
+
+  function renderGearGrid(pieces) {
+    var cells = GEAR_SLOTS.map(function (spec) {
+      var piece = pieceForSlot(pieces, spec.key);
+      if (!piece) {
+        return (
+          '<div class="gear-cell"><div><div class="gear-slot-label">' +
+          esc(spec.label) +
+          '</div><div class="gear-meta">Empty</div></div></div>'
+        );
+      }
+      var url = safeUrl(piece.icon_url);
+      var img = url ? '<img src="' + esc(url) + '" alt="" />' : "";
+      var bits = [piece.rarity || ""];
+      if (piece.enhancement_level != null) bits.push("+" + piece.enhancement_level);
+      if (piece.mastery_level != null) bits.push("M" + piece.mastery_level);
+      if (piece.power != null) bits.push(fmtPoints(piece.power) + " pwr");
+      return (
+        '<div class="gear-cell">' +
+        img +
+        '<div><div class="gear-slot-label">' + esc(spec.label) + "</div>" +
+        '<div class="gear-name">' + esc(piece.name || "—") + "</div>" +
+        '<div class="gear-meta">' +
+        esc(bits.filter(Boolean).join(" · ")) +
+        "</div></div></div>"
+      );
+    });
+    return '<div class="gear-grid">' + cells.join("") + "</div>";
+  }
+
+  function alternateLine(loo) {
+    return (loo.alternate_lineup || loo.replacement_heroes || []).join(", ");
+  }
+
+  function renderWhy(explain) {
+    if (!explain) return '<p class="empty">No explanation recorded for this hero.</p>';
+    var role = "";
+    if (explain.role) {
+      role =
+        '<p class="why-role">' +
+        esc(explain.slot ? explain.slot + " · " : "") +
+        esc(humanKey(explain.role)) +
+        "</p>";
+    }
+    var fits = (explain.fits_because || [])
+      .map(function (bullet) {
+        return "<li>" + esc(bullet) + "</li>";
+      })
+      .join("");
+    var loo = explain.leave_one_out || {};
+    var marginal = "";
+    if (loo.critical) {
+      marginal =
+        '<p class="why-marginal critical">Critical — no feasible lineup without this hero</p>';
+    } else if (loo.inconclusive) {
+      marginal =
+        '<p class="why-marginal critical">Leave-one-out inconclusive (status ' +
+        esc(loo.status || "?") +
+        ")</p>";
+    } else if (loo.marginal_points != null || loo.marginal_score != null) {
+      var cost =
+        loo.marginal_points != null
+          ? fmtPoints(loo.marginal_points) + " pts"
+          : fmtScore(loo.marginal_score) + " score";
+      var alt = alternateLine(loo);
+      marginal =
+        '<p class="why-marginal">Removing costs ' +
+        esc(cost) +
+        (alt ? " · alternate lineup: " + esc(alt) : "") +
+        "</p>";
+    }
+    return '<div class="why">' + role + (fits ? "<ul>" + fits + "</ul>" : "") + marginal + "</div>";
+  }
+
+  function openHeroSheet(name, entry) {
+    if (!modal) return;
+    modalTitle.textContent = name;
+    var assignment = entry.row.gear_assignment || {};
+    var context = [eventLabels[activeEvent] || activeEvent, entry.label];
+    var explain = explainFor(entry.row, name);
+    if (explain && explain.slot) context.push(explain.slot);
+    modalSub.textContent = context.join(" · ");
+    modalBody.innerHTML = renderWhy(explain) + renderGearGrid(assignment[name]);
+    modal.hidden = false;
+    modal.classList.add("open");
+    if (modalClose && typeof modalClose.focus === "function") modalClose.focus();
+  }
+
+  function closeHeroSheet() {
+    if (!modal) return;
+    modal.classList.remove("open");
+    modal.hidden = true;
+  }
+
+  /* --- rendering ------------------------------------------------------------ */
+
+  function chipScoreText(eventKey, entry) {
+    if (eventKey === "arena") {
+      if (!rowIsOk(entry.row)) return entry.row.status || "unavailable";
+      return "score " + fmtScore(entry.row.score);
+    }
+    return fmtPoints(entry.row.expected_personal_points) + " pts";
+  }
+
+  function renderChips(entries) {
+    chipsEl.innerHTML = "";
+    entries.forEach(function (entry) {
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "mode-chip" + (entry.key === chosen[activeEvent] ? " on" : "");
+      if (!rowIsOk(entry.row)) chip.className += " is-error";
+      chip.setAttribute("aria-pressed", entry.key === chosen[activeEvent] ? "true" : "false");
+      chip.innerHTML =
+        '<span class="mode-name">' + esc(entry.label) + "</span>" +
+        '<span class="mode-score">' + esc(chipScoreText(activeEvent, entry)) + "</span>";
+      chip.addEventListener("click", function () {
+        chosen[activeEvent] = entry.key;
+        render();
+      });
+      chipsEl.appendChild(chip);
+    });
+  }
+
+  function heroSlotEl(slotLabel, hero, entry) {
+    var name = heroName(hero);
+    var el = document.createElement(name ? "button" : "div");
+    if (name) el.type = "button";
+    el.className = "hero-slot" + (name ? "" : " is-empty");
+
+    var portrait = document.createElement("span");
+    portrait.className = "portrait";
+    portrait.textContent = name ? initials(name) : "—";
+    if (name) {
+      var img = document.createElement("img");
+      img.alt = "";
+      // A hero with no artwork on disk must read as a filled slot, not as the
+      // browser's broken-image glyph: drop the <img> and let the initials
+      // underneath stand in.
+      img.addEventListener("error", function () {
+        img.hidden = true;
+      });
+      img.src = portraitUrl(hero);
+      portrait.appendChild(img);
+    }
+    el.appendChild(portrait);
+
+    var nameEl = document.createElement("span");
+    nameEl.className = "hero-slot-name";
+    nameEl.textContent = name || "Empty";
+    el.appendChild(nameEl);
+
+    if (slotLabel) {
+      var tag = document.createElement("span");
+      tag.className = "slot-tag";
+      tag.textContent = slotLabel;
+      el.appendChild(tag);
+    }
+
+    if (name) {
+      el.setAttribute("aria-label", name + " — why and gear");
+      el.addEventListener("click", function () {
+        openHeroSheet(name, entry);
+      });
+    }
+    return el;
+  }
+
+  function boardRowEl(label, slotLabels, heroes, entry) {
+    var wrap = document.createElement("div");
+    wrap.className = "board-row";
+    var head = document.createElement("div");
+    head.className = "row-label";
+    head.textContent = label;
+    wrap.appendChild(head);
+    var row = document.createElement("div");
+    row.className = "hero-row";
+    heroes.forEach(function (hero, i) {
+      row.appendChild(heroSlotEl(slotLabels ? slotLabels[i] : "", hero, entry));
+    });
+    wrap.appendChild(row);
+    return wrap;
+  }
+
+  function appendText(tag, className, text) {
+    var el = document.createElement(tag);
+    el.className = className;
+    el.textContent = text;
+    boardEl.appendChild(el);
+    return el;
+  }
+
+  function renderBoard(entry) {
+    boardEl.innerHTML = "";
+    if (!entry) {
+      appendText("p", "empty", "No feasible lineup for this roster.");
+      return;
+    }
+    var row = entry.row;
+    appendText("h1", "board-title", (eventLabels[activeEvent] || activeEvent) + " · " + entry.label);
+
+    if (!rowIsOk(row)) {
+      appendText("p", "board-meta", "status: " + (row.status || "—"));
+      appendText("p", "empty", row.error || "No optimal formation for this side.");
+      return;
+    }
+
+    var meta =
+      activeEvent === "arena"
+        ? "score " + fmtScore(row.score)
+        : fmtPoints(row.expected_personal_points) + " pts · " + troopsLine(row);
+    var extra = activeEvent === "arena" ? "" : breakdownLine(row);
+    appendText("p", "board-meta", extra ? meta + " · " + extra : meta);
+
+    if (hasFormation(row)) {
+      var f = row.formation;
+      // The formation holds names; the hero entries hold whatever else the
+      // API knows about them (an icon_url, when one is ever attached).
+      var byName = heroesByName(row);
+      function placed(slots) {
+        return slots.map(function (s) {
+          var name = f[s] || "";
+          return byName[name] || name;
+        });
+      }
+      boardEl.appendChild(boardRowEl("Front", FRONT_SLOTS, placed(FRONT_SLOTS), entry));
+      boardEl.appendChild(boardRowEl("Back", BACK_SLOTS, placed(BACK_SLOTS), entry));
+      return;
+    }
+
+    // No F/B structure (the sword/bear events march three heroes together).
+    var heroes = (row.heroes || []).filter(function (hero) {
+      return heroName(hero);
+    });
+    if (!heroes.length) {
+      appendText("p", "empty", "No heroes in this result.");
+      return;
+    }
+    boardEl.appendChild(boardRowEl("March", null, heroes, entry));
+  }
+
+  function renderNote() {
+    var errors =
+      activeEvent === "arena" ? {} : (bundle[activeEvent] || {}).mode_errors || {};
+    var skipped = Object.keys(errors);
+    if (!skipped.length) {
+      noteEl.hidden = true;
+      noteEl.textContent = "";
+      return;
+    }
+    // Un-hidden before the text is written, for the same reason app.js's
+    // toast is: a screen reader routinely misses a mutation to a hidden node.
+    noteEl.hidden = false;
+    noteEl.textContent = "Skipped as infeasible: " + skipped.map(humanKey).join(", ");
+  }
+
+  function render() {
+    if (!bundle) return;
+    eventButtons.forEach(function (btn) {
+      var on = btn.dataset.event === activeEvent;
+      btn.classList.toggle("on", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+
+    var failure = sectionError(activeEvent);
+    if (failure) {
+      sectionErrEl.hidden = false;
+      sectionErrEl.textContent = failure;
+    } else {
+      sectionErrEl.hidden = true;
+      sectionErrEl.textContent = "";
+    }
+
+    var entries = entriesFor(activeEvent);
+    var keys = entries.map(function (e) {
+      return e.key;
+    });
+    if (keys.indexOf(chosen[activeEvent]) === -1) chosen[activeEvent] = keys[0];
+    renderChips(entries);
+    renderNote();
+    renderBoard(
+      entries.filter(function (e) {
+        return e.key === chosen[activeEvent];
+      })[0]
+    );
+  }
+
+  /* --- loading -------------------------------------------------------------- */
+
+  function setStatus(kind, text) {
+    statusEl.className = "status-line" + (kind ? " " + kind : "");
+    statusEl.textContent = text;
+  }
+
+  function applyStatus(data) {
+    var errors = data.errors || {};
+    var keys = Object.keys(errors);
+    var warnings = data.warnings || [];
+    if (keys.length) {
+      setStatus(
+        "err",
+        keys
+          .map(function (k) {
+            return k + ": " + errors[k];
+          })
+          .join(" · ")
+      );
+    } else if (warnings.length) {
+      setStatus("warn", warnings.join(" · "));
+    } else {
+      setStatus("ok", "Updated from the current heroes, gear and troops.");
+    }
+  }
+
+  async function loadOptimize() {
+    regenButtons.forEach(function (btn) {
+      btn.disabled = true;
+    });
+    // "Recomputing" is a lie on the first load, when nothing has been
+    // computed yet — and that first solve is the slow one.
+    setStatus("", bundle ? "Recomputing lineups…" : "Solving lineups…");
+    try {
+      var res = await fetch("/api/optimize", { cache: "no-store" });
+      var text = await res.text();
+      if (!res.ok) throw new Error(text || res.statusText);
+      bundle = JSON.parse(text);
+      render();
+      applyStatus(bundle);
+    } catch (err) {
+      var message = String((err && err.message) || err);
+      setStatus("err", message);
+      if (typeof window.showToast === "function") window.showToast(message, false);
+    } finally {
+      regenButtons.forEach(function (btn) {
+        btn.disabled = false;
+      });
+    }
+  }
+
+  /* --- wiring --------------------------------------------------------------- */
+
+  eventButtons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      activeEvent = btn.dataset.event;
+      render();
+    });
+  });
+
+  regenButtons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      loadOptimize();
+    });
+  });
+
+  if (modalClose) modalClose.addEventListener("click", closeHeroSheet);
+  if (modal) {
+    modal.addEventListener("click", function (ev) {
+      if (ev.target === modal) closeHeroSheet();
+    });
+  }
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape") closeHeroSheet();
+  });
+
+  loadOptimize();
+})();
+</script>
 {% endblock %}

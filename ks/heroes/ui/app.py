@@ -456,12 +456,13 @@ def create_app(
 
     @app.get("/optimiser/events", response_class=HTMLResponse)
     def optimiser_events_page(request: Request) -> HTMLResponse:
-        _require_heroes()
+        heroes_path, _ = _require_heroes()
         return _shell_page(
             request,
             "optimiser_events.html",
             primary="optimiser",
             subtab="events",
+            heroes_dir=str(heroes_path),
         )
 
     @app.get("/optimiser/gear-xp", response_class=HTMLResponse)

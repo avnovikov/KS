@@ -59,9 +59,10 @@ def test_optimize_page_and_api(tmp_path: Path) -> None:
     assert hub.status_code == 302
     assert hub.headers["location"] == "/optimiser/events"
 
-    # Lineup board markup (Swordland/Bear/Arena chips, Regenerate,
-    # gear-detail-modal, data-regen) is rebuilt on the Apple shell in the
-    # Event lineups task; until then only the shell is asserted here.
+    # Only the shell is asserted here. The lineup-board markup that used to
+    # live in this test (Swordland/Bear/Arena, Regenerate, gear-detail-modal,
+    # data-regen) now has one named test each, under "restoration tracking"
+    # below, against /optimiser/events rather than this redirect.
     page = client.get("/optimize/events")
     assert page.status_code == 200
     assert b"Event lineups" in page.content
@@ -111,6 +112,11 @@ def test_optimize_page_and_api(tmp_path: Path) -> None:
 # assertion starts passing, strict=True turns that XPASS into a failure, and
 # whoever ships the page is forced to delete the xfail mark instead of the
 # coverage silently vanishing.
+#
+# The six lineup-board assertions are restored: Task 6 shipped
+# optimiser_events.html, so they are ordinary passing tests again. What each
+# one covers on the real page is spelled out on the test. Only the two
+# Gear XP ones are still waiting on Task 7.
 
 
 def _optimiser_client(tmp_path: Path):
@@ -123,61 +129,52 @@ def _optimiser_client(tmp_path: Path):
     return TestClient(create_app(heroes_dir=heroes_dir))
 
 
-@pytest.mark.xfail(
-    reason="restored by Task 6: event lineups board renders a Swordland mode chip",
-    strict=True,
-)
 def test_optimiser_events_board_shows_swordland(tmp_path: Path) -> None:
+    """Restored. The three events are server-rendered segmented buttons —
+    the board reads its labels back off them, so they cannot be JS-only."""
     page = _optimiser_client(tmp_path).get("/optimiser/events")
     assert b"Swordland" in page.content
+    assert b'data-event="sword"' in page.content
 
 
-@pytest.mark.xfail(
-    reason="restored by Task 6: event lineups board renders a Bear mode chip",
-    strict=True,
-)
 def test_optimiser_events_board_shows_bear(tmp_path: Path) -> None:
+    """Restored. `b"Bear"` is a loose needle — "Bearer", "Bearskin" or any
+    hero name would satisfy it — so the Bear Trap segment itself is pinned
+    alongside it rather than trusting the substring."""
     page = _optimiser_client(tmp_path).get("/optimiser/events")
     assert b"Bear" in page.content
+    assert b'data-event="bear" aria-pressed="false">Bear Trap</button>' in page.content
 
 
-@pytest.mark.xfail(
-    reason="restored by Task 6: event lineups board renders an Arena section",
-    strict=True,
-)
 def test_optimiser_events_board_shows_arena(tmp_path: Path) -> None:
+    """Restored. Arena is the third event segment, not a separate section."""
     page = _optimiser_client(tmp_path).get("/optimiser/events")
     assert b"Arena" in page.content
+    assert b'data-event="arena" aria-pressed="false">Arena</button>' in page.content
 
 
-@pytest.mark.xfail(
-    reason="restored by Task 6: event lineups board has a Regenerate control",
-    strict=True,
-)
 def test_optimiser_events_board_has_regenerate(tmp_path: Path) -> None:
+    """Restored. The refresh control lives in the shell's header actions."""
     page = _optimiser_client(tmp_path).get("/optimiser/events")
     assert b"Regenerate" in page.content
+    assert b'id="regen-btn"' in page.content
 
 
-@pytest.mark.xfail(
-    reason=(
-        "restored by Task 6: event lineups board has a gear-detail-modal "
-        "for the per-hero gear drilldown"
-    ),
-    strict=True,
-)
 def test_optimiser_events_board_has_gear_detail_modal(tmp_path: Path) -> None:
+    """Restored. Tapping a hero opens this; `.sheet` is what makes it a
+    bottom sheet on a phone and a centred modal on a wide screen."""
     page = _optimiser_client(tmp_path).get("/optimiser/events")
     assert b"gear-detail-modal" in page.content
+    assert b'class="modal-backdrop sheet"' in page.content
 
 
-@pytest.mark.xfail(
-    reason="restored by Task 6: Regenerate control is wired via a data-regen= attribute",
-    strict=True,
-)
 def test_optimiser_events_board_has_data_regen_attr(tmp_path: Path) -> None:
+    """Restored. The script collects its refresh controls by this attribute
+    (it disables them all while a recompute is in flight), so the hook is
+    part of the contract and not decoration."""
     page = _optimiser_client(tmp_path).get("/optimiser/events")
     assert b"data-regen=" in page.content
+    assert b'data-regen="all"' in page.content
 
 
 @pytest.mark.xfail(
