@@ -376,7 +376,19 @@
     }
 
     var body = JSON.stringify(readRow(state));
-    if (body === state.lastSavedBody) return;
+    if (body === state.lastSavedBody) {
+      // Nothing to send — and this is also how a divergence *ends*. The row
+      // now serializes to exactly what the server last confirmed, so whatever
+      // made it diverge has been undone: typing 999, being told it is out of
+      // range, and putting the old number back is the normal recovery for
+      // both paths that set this mark. Nothing is sent, so the success path
+      // below never runs and this is the only place that can notice. Leaving
+      // it set would strand the row pink and pinned in "Needs attention"
+      // until a reload — a permanently stuck false error on a page whose
+      // whole job is trust signalling, worse than the toast it replaced.
+      delete state.tr.dataset.unsaved;
+      return;
+    }
 
     state.saving = true;
     try {

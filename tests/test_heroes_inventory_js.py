@@ -302,7 +302,7 @@ def test_a_rejected_save_leaves_a_mark_that_outlives_its_toast(
             "the box keeps what the user typed rather than silently reverting",
             "the mark outlives the toast that carried the reason",
             "a row the server rejected shows up under Needs attention",
-            "a later edit retries rather than being deduped against a body that never landed",
+            "re-blurring the rejected value retries it rather than deduping against a body that never landed",
             "a successful save clears the unsaved mark",
             "and drops the row back out of Needs attention",
             "a client-side range error also marks the row unsaved",
@@ -312,6 +312,35 @@ def test_a_rejected_save_leaves_a_mark_that_outlives_its_toast(
         ],
     )
     assert js_run["data"]["rejected_row_state"] == "1"
+
+
+def test_undoing_a_rejected_edit_clears_the_unsaved_mark(js_run: dict) -> None:
+    """The mark has to end when the divergence ends, and the normal way it
+    ends is an undo: type 999, be told it is out of range, put the old number
+    back. That path sends nothing — `body === lastSavedBody` returns early —
+    so the success path never runs and the early return is the only place
+    that can notice the row now equals what the server last confirmed.
+
+    Left unhandled, the row stayed pink with its red sticky bar and stayed
+    pinned in "Needs attention" until a reload. A permanently stuck false
+    error is worse than the transient toast it replaced, on a page whose
+    entire job is trust signalling — and it pollutes the review pass the
+    chip exists for. Covered on both paths that set the mark: a server
+    rejection, and a value the client refuses to send.
+    """
+    _assert_ran(
+        js_run,
+        [
+            "a fresh rejection re-marks the row",
+            "undoing a rejected edit sends nothing, because the row already matches",
+            "screen and store agree again after an undo, so the unsaved mark clears",
+            "and the undone row is not stuck in Needs attention",
+            "a fresh range error re-marks the row",
+            "undoing an out-of-range value sends nothing either",
+            "and clears the mark it set, rather than stranding the row",
+        ],
+    )
+    assert js_run["data"]["after_undo_unsaved"] == "undefined"
 
 
 def test_sortable_headers_are_operable_from_the_keyboard(js_run: dict) -> None:

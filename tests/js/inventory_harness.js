@@ -1009,27 +1009,69 @@ async function suiteRejectedSave() {
   );
   d.chip("all").fire("click");
 
-  // Retrying: the failed body must not have been recorded as saved, or the
-  // dedupe would swallow the retry.
+  // Retrying the *same* value, deliberately: a different value would produce
+  // a different body and go out whether or not the rejected one was wrongly
+  // recorded as saved. Re-blurring 77 only reaches the network if
+  // lastSavedBody still describes the pre-77 row, which is the actual
+  // invariant — assign it before the !res.ok throw and this check goes red.
   var before = d.calls.length;
-  enh.value = "78";
-  enh.fire("blur");
+  enh.fire("blur"); // value is still "77", untouched since the rejection
   await settle();
   check(
-    "a later edit retries rather than being deduped against a body that never landed",
-    d.calls.length === before + 1,
-    "calls=+" + (d.calls.length - before)
+    "re-blurring the rejected value retries it rather than deduping against a body that never landed",
+    d.calls.length === before + 1 && d.lastCall().body.enhancement_level === 77,
+    "calls=+" + (d.calls.length - before) + " body=" + JSON.stringify(d.lastCall().body)
   );
   check(
     "a successful save clears the unsaved mark",
     d.row("cell0").dataset.unsaved === undefined,
     String(d.row("cell0").dataset.unsaved)
   );
+  d.chip("attention").fire("click");
   check(
     "and drops the row back out of Needs attention",
-    !d.row("cell0").dataset.unsaved && !d.row("cell0").dataset.trust,
+    d.visibleIds().indexOf("cell0") === -1,
+    d.visibleIds().join(",")
+  );
+  d.chip("all").fire("click");
+
+  // Undoing is the other way a divergence ends, and it is the normal one:
+  // the server rejects a value, the user puts the old one back. Nothing is
+  // sent, so only the dedupe path can notice the row agrees again.
+  d.replyWith({
+    ok: false,
+    status: 400,
+    statusText: "Bad Request",
+    json: function () {
+      return Promise.resolve({ detail: "nope" });
+    },
+  });
+  enh.value = "88";
+  enh.fire("blur");
+  await settle();
+  check("a fresh rejection re-marks the row", d.row("cell0").dataset.unsaved === "1");
+  var beforeUndo = d.calls.length;
+  enh.value = "77"; // exactly what the server last confirmed
+  enh.fire("blur");
+  await settle();
+  check(
+    "undoing a rejected edit sends nothing, because the row already matches",
+    d.calls.length === beforeUndo,
+    "calls=+" + (d.calls.length - beforeUndo)
+  );
+  check(
+    "screen and store agree again after an undo, so the unsaved mark clears",
+    d.row("cell0").dataset.unsaved === undefined,
     String(d.row("cell0").dataset.unsaved)
   );
+  d.chip("attention").fire("click");
+  check(
+    "and the undone row is not stuck in Needs attention",
+    d.visibleIds().indexOf("cell0") === -1,
+    d.visibleIds().join(",")
+  );
+  d.chip("all").fire("click");
+  record("after_undo_unsaved", String(d.row("cell0").dataset.unsaved));
 
   // A value the client refuses to send is the same divergence: nothing was
   // written, and the box shows something the store does not hold.
@@ -1057,6 +1099,27 @@ async function suiteRejectedSave() {
   await settle();
   check(
     "until the fix actually reaches the server",
+    d.row("cell1").dataset.unsaved === undefined,
+    String(d.row("cell1").dataset.unsaved)
+  );
+
+  // Same undo recovery on the range-error path, which never reaches the
+  // network at all: 999 is refused, the old value goes back, mark clears.
+  var beforeRangeUndo = d.calls.length;
+  mastery.value = "77"; // max="20" again
+  mastery.fire("blur");
+  await settle();
+  check("a fresh range error re-marks the row", d.row("cell1").dataset.unsaved === "1");
+  mastery.value = "3"; // back to what the last successful save stored
+  mastery.fire("blur");
+  await settle();
+  check(
+    "undoing an out-of-range value sends nothing either",
+    d.calls.length === beforeRangeUndo,
+    "calls=+" + (d.calls.length - beforeRangeUndo)
+  );
+  check(
+    "and clears the mark it set, rather than stranding the row",
     d.row("cell1").dataset.unsaved === undefined,
     String(d.row("cell1").dataset.unsaved)
   );
