@@ -23,6 +23,10 @@ def rescan_heroes_from_ocr(
     """Walk Heroes roster via ADB OCR and upsert into store (no full wipe).
 
     Requires the game already on the Heroes roster screen.
+
+    Also captures Power-i force components into
+    ``{store.out_dir}/power_history/`` when buckets/covariates change
+    (lifetime observation log for later game-curve fitting).
     """
     load_cfg = load_config_fn or load_heroes_config
     cfg = load_cfg(
