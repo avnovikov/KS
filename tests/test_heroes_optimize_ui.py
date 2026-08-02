@@ -1,4 +1,4 @@
-"""Optimize UI page + API (sword/bear modes + arena sides)."""
+"""Optimize UI page + API (sword/bear/arena/conquest)."""
 
 from __future__ import annotations
 
@@ -65,6 +65,8 @@ def test_optimize_page_and_api(tmp_path: Path) -> None:
     assert b"Swordland" in page.content
     assert b"Bear" in page.content
     assert b"Arena" in page.content
+    assert b"Conquest" in page.content
+    assert b"conquest-block" in page.content
     assert b'href="/heroes"' in page.content
     assert b"Regenerate" in page.content
     assert b"gear-detail-modal" in page.content
@@ -82,6 +84,7 @@ def test_optimize_page_and_api(tmp_path: Path) -> None:
     assert "sword" in payload
     assert "bear" in payload
     assert "arena" in payload
+    assert "conquest" in payload
     sword_modes = payload["sword"]["modes"]
     assert set(sword_modes) >= {"garrison", "rally_lead", "joiner", "solo"}
     for mode, row in sword_modes.items():
@@ -100,6 +103,11 @@ def test_optimize_page_and_api(tmp_path: Path) -> None:
     assert set(arena["attack"]["formation"]) == {"F1", "F2", "B1", "B2", "B3"}
     assert arena["defense"]["side"] == "defense"
     assert arena["defense"]["status"] == "Optimal"
+    conquest = payload["conquest"]
+    assert conquest["mode"] == "conquest"
+    assert conquest["status"] == "Optimal"
+    assert set(conquest["formation"]) == {"F1", "F2", "B1", "B2", "B3"}
+    assert len(conquest["heroes"]) == 5
 
 
 def test_optimize_gear_xp_api_smoke(tmp_path: Path) -> None:

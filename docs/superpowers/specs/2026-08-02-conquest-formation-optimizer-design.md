@@ -3,7 +3,7 @@
 **Date:** 2026-08-02  
 **Branch / worktree:** `feature/conquest-formation-optimizer`  
 (`.worktrees/feature-conquest-formation-optimizer`, based on `feature/heroes-gear-xp`)  
-**Status:** Approved approach B (shared combat solver); math + CLI only — no UI
+**Status:** Math + CLI shipped; Event lineups UI wired (see `2026-08-02-conquest-event-lineups-ui-design.md`)
 
 ## Goal
 
