@@ -94,9 +94,14 @@
     return s;
   }
 
+  /** Comma-grouped integer. Pinned to en-US like every other grouped number
+   *  in this UI (troops.js's totals, the Gear XP planner's XP and level
+   *  numbers): a bare toLocaleString() follows the browser's locale, so the
+   *  same 1,200 points would render "1.200" on one machine and "1 200" on
+   *  another while the page beside it stayed on commas. */
   function fmtPoints(n) {
     if (n == null || !Number.isFinite(Number(n))) return "—";
-    return Math.round(Number(n)).toLocaleString();
+    return Math.round(Number(n)).toLocaleString("en-US");
   }
 
   function fmtScore(n) {
@@ -526,9 +531,11 @@
 
   /* --- loading -------------------------------------------------------------- */
 
-  function setStatus(kind, text) {
-    statusEl.className = "status-line" + (kind ? " " + kind : "");
-    statusEl.textContent = text;
+  /** app.js's shared writer, bound to this page's status paragraph. The
+   *  argument order is (text, kind) — this file used to take them the other
+   *  way round from the Gear XP planner's identical copy. */
+  function setStatus(text, kind) {
+    window.setStatusLine(statusEl, text, kind);
   }
 
   function applyStatus(data) {
@@ -537,17 +544,17 @@
     var warnings = data.warnings || [];
     if (keys.length) {
       setStatus(
-        "err",
         keys
           .map(function (k) {
             return k + ": " + errors[k];
           })
-          .join(" · ")
+          .join(" · "),
+        "err"
       );
     } else if (warnings.length) {
-      setStatus("warn", warnings.join(" · "));
+      setStatus(warnings.join(" · "), "warn");
     } else {
-      setStatus("ok", "Updated from the current heroes, gear and troops.");
+      setStatus("Updated from the current heroes, gear and troops.", "ok");
     }
   }
 
@@ -557,7 +564,7 @@
     });
     // "Recomputing" is a lie on the first load, when nothing has been
     // computed yet — and that first solve is the slow one.
-    setStatus("", bundle ? "Recomputing lineups…" : "Solving lineups…");
+    setStatus(bundle ? "Recomputing lineups…" : "Solving lineups…", "");
     try {
       var res = await fetch("/api/optimize", { cache: "no-store" });
       var text = await res.text();
@@ -567,7 +574,7 @@
       applyStatus(bundle);
     } catch (err) {
       var message = String((err && err.message) || err);
-      setStatus("err", message);
+      setStatus(message, "err");
       if (typeof window.showToast === "function") window.showToast(message, false);
     } finally {
       regenButtons.forEach(function (btn) {

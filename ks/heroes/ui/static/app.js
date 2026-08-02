@@ -108,6 +108,41 @@
 })();
 
 /**
+ * Publishes window.setStatusLine — the one-line `.status-line` region both
+ * optimiser screens carry under their controls.
+ *
+ * WHY shared: it existed twice, with the arguments flipped. The lineup board
+ * spelled it `setStatus(kind, text)` and the Gear XP planner
+ * `setStatus(text, kind)` — the same two statements either way round. Both
+ * parameters are strings and neither copy validated them, so calling one with
+ * the other's order raised nothing at all: it just wrote the message into the
+ * element's `class` and the state word into its text. One spelling, one
+ * argument order, one place to fix.
+ */
+(function () {
+  "use strict";
+
+  /**
+   * Write a status paragraph's text and its state class together.
+   *
+   * `.status-line` is always the first class, so the two are set in one
+   * assignment rather than by toggling three mutually exclusive state
+   * classes and hoping none is left behind.
+   *
+   * @param {?Element} el the status paragraph; a missing one is a no-op
+   * @param {*} text the message; stringified
+   * @param {string} [kind] "" | "ok" | "warn" | "err" — the state class
+   */
+  function setStatusLine(el, text, kind) {
+    if (!el) return;
+    el.className = "status-line" + (kind ? " " + kind : "");
+    el.textContent = String(text);
+  }
+
+  window.setStatusLine = setStatusLine;
+})();
+
+/**
  * Carries a rescan's trust payload (ks/heroes/ui/trust.py's flags/new/
  * changed/incomplete summary) across the page reload that follows a
  * successful rescan.

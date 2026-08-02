@@ -511,7 +511,8 @@ input.tier-input {
 /* Soft CTA out of one screen and into another — a link sized like a tap
    target, never a gate. `.trust-cta` is the inventory toolbar's route into
    the Optimiser; `.result-link` is the Gear XP result's route into Event
-   lineups. One declaration, two names, rather than a second copy of it. */
+   lineups and the reserved Hero levels page's way onward. One declaration,
+   three uses, rather than a second copy of it. */
 .trust-cta,
 .result-link {
   display: inline-flex;
@@ -1340,6 +1341,19 @@ select.stack-input {
   background: #0064c8;
 }
 
+/* The planner sets `disabled` *and* `.busy` on this button for the whole
+   multi-second solve, and both of the shared rules that then apply were
+   written for the outline buttons everywhere else: `button.busy` (0,1,1)
+   outranks `.btn-run`'s own `color` (0,1,0) and paints the label --muted,
+   then `button:disabled`'s 0.45 fades what is left. Grey-on-blue at 45% is
+   not a readable label. This compound selector (0,2,0) beats both, so the
+   filled control keeps its white label and dims by an amount that still
+   reads as text rather than as a smudge. */
+.btn-run.busy {
+  color: var(--panel);
+  opacity: 0.6;
+}
+
 .run-note {
   flex: 1 1 12rem;
   margin: 0;
@@ -1439,6 +1453,18 @@ select.stack-input {
   margin: 0.7rem 0 0;
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+/* --- reserved subtab ------------------------------------------------------ */
+
+/* Hero levels ships without a solver, so its page is a deliberate placeholder
+   in the ordinary page-title/panel chrome rather than a special empty state:
+   one sentence of what the tool will do, at body weight so it reads as the
+   page's content and not as a caption, over the muted line saying why it is
+   not here yet. */
+.reserved-lead {
+  margin: 0 0 0.3rem;
+  font-size: 0.95rem;
 }
 
 /* --- narrow phones -------------------------------------------------------- */

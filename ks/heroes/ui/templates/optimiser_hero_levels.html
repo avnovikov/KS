@@ -2,8 +2,21 @@
 {% block title %}Hero levels · Optimiser · KS{% endblock %}
 
 {% block content %}
+{# A reserved subtab, not a broken page.
+   The spec fixes the Optimiser at three tools and this is the third; its
+   solver is a follow-on design (see the "Hero levels (planned subtab)"
+   section of 2026-08-02-heroes-inventory-optimiser-ui-design.md), so the
+   route exists to hold the IA open. It is rendered in the same
+   page-title/panel chrome every other screen uses and says in words what it
+   will do and why it is empty — an unstyled stub reads as a failure, and a
+   404 would have made the third segment a dead control.
+   Nothing here is wired to an API, because there is none to call. #}
+<h1 class="page-title">Hero levels — coming next</h1>
 <section class="panel">
-  <h1>Hero levels</h1>
-  <p class="muted">Level-push recommendations arrive here in a later step.</p>
+  <p class="reserved-lead">Recommend which heroes to push for a chosen event.</p>
+  <p class="hint">Solver design is tracked separately; this subtab reserves the IA.</p>
+  {# Somewhere to go from a screen that cannot do anything yet — the same
+     control the Gear XP result panel ends on. #}
+  <a class="result-link" href="/optimiser/events">Open Event lineups</a>
 </section>
 {% endblock %}

@@ -341,13 +341,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--gear",
         type=Path,
         default=None,
-        help="Gear collect dir (or gear.json). Omit to disable /gear.",
+        help="Gear collect dir (or gear.json). Omit to disable /inventory/gear.",
     )
     ui.add_argument(
         "--heroes",
         type=Path,
         default=None,
-        help="Heroes collect dir (or heroes.json). Omit to disable /heroes.",
+        help=(
+            "Heroes collect dir (or heroes.json). Omit to disable "
+            "/inventory/heroes and the whole Optimiser tab."
+        ),
     )
     ui.add_argument(
         "--config",

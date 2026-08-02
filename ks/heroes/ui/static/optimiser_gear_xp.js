@@ -167,9 +167,11 @@
 
   /* --- feedback ------------------------------------------------------------- */
 
+  /** app.js's shared writer, bound to this page's status paragraph — see
+   *  there for why the two lines it replaced do not live here and again on
+   *  the lineup board. */
   function setStatus(text, kind) {
-    statusEl.textContent = text;
-    statusEl.className = "status-line" + (kind ? " " + kind : "");
+    window.setStatusLine(statusEl, text, kind);
   }
 
   function toast(message, ok) {

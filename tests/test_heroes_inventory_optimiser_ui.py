@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -2023,6 +2024,102 @@ def test_gear_xp_mode_pickers_offer_exactly_the_modes_the_solver_has(
     assert set(re.findall(r'<option value="([a-z]*)"', arena)) == {"attack", "defense"}
 
 
+def test_gear_xp_page_keeps_its_spend_list_a_list(tmp_path: Path) -> None:
+    """`list-style: none` makes Safari/VoiceOver stop treating an `<ol>` as a
+    list, and the *order* of these steps is the answer the page gives — each
+    is the best remaining move once the ones above it are paid for. The CSS
+    rule that costs the semantics is asserted next to the attribute that
+    restores them, so removing either is a failure."""
+    c = _gear_xp_client(tmp_path)
+    body = c.get("/optimiser/gear-xp").text
+    assert '<ol class="spend-list" id="spend-list" role="list">' in body
+    css = c.get("/static/app.css").text
+    assert "list-style: none" in _css_rule_body(css, ".spend-list {")
+
+
+def test_gear_xp_page_degrades_when_a_scenario_file_is_broken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reading the tuning YAML per request is what makes a hand edit show up
+    on reload — and unguarded it also meant a typo took the whole screen down
+    with a 500, including the fodder boxes and the run button, which have
+    nothing to do with the file that broke. Before, the page rendered and only
+    the solve failed; that is the behaviour restored here.
+
+    Real broken YAML through the real loader, not a stubbed exception: the
+    handler has to survive what the parser actually raises.
+    """
+    from ks.heroes.ui import app as ui_app
+
+    fake_root = tmp_path / "root"
+    (fake_root / "config").mkdir(parents=True)
+    (fake_root / "config" / "point_scenarios.yaml").write_text(
+        "modes:\n  rally: [oops\n", encoding="utf-8"
+    )
+    (fake_root / "config" / "point_scenarios_beartrap.yaml").write_text(
+        yaml.safe_dump({"modes": {"solo": {"combat_rate": 1.0}}}), encoding="utf-8"
+    )
+    # REPO_ROOT is also where TroopStore finds its seed, and this test is
+    # about the tuning files rather than that one.
+    shutil.copyfile(
+        REPO_ROOT / "config" / "troops.yaml", fake_root / "config" / "troops.yaml"
+    )
+    monkeypatch.setattr(ui_app, "REPO_ROOT", fake_root)
+
+    r = _gear_xp_client(tmp_path / "app").get("/optimiser/gear-xp")
+    assert r.status_code == 200
+    body = r.text
+
+    # The broken half degrades to "Best mode" and nothing else…
+    sword_at = body.index('data-mode-select="swordland"')
+    sword = body[sword_at : body.index("</select>", sword_at)]
+    assert re.findall(r'<option value="([a-z_]*)"', sword) == [""]
+    # …the readable half still offers its own modes…
+    bear_at = body.index('data-mode-select="beartrap"')
+    bear = body[bear_at : body.index("</select>", bear_at)]
+    assert "solo" in bear
+    # …the page names what it could not read…
+    assert 'id="tuning-error"' in body
+    assert "Swordland modes" in body and "Bear Trap modes" not in body
+    # …and everything that does not depend on that file is untouched.
+    assert 'id="run-btn"' in body
+    assert body.count('data-fodder="') == 5
+
+
+def test_gear_xp_page_omits_the_xp_notes_rather_than_500ing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same guard on the third load. `load_fodder_xp_values` reads a path it
+    resolves itself, so it is stubbed rather than redirected — the point is
+    what the handler does with the raise, not which file it came from.
+
+    An empty "XP each" note is a claim the page cannot back, so the note goes
+    away entirely while every box stays.
+    """
+    from ks.heroes.optimize import xp_ladder
+
+    def unreadable(**_kwargs: Any) -> dict[str, int]:
+        raise yaml.YAMLError("could not find expected ':'")
+
+    monkeypatch.setattr(xp_ladder, "load_fodder_xp_values", unreadable)
+
+    r = _gear_xp_client(tmp_path).get("/optimiser/gear-xp")
+    assert r.status_code == 200
+    body = r.text
+    assert "XP each" not in body
+    assert body.count('data-fodder="') == 5
+    assert 'id="tuning-error"' in body and "fodder XP values" in body
+
+
+def test_gear_xp_page_carries_no_tuning_banner_when_the_files_are_fine(
+    tmp_path: Path,
+) -> None:
+    """The other half of the two tests above: the notice is conditional, not
+    a fixture of the page."""
+    body = _gear_xp_client(tmp_path).get("/optimiser/gear-xp").text
+    assert 'id="tuning-error"' not in body
+
+
 def test_gear_xp_page_ships_no_inline_script_or_style(tmp_path: Path) -> None:
     """Global constraint: every rule lives in app.css and the planner's logic
     in /static/optimiser_gear_xp.js."""
@@ -2267,3 +2364,254 @@ def test_the_two_tap_target_links_share_one_rule(tmp_path: Path) -> None:
     # Comments stripped first: the rule's own comment names both classes, and
     # counting raw occurrences would pass with a second rule sitting below it.
     assert re.sub(r"/\*.*?\*/", "", css, flags=re.S).count(".result-link") == 1
+
+
+def test_the_busy_run_button_keeps_a_readable_label(tmp_path: Path) -> None:
+    """The planner sets `disabled` *and* `.busy` on the one filled control on
+    the page, and both shared rules that then apply were written for the
+    outline buttons elsewhere: `button.busy` (0,1,1) beats `.btn-run`'s own
+    `color` (0,1,0) and paints the label --muted, then `button:disabled` fades
+    it to 0.45. That is grey-on-blue at 45% for the whole multi-second solve.
+
+    The two rules that cause it are asserted alongside the override, so this
+    fails loudly if the override is deleted *or* if it is left in place after
+    the thing it compensates for has changed.
+    """
+    c = _client(tmp_path)
+    css = c.get("/static/app.css").text
+
+    assert "color: var(--muted)" in _css_rule_body(css, "button.busy {")
+    assert "opacity: 0.45" in _css_rule_body(css, "button:disabled,")
+
+    # The compound selector specifically: `.btn-run {` would satisfy a looser
+    # needle while this rule was gone.
+    busy_run = _css_rule_body(css, ".btn-run.busy {")
+    assert "color: var(--panel)" in busy_run
+    faded = re.search(r"opacity:\s*([\d.]+)", busy_run)
+    assert faded is not None and float(faded.group(1)) > 0.45, busy_run
+
+    # …and the class is really put on that button, so the rule is reachable.
+    planner = c.get("/static/optimiser_gear_xp.js").text
+    assert 'runBtn.classList.toggle("busy"' in planner
+
+
+def test_both_optimiser_pages_share_one_status_line_writer(tmp_path: Path) -> None:
+    """`setStatus` existed twice with the arguments flipped — `(text, kind)`
+    on the planner, `(kind, text)` on the board. Both parameters are strings
+    and neither copy validated them, so the wrong order raised nothing: it
+    wrote the message into the element's class and the state word into its
+    text. app.js owns the two lines now.
+
+    Pinned on the `"status-line"` literal, which is what a re-inlined copy
+    would have to spell again, and on the argument order of both wrappers.
+    """
+    c = _client(tmp_path)
+    assert "window.setStatusLine" in c.get("/static/app.js").text
+
+    for name in ("optimiser_events.js", "optimiser_gear_xp.js"):
+        src = c.get(f"/static/{name}").text
+        assert '"status-line"' not in src, name
+        assert "window.setStatusLine(statusEl, text, kind)" in src, name
+        assert "function setStatus(text, kind)" in src, name
+
+
+def test_every_grouped_number_in_the_ui_groups_the_same_way(tmp_path: Path) -> None:
+    """A bare `toLocaleString()` follows the *browser's* locale, so the same
+    1,200 renders "1.200" on one machine and "1 200" on another — and the
+    lineup board used to do that while the Gear XP planner and the troops
+    editor beside it were pinned to en-US. One rule for the whole bundle,
+    checked across every script rather than at the one call site that drifted.
+
+    Comments are stripped first: two of these files explain in prose why the
+    bare call is wrong, and that prose must not satisfy the check.
+    """
+    static_dir = REPO_ROOT / "ks" / "heroes" / "ui" / "static"
+    scripts = sorted(static_dir.glob("*.js"))
+    assert len(scripts) >= 5, scripts
+    calls = 0
+    for path in scripts:
+        src = path.read_text(encoding="utf-8")
+        src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+        src = re.sub(r"^\s*//.*$", "", src, flags=re.M)
+        for args in re.findall(r"toLocaleString\(([^)]*)\)", src):
+            assert args.strip() == '"en-US"', (path.name, args)
+            calls += 1
+    assert calls >= 3, calls
+
+
+# --- Hero levels placeholder + legacy cleanup (Task 8) ----------------------
+
+TEMPLATES_DIR = REPO_ROOT / "ks" / "heroes" / "ui" / "templates"
+
+#: The pre-cutover page templates. Unreferenced since Task 1 moved the IA to
+#: /inventory and /optimiser, and each still carried its own inline copy of
+#: RARITY_RANK / sortTable / showToast — the duplication Tasks 5 and 6 spent
+#: fix waves removing from the live pages. `optimize.html` never existed on
+#: this branch; it is listed so the name can never come back either.
+LEGACY_TEMPLATES = (
+    "gear.html",
+    "heroes.html",
+    "optimize.html",
+    "optimize_hub.html",
+    "optimize_events.html",
+    "optimize_gear_xp.html",
+    "_nav_tabs.html",
+)
+
+
+def test_hero_levels_reserves_the_subtab_in_words(tmp_path: Path) -> None:
+    """The third Optimiser tool has no solver on this branch, so the page has
+    to say what it will be and why it is empty. An unstyled stub reads as a
+    broken screen, and a 404 would have made the third segment a dead
+    control."""
+    body = _client(tmp_path).get("/optimiser/hero-levels").text
+    assert '<h1 class="page-title">Hero levels — coming next</h1>' in body
+    assert "Recommend which heroes to push for a chosen event." in body
+    assert (
+        "Solver design is tracked separately; this subtab reserves the IA."
+    ) in body
+
+
+def test_hero_levels_is_a_placeholder_and_not_a_half_wired_tool(tmp_path: Path) -> None:
+    """No form, no page module, no API call — a solver was committed to this
+    worktree mid-plan and reverted, and the page must not be a stub of it.
+    The only script on the page is the layout's shared helpers."""
+    body = _client(tmp_path).get("/optimiser/hero-levels").text
+    assert "<form" not in body
+    assert re.findall(r'<script src="([^"]+)"', body) == ["/static/app.js"]
+    # Same global constraints as every other screen.
+    assert "<style" not in body and "style=" not in body and "<script>" not in body
+    # Reserved, not stranded: the one control on it goes somewhere that works.
+    assert '<a class="result-link" href="/optimiser/events">' in body
+
+
+def test_the_legacy_page_templates_are_deleted(tmp_path: Path) -> None:
+    for name in LEGACY_TEMPLATES:
+        assert not (TEMPLATES_DIR / name).exists(), name
+
+
+def test_nothing_still_names_a_legacy_template() -> None:
+    """Word-boundary matched on purpose: `inventory_heroes.html` ends with
+    `heroes.html` and `inventory_gear.html` with `gear.html`, so a plain
+    substring search would report the live templates as references to the
+    dead ones and this check would be unfalsifiable."""
+    names = "|".join(re.escape(n) for n in LEGACY_TEMPLATES)
+    pattern = re.compile(rf"(?<![\w-])({names})")
+    here = Path(__file__).resolve()
+    hits: list[str] = []
+    for root in (REPO_ROOT / "ks", REPO_ROOT / "tests"):
+        for path in sorted(root.rglob("*")):
+            if path.suffix not in {".py", ".html", ".js", ".css"}:
+                continue
+            # This file names them deliberately, in order to look for them.
+            if path.resolve() == here:
+                continue
+            text = path.read_text(encoding="utf-8")
+            rel = path.relative_to(REPO_ROOT)
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if pattern.search(line):
+                    hits.append(f"{rel}:{lineno}: {line.strip()}")
+    assert hits == [], "\n".join(hits)
+
+
+def test_every_template_is_reached_from_app_py_or_another_template() -> None:
+    """Derived, so it keeps working after this task: any template that is
+    neither rendered by a route nor pulled in by `extends`/`include` is dead
+    code. This is what would have caught the legacy set drifting for seven
+    tasks, and what will catch the next one."""
+    app_src = (REPO_ROOT / "ks" / "heroes" / "ui" / "app.py").read_text(
+        encoding="utf-8"
+    )
+    reachable = set(re.findall(r'"([a-z0-9_]+\.html)"', app_src))
+    for path in TEMPLATES_DIR.glob("*.html"):
+        reachable |= set(
+            re.findall(
+                r'{%-?\s*(?:extends|include)\s+"([^"]+)"',
+                path.read_text(encoding="utf-8"),
+            )
+        )
+    orphans = sorted(
+        p.name for p in TEMPLATES_DIR.glob("*.html") if p.name not in reachable
+    )
+    assert orphans == []
+
+
+@pytest.mark.parametrize(
+    ("legacy", "marker"),
+    [
+        ("/gear", 'data-rescan-url="/api/gear/rescan"'),
+        ("/heroes", 'data-rescan-url="/api/heroes/rescan"'),
+        ("/optimize", '<h1 class="page-title">Event lineups</h1>'),
+        ("/optimize/events", '<h1 class="page-title">Event lineups</h1>'),
+        ("/optimize/gear-xp", '<h1 class="page-title">Gear XP spend</h1>'),
+    ],
+)
+def test_every_legacy_url_still_lands_on_a_real_page(
+    tmp_path: Path, legacy: str, marker: str
+) -> None:
+    """The templates these URLs used to render are deleted. Following each
+    redirect all the way through has to reach a 200 carrying the new screen's
+    own markup — the hop alone (asserted above) would still pass if the
+    destination had gone down with them."""
+    landed = _client(tmp_path).get(legacy)
+    assert landed.status_code == 200, legacy
+    assert marker in landed.text, legacy
+
+
+def test_the_console_advertises_the_new_ia_and_only_real_pages(
+    tmp_path: Path,
+) -> None:
+    """`run_ui` prints these on start-up and was the last surface still
+    naming /heroes, /optimize and /gear. Those all still redirect, which is
+    exactly why nothing else caught it — so the paths are checked against the
+    app's own routes and against the legacy set by name."""
+    from ks.heroes.ui.app import startup_paths
+
+    legacy = {"/gear", "/heroes", "/optimize", "/optimize/events", "/optimize/gear-xp"}
+    c = _client(tmp_path)
+    printed = [path for _, path in startup_paths(gear=True, heroes=True)]
+    assert printed
+    for path in printed:
+        assert path not in legacy, path
+        assert c.get(path, follow_redirects=False).status_code == 200, path
+    # Every screen in the shell except the reserved placeholder, which is
+    # reachable in the subnav but is not something to go and do.
+    assert set(printed) == set(SHELL_PAGES) - {"/optimiser/hero-levels"}
+
+    # Both capability flags gate what is offered.
+    assert [p for _, p in startup_paths(gear=True, heroes=False)] == [
+        "/inventory/gear",
+        "/inventory/troops",
+    ]
+    assert "/inventory/gear" not in [
+        p for _, p in startup_paths(gear=False, heroes=True)
+    ]
+
+
+def test_run_ui_prints_the_startup_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """And `run_ui` really prints them, rather than keeping a second list.
+    uvicorn is stubbed at the module it imports, so nothing binds a port."""
+    uvicorn = pytest.importorskip("uvicorn")
+    from ks.heroes.ui.app import run_ui, startup_paths
+
+    served: dict[str, Any] = {}
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kw: served.update(kw))
+
+    gear = tmp_path / "gear"
+    gear.mkdir()
+    (gear / "gear.json").write_text("[]", encoding="utf-8")
+    heroes = tmp_path / "heroes"
+    heroes.mkdir()
+    (heroes / "heroes.json").write_text("[]", encoding="utf-8")
+
+    run_ui(gear, heroes_dir=heroes, host="127.0.0.1", port=9999)
+    assert served["port"] == 9999  # the stub really stood in for the server
+
+    out = capsys.readouterr().out
+    for _, path in startup_paths(gear=True, heroes=True):
+        assert f"http://127.0.0.1:9999{path}" in out, path
+    # The pre-cutover IA is gone from the console for good.
+    for stale in (":9999/gear", ":9999/heroes", ":9999/optimize"):
+        assert stale not in out, stale

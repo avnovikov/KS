@@ -41,6 +41,46 @@ TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 _STARS_RANGE = range(0, 6)
 _PELLETS_RANGE = range(0, 6)
 
+#: What a hand-edited tuning YAML can throw on the way into a *page*.
+#: Deliberately wider than the parse error: a document that loads as a list
+#: instead of a mapping reaches `.get` (AttributeError), and a value that is
+#: not a number reaches `int()` (ValueError/TypeError). Every one of these is
+#: a file the user is expected to edit by hand, and none of them should be
+#: able to 500 the screen they would go to in order to notice the mistake.
+TUNING_ERRORS = (
+    OSError,
+    AttributeError,
+    KeyError,
+    TypeError,
+    ValueError,
+    yaml.YAMLError,
+)
+
+
+def startup_paths(*, gear: bool, heroes: bool) -> list[tuple[str, str]]:
+    """(label, path) for each screen `run_ui` advertises on the console.
+
+    Data rather than a run of print statements so the tests can check every
+    path against the app's own routes. The console was the last surface still
+    naming the pre-/inventory IA (`/heroes`, `/optimize`, …); those paths do
+    still redirect, which is exactly why nothing else caught it.
+
+    Hero levels is reachable in the subnav but not listed here: it is a
+    reserved placeholder, and the console is a list of things to go and do.
+    """
+    rows: list[tuple[str, str]] = []
+    if gear:
+        rows.append(("Inventory · Gear", "/inventory/gear"))
+    if heroes:
+        rows.append(("Inventory · Heroes", "/inventory/heroes"))
+    # Troops is editable whichever inventory is configured — the optimisers
+    # read it either way.
+    rows.append(("Inventory · Troops", "/inventory/troops"))
+    if heroes:
+        rows.append(("Optimiser · Event lineups", "/optimiser/events"))
+        rows.append(("Optimiser · Gear XP", "/optimiser/gear-xp"))
+    return rows
+
 
 def _troop_totals(raw: dict[str, Any]) -> dict[str, int]:
     """Type/march-capacity totals for the troops API — computed via the same
@@ -477,10 +517,37 @@ def create_app(
         #     optimiser would reject with a 400.
         # Read per request rather than at startup: these are hand-edited
         # tuning files and the page is already no-store.
+        #
+        # And read defensively, for the same reason. Reading per request is
+        # only useful if the page survives a bad edit: unguarded, a typo in
+        # one of these three files 500s the whole screen — including the
+        # fodder boxes and the run button, which have nothing to do with the
+        # file that broke. Each load degrades on its own (no XP notes, or an
+        # empty mode list) and the page names what it could not read.
         from ks.heroes.optimize.scenarios import load_scenarios
         from ks.heroes.optimize.xp_ladder import load_fodder_xp_values
 
         events_dir = REPO_ROOT / "config"
+        tuning_errors: list[str] = []
+
+        def _tuned(what: str, load: Callable[[], Any], fallback: Any) -> Any:
+            try:
+                return load()
+            except TUNING_ERRORS as exc:
+                tuning_errors.append(f"{what} ({exc})")
+                return fallback
+
+        fodder_xp = _tuned("fodder XP values", load_fodder_xp_values, {})
+        sword_modes = _tuned(
+            "Swordland modes",
+            lambda: list(load_scenarios(events_dir / "point_scenarios.yaml")),
+            [],
+        )
+        bear_modes = _tuned(
+            "Bear Trap modes",
+            lambda: list(load_scenarios(events_dir / "point_scenarios_beartrap.yaml")),
+            [],
+        )
         return _shell_page(
             request,
             "optimiser_gear_xp.html",
@@ -488,11 +555,10 @@ def create_app(
             subtab="gear-xp",
             heroes_dir=str(heroes_path),
             gear_dir=str(resolved_gear) if resolved_gear is not None else None,
-            fodder_xp=load_fodder_xp_values(),
-            sword_modes=list(load_scenarios(events_dir / "point_scenarios.yaml")),
-            bear_modes=list(
-                load_scenarios(events_dir / "point_scenarios_beartrap.yaml")
-            ),
+            fodder_xp=fodder_xp,
+            sword_modes=sword_modes,
+            bear_modes=bear_modes,
+            tuning_error="; ".join(tuning_errors) or None,
         )
 
     @app.get("/optimiser/hero-levels", response_class=HTMLResponse)
@@ -878,7 +944,7 @@ def run_ui(
     heroes_config: Path | None = None,
     serial: str | None = None,
 ) -> None:
-    """Serve the gear/heroes/optimize UI (blocking)."""
+    """Serve the Inventory/Optimiser UI (blocking)."""
     try:
         import uvicorn
     except ImportError as exc:  # pragma: no cover
@@ -893,13 +959,12 @@ def run_ui(
         heroes_config=heroes_config,
         serial=serial,
     )
+    for label, path in startup_paths(
+        gear=gear_dir is not None, heroes=heroes_dir is not None
+    ):
+        print(f"{label}: http://{host}:{port}{path}")
     if heroes_dir is not None:
-        print(f"Heroes UI: http://{host}:{port}/heroes")
-        print(f"Optimize hub: http://{host}:{port}/optimize")
-        print(f"Event lineups: http://{host}:{port}/optimize/events")
-        print(f"Gear XP spend: http://{host}:{port}/optimize/gear-xp")
         print(f"Heroes: {Path(heroes_dir).expanduser().resolve()}")
     if gear_dir is not None:
-        print(f"Gear UI: http://{host}:{port}/gear")
-        print(f"Inventory: {Path(gear_dir).expanduser().resolve()}")
+        print(f"Gear: {Path(gear_dir).expanduser().resolve()}")
     uvicorn.run(app, host=host, port=port, log_level="info")

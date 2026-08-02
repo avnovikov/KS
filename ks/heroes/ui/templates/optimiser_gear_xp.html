@@ -17,6 +17,19 @@
 </p>
 {% endif %}
 
+{# The fodder XP notes and the mode options are read off hand-edited tuning
+   YAML on every request, so that a retune shows up on reload. A typo in one
+   of those files used to take this whole page down with a 500; now the page
+   renders without whatever could not be read and says which file to look at.
+   A warning, not an error: the form still works, and the solve will report
+   its own failure if the same file breaks it. #}
+{% if tuning_error %}
+<p class="banner-warn" id="tuning-error" role="alert">
+  Some tuning files could not be read, so this form is showing less than
+  usual: {{ tuning_error }}
+</p>
+{% endif %}
+
 <form id="gear-xp-form" class="spend-form" data-api-url="/api/optimize/gear-xp" novalidate>
   <section class="panel">
     <h2 class="section-title">Target</h2>
@@ -84,7 +97,11 @@
     <div class="stack-field">
       <label class="field-label" for="fodder-{{ key }}">
         {{ label }}
+        {# Omitted rather than left blank when the tuning file is unreadable:
+           an empty "XP each" note is a claim the page cannot back. #}
+        {% if key in fodder_xp %}
         <span class="field-note">{{ fodder_xp[key] }} XP each</span>
+        {% endif %}
       </label>
       <input class="stack-input" type="number" inputmode="numeric" min="0" step="1"
              id="fodder-{{ key }}" data-fodder="{{ key }}" data-label="{{ label }}"
@@ -108,7 +125,10 @@
   <h2 class="section-title">Best spends</h2>
   <p class="delta-line" id="delta-line"></p>
   <p class="target-line" id="target-line"></p>
-  <ol class="spend-list" id="spend-list"></ol>
+  {# role="list" restores what `list-style: none` takes away: Safari/VoiceOver
+     stops treating a list with no markers as a list, and the order of these
+     steps *is* the answer. #}
+  <ol class="spend-list" id="spend-list" role="list"></ol>
   <p class="empty" id="spend-empty" hidden></p>
   <p class="leftover-line" id="leftover-line"></p>
   <a class="result-link" href="/optimiser/events">Open Event lineups</a>
