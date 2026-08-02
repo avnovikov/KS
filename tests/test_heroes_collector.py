@@ -134,3 +134,112 @@ def test_collect_heroes_keeps_manual_name(tmp_path):
     )
     assert kept[0] == "Olive"
     assert heroes[0].name == "Olive"
+
+
+def test_collect_heroes_stops_after_3_consecutive_duplicates(tmp_path):
+    """After 3 consecutive duplicate name+power combos, cell loop breaks."""
+    cfg = load_heroes_config()
+    device = RecordingDevice(png_bytes=_png())
+    store = HeroStore(tmp_path)
+
+    # Seed "Alpha" so subsequent same-name scrapes are duplicates.
+    from ks.heroes.models import HeroRecord as _HR
+    store.upsert(_HR(name="Alpha", roster_page=0, roster_index=0, power=1000, scraped_at="t0"))
+
+    events: list[tuple[str, object]] = []
+
+    def on_progress(ev, payload):
+        events.append((ev, payload))
+
+    def fake_scrape(device, cfg, *, page, index, ocr_fn=None, sleep_fn=None, **_kw):
+        # Return "Alpha" with same power for all cells → consecutive duplicates.
+        return _HR(name="Alpha", roster_page=page, roster_index=index, power=1000, scraped_at="t")
+
+    from ks.heroes.collector import collect_heroes
+
+    collect_heroes(
+        device,
+        cfg,
+        store,
+        sleep_fn=lambda _s: None,
+        scrape_fn=fake_scrape,
+        on_progress=on_progress,
+        max_consecutive_duplicates=3,
+    )
+    stopped_events = [e for e in events if e[0] == "stopped"]
+    assert len(stopped_events) >= 1, "expected 'stopped' event after 3 consecutive duplicates"
+    dup_events = [e for e in events if e[0] == "duplicate"]
+    assert len(dup_events) >= 3
+
+
+def test_collect_heroes_emits_hero_and_progress_events(tmp_path):
+    cfg = load_heroes_config()
+    device = RecordingDevice(png_bytes=_png())
+    store = HeroStore(tmp_path)
+    events: list[tuple[str, object]] = []
+
+    def on_progress(ev, payload):
+        events.append((ev, payload))
+
+    def fake_scrape(device, cfg, *, page, index, ocr_fn=None, sleep_fn=None, **_kw):
+        if page == 0 and index == 0:
+            from ks.heroes.models import HeroRecord as _HR2
+            return _HR2(name="Gamma", roster_page=0, roster_index=0, scraped_at="t")
+        return None
+
+    from ks.heroes.collector import collect_heroes
+
+    heroes = collect_heroes(
+        device,
+        cfg,
+        store,
+        sleep_fn=lambda _s: None,
+        scrape_fn=fake_scrape,
+        on_progress=on_progress,
+    )
+    assert [h.name for h in heroes] == ["Gamma"]
+    hero_events = [e for e in events if e[0] == "hero"]
+    assert len(hero_events) == 1
+    assert hero_events[0][1]["name"] == "Gamma"
+
+
+def test_collect_heroes_rematch_replaces_name(tmp_path):
+    """When same name but different power is encountered, rematch_name_fn is called."""
+    cfg = load_heroes_config()
+    device = RecordingDevice(png_bytes=_png())
+    store = HeroStore(tmp_path)
+    events: list[tuple[str, object]] = []
+
+    def on_progress(ev, payload):
+        events.append((ev, payload))
+
+    call_count = [0]
+
+    def fake_scrape(device, cfg, *, page, index, ocr_fn=None, sleep_fn=None, **_kw):
+        from ks.heroes.models import HeroRecord as _HR3
+        call_count[0] += 1
+        if page == 0 and index == 0:
+            return _HR3(name="Beta", roster_page=0, roster_index=0, power=5000, scraped_at="t0")
+        if page == 0 and index == 1:
+            # Same name, different power → should trigger rematch.
+            return _HR3(name="Beta", roster_page=0, roster_index=1, power=9999, scraped_at="t1")
+        return None
+
+    def fake_rematch(hero, *, exclude_names):
+        # Return a different name when rematching.
+        return "Delta"
+
+    from ks.heroes.collector import collect_heroes
+
+    heroes = collect_heroes(
+        device,
+        cfg,
+        store,
+        sleep_fn=lambda _s: None,
+        scrape_fn=fake_scrape,
+        on_progress=on_progress,
+        rematch_name_fn=fake_rematch,
+    )
+    names = [h.name for h in heroes]
+    assert "Beta" in names
+    assert "Delta" in names

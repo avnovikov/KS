@@ -25,16 +25,16 @@ def rescan_gear_from_ocr(
     load_config_fn: Callable[[Path | None], GearConfig] | None = None,
     connect_fn: Callable[[str | None], object] | None = None,
     collect_fn: Callable[..., list[GearRecord]] | None = None,
+    on_progress: Callable[[str, object], None] | None = None,
 ) -> list[GearRecord]:
-    """Clear inventory, walk Backpack > Gear via ADB OCR, persist into store.
+    """Walk Backpack > Gear via ADB OCR and merge into store.
 
-    Requires the game already on Backpack > Gear. Replaces the previous set
-    so removed pieces do not linger after a shorter inventory.
+    Preserves locked levels from prior records. After collection, any piece_id
+    not seen in this run is deleted so removed pieces do not linger.
     """
     load_cfg = load_config_fn or load_gear_config
     cfg = load_cfg(config_path if config_path is not None else DEFAULT_GEAR_CONFIG)
 
-    store.clear()
     _wipe_dir(store.details_dir)
     _wipe_dir(store.out_dir / "icons")
 
@@ -49,4 +49,12 @@ def rescan_gear_from_ocr(
 
     device_serial = serial if serial is not None else cfg.adb_serial
     device = connect_fn(device_serial)
-    return list(collect_fn(device, cfg, store))
+    collected = list(collect_fn(device, cfg, store, on_progress=on_progress))
+
+    # Remove pieces from prior scans that were not seen this run.
+    collected_ids = {p.piece_id for p in collected}
+    for stale_id in list(store._pieces.keys()):
+        if stale_id not in collected_ids:
+            store.delete(stale_id)
+
+    return collected

@@ -7,12 +7,32 @@ notes:
 - For early Arena/Conquest, prefer early_game_combat weights and do NOT ignore conquest
   imbuements (R+40/+80).
 stat_formulas:
-  mythic_or_epic: enhanced = base + (enhancement/100)*(max-base); final = enhanced
-    * (1 + 0.1*mastery)
-  red_enhancement_gt_100: enhanced = 0.5 + (enhancement-100)*0.005; final = enhanced
-    * (1 + 0.1*mastery)
-  mastery_bonus: +10% multiplicative per mastery level
+  epic: enhanced = base + (level/80)*(max-base); per_level = 0.0021
+  mythic_or_gold: enhanced = base + (level/100)*(max-base); per_level = 0.0035
+  blue: enhanced = base + (level/60)*(max-base); per_level = 0.0014 (OCR-calibrated)
+  red_enhancement_gt_100: enhanced = 0.5 + (enhancement-100)*0.005
+  mastery_bonus: final = enhanced * (1 + 0.1*mastery)
   ui_shows_base_mythic_at_0: 0.15
+  scoring: rarity + enhancement_level + mastery_level only; OCR is sanity-check
+stat_tiers:
+  blue:
+    base: 0.06
+    max: 0.144
+    cap: 60
+    notes: calibrated from inventory OCR L0=6.00 L7=6.98 L8=7.12 L9=7.26
+  epic:
+    base: 0.09
+    max: 0.258
+    cap: 80
+  mythic:
+    base: 0.15
+    max: 0.5
+    cap: 100
+  red:
+    base: 0.5
+    max: 1.0
+    cap: 200
+    red_from: 100
 base_stats:
   Epic:
     base: 0.09

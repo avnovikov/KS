@@ -7,6 +7,9 @@ notes:
 - For early Arena/Conquest, prefer early_game_combat weights and do NOT ignore conquest
   imbuements (R+40/+80).
 caps:
+  grey_max: 20
+  green_max: 40
+  blue_max: 60
   epic_max: 80
   mythic_max: 100
   red_max: 200

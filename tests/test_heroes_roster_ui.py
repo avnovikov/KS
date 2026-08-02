@@ -254,3 +254,5 @@ def test_inventory_tabs_link_both_screens(tmp_path: Path) -> None:
     assert heroes_page.status_code == 200
     assert b"Heroes inventory" in heroes_page.content
     assert b'href="/gear"' in heroes_page.content
+    assert b'href="/optimize"' in heroes_page.content
+    assert b'href="/optimize"' in gear_page.content

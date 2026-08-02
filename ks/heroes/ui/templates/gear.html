@@ -98,6 +98,7 @@
     .rarity.epic { color: #c39bd3; }
     .rarity.blue, .rarity.rare { color: #85c1e9; }
     .rarity.green, .rarity.uncommon { color: #82e0aa; }
+    .rarity.grey, .rarity.gray, .rarity.common, .rarity.white { color: #9aa0a6; }
     .name-cell {
       display: flex;
       align-items: center;
@@ -127,6 +128,31 @@
     }
     #toast.ok { border-color: var(--ok); color: var(--ok); display: block; }
     #toast.err { border-color: var(--err); color: var(--err); display: block; }
+    #rescan-log {
+      margin-top: 1rem;
+      padding: 0.65rem 0.9rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel);
+      font-size: 0.8rem;
+      color: var(--muted);
+      max-height: 10rem;
+      overflow-y: auto;
+      display: none;
+    }
+    #rescan-log.active { display: block; }
+    #rescan-log .log-line { margin: 0.15rem 0; }
+    #rescan-log .log-line.piece { color: var(--ok); }
+    #rescan-log .log-line.kept { color: var(--accent); }
+    #rescan-log .log-line.duplicate { color: var(--muted); }
+    #rescan-log .log-line.error { color: var(--err); }
+    button.consume {
+      border-color: var(--err);
+      color: var(--err);
+      font-size: 0.75rem;
+      padding: 0.2rem 0.5rem;
+    }
+    button.consume:hover { background: rgba(241, 149, 155, 0.12); }
   </style>
 </head>
 <body>
@@ -144,6 +170,7 @@
       </button>
     </div>
   </header>
+  <div id="rescan-log" aria-live="polite"></div>
   <main>
     <table id="gear-table">
       <thead>
@@ -184,7 +211,10 @@
                    value="{{ p.mastery_level if p.mastery_level is not none else '' }}" />
           </td>
           <td class="power-cell">{{ p.power if p.power is not none else "—" }}</td>
-          <td><button type="button" class="save">Save</button></td>
+          <td>
+            <button type="button" class="save">Save</button>
+            <button type="button" class="consume" data-piece-id="{{ p.piece_id }}" title="Mark piece as consumed (delete from inventory)">✕</button>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -192,12 +222,23 @@
   </main>
   <div id="toast"></div>
   <script>
+    const POWER_CURVES = {{ power_curves_json | safe }};
     const toast = document.getElementById("toast");
     function showToast(msg, ok) {
       toast.textContent = msg;
       toast.className = ok ? "ok" : "err";
       clearTimeout(showToast._t);
       showToast._t = setTimeout(() => { toast.className = ""; toast.style.display = "none"; }, 2500);
+    }
+
+    function estimatePower(rarity, enhancement, mastery) {
+      if (!rarity || enhancement == null || enhancement === "") return null;
+      const curve = POWER_CURVES[rarity.toLowerCase()];
+      if (!curve) return null;
+      const enh = Math.max(0, Math.min(Number(enhancement), curve.length - 1));
+      const base = curve[enh] || 0;
+      const mast = Number(mastery || 0);
+      return Math.round(base * (1.0 + 0.1 * mast));
     }
 
     const RARITY_RANK = {
@@ -251,9 +292,18 @@
       });
     });
 
+    const rescanLog = document.getElementById("rescan-log");
+    function logLine(text, cls) {
+      const div = document.createElement("div");
+      div.className = "log-line" + (cls ? " " + cls : "");
+      div.textContent = text;
+      rescanLog.appendChild(div);
+      rescanLog.scrollTop = rescanLog.scrollHeight;
+    }
+
     const rescanBtn = document.getElementById("rescan-btn");
     if (rescanBtn) {
-      rescanBtn.addEventListener("click", async () => {
+      rescanBtn.addEventListener("click", () => {
         const ok = window.confirm(
           "Replace the entire gear inventory from ADB OCR?\n\n" +
           "Leave Backpack > Gear open on the device. This clears the current set."
@@ -262,33 +312,77 @@
         rescanBtn.disabled = true;
         rescanBtn.classList.add("busy");
         rescanBtn.textContent = "Scanning…";
-        showToast("OCR rescan started — leave Backpack > Gear open", true);
-        try {
-          const res = await fetch("/api/gear/rescan", {
-            method: "POST",
-            cache: "no-store",
+        rescanLog.innerHTML = "";
+        rescanLog.classList.add("active");
+        logLine("OCR rescan started — leave Backpack > Gear open");
+
+        const es = new EventSource("/api/gear/rescan", { withCredentials: false });
+        // POST via fetch isn't compatible with EventSource; we call the SSE endpoint.
+        // The server accepts POST via route; for GET-based SSE we use the stream directly.
+        // Note: EventSource always uses GET. To support SSE on POST, trigger with fetch instead.
+        es.close();  // Immediately close the EventSource (POST route requires fetch).
+
+        fetch("/api/gear/rescan", { method: "POST", cache: "no-store" })
+          .then(async (res) => {
+            if (!res.ok || !res.body) {
+              const data = await res.json().catch(() => ({}));
+              const detail = data.detail || res.statusText;
+              throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+            }
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            let lastEvent = "";
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const parts = buffer.split("\n\n");
+              buffer = parts.pop();
+              for (const block of parts) {
+                let evType = lastEvent;
+                let evData = "";
+                for (const line of block.split("\n")) {
+                  if (line.startsWith("event:")) evType = line.slice(6).trim();
+                  else if (line.startsWith("data:")) evData = line.slice(5).trim();
+                }
+                lastEvent = "";
+                if (evType === "piece") {
+                  const d = JSON.parse(evData || "{}");
+                  logLine(`✓ ${d.name || d.piece_id} +${d.enhancement_level ?? "?"} pwr=${d.power ?? "?"}`, "piece");
+                } else if (evType === "kept") {
+                  const d = JSON.parse(evData || "{}");
+                  logLine(`⊙ kept ${d.name || d.piece_id} (level locked)`, "kept");
+                } else if (evType === "duplicate") {
+                  const d = JSON.parse(evData || "{}");
+                  logLine(`⟳ dup ${d.piece_id || d.key || ""}`, "duplicate");
+                } else if (evType === "done") {
+                  const d = JSON.parse(evData || "{}");
+                  logLine(`Done · ${d.count ?? 0} pieces`, "piece");
+                  showToast(`Rescan done · ${d.count ?? 0} pieces`, true);
+                  if ("caches" in window) {
+                    caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k)))).catch(() => {});
+                  }
+                  const bust = d.cache_bust || String(Date.now());
+                  setTimeout(() => window.location.replace(`/gear?v=${encodeURIComponent(bust)}`), 600);
+                } else if (evType === "error") {
+                  const d = JSON.parse(evData || "{}");
+                  logLine(`Error: ${d.detail || evData}`, "error");
+                  showToast(d.detail || "Rescan failed", false);
+                  rescanBtn.disabled = false;
+                  rescanBtn.classList.remove("busy");
+                  rescanBtn.textContent = "Rescan from OCR";
+                }
+              }
+            }
+          })
+          .catch((err) => {
+            logLine(`Error: ${err.message || err}`, "error");
+            showToast(String(err.message || err), false);
+            rescanBtn.disabled = false;
+            rescanBtn.classList.remove("busy");
+            rescanBtn.textContent = "Rescan from OCR";
           });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            const detail = data.detail || res.statusText;
-            throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
-          }
-          showToast(`Rescan done · ${data.count ?? 0} pieces`, true);
-          // Drop service-worker / Cache API entries so icons/HTML cannot stick.
-          if ("caches" in window) {
-            try {
-              const keys = await caches.keys();
-              await Promise.all(keys.map((k) => caches.delete(k)));
-            } catch (_) { /* ignore */ }
-          }
-          const bust = data.cache_bust || String(Date.now());
-          window.location.replace(`/gear?v=${encodeURIComponent(bust)}`);
-        } catch (err) {
-          showToast(String(err.message || err), false);
-          rescanBtn.disabled = false;
-          rescanBtn.classList.remove("busy");
-          rescanBtn.textContent = "Rescan from OCR";
-        }
       });
     }
 
@@ -328,6 +422,44 @@
           btn.disabled = false;
         }
       });
+    });
+
+    document.querySelectorAll("button.consume").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.pieceId;
+        const row = btn.closest("tr");
+        const name = row.querySelector(".name-cell span")?.textContent || id;
+        if (!window.confirm(`Mark "${name}" as consumed and remove from inventory?`)) return;
+        btn.disabled = true;
+        try {
+          const res = await fetch(`/api/gear/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+            cache: "no-store",
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.detail || res.statusText);
+          row.remove();
+          showToast(`Removed ${name}`, true);
+        } catch (err) {
+          showToast(String(err.message || err), false);
+          btn.disabled = false;
+        }
+      });
+    });
+
+    // Live power preview: update power cell when enhancement/mastery inputs change.
+    document.querySelectorAll("#gear-table tbody tr").forEach((row) => {
+      const rarity = row.dataset.rarity;
+      const enhInput = row.querySelector('input[name="enhancement"]');
+      const mastInput = row.querySelector('input[name="mastery"]');
+      const powerCell = row.querySelector(".power-cell");
+      if (!enhInput || !mastInput || !powerCell) return;
+      function updateLivePower() {
+        const est = estimatePower(rarity, enhInput.value, mastInput.value);
+        if (est != null) powerCell.textContent = est.toLocaleString();
+      }
+      enhInput.addEventListener("input", updateLivePower);
+      mastInput.addEventListener("input", updateLivePower);
     });
   </script>
 </body>

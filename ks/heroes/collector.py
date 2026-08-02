@@ -74,8 +74,19 @@ def collect_heroes(
     ocr_fn=None,
     sleep_fn: Callable[[float], None] | None = None,
     scrape_fn=None,
+    on_progress: Callable[[str, object], None] | None = None,
+    max_consecutive_duplicates: int = 3,
+    rematch_name_fn: Callable[..., str | None] | None = None,
 ) -> list[HeroRecord]:
-    """Walk the roster grid with paging; upsert each new hero into store."""
+    """Walk the roster grid with paging; upsert each new hero into store.
+
+    Emits progress events via on_progress(event_type, payload):
+      "hero"      — new hero collected
+      "duplicate" — same name + same power seen again
+      "rematch"   — same name but different power → re-OCR to find true name
+      "stopped"   — consecutive-duplicate cap triggered; cell loop broken
+      "done"      — page scan finished
+    """
     sleep = sleep_fn or time.sleep
     scrape = scrape_fn or scrape_hero
     seen: set[str] = set()
@@ -83,6 +94,7 @@ def collect_heroes(
 
     for page in range(cfg.roster.max_pages):
         page_new = 0
+        consecutive_dups = 0
         for index, cell in enumerate(cfg.roster.cells):
             device.tap(cell.x, cell.y)
             sleep(cfg.delays.after_open_ms / 1000.0)
@@ -105,18 +117,67 @@ def collect_heroes(
                 print(f"warn: scrape failed page={page} index={index}: {exc}")
                 opened_detail = True  # best-effort back from a half-open detail
 
+            if hero is None:
+                if opened_detail:
+                    device.tap(cfg.nav.back.x, cfg.nav.back.y)
+                    sleep(cfg.delays.after_tap_ms / 1000.0)
+                continue
+
+            if hero.name in seen:
+                prev_hero = next(
+                    (h for h in collected if h.name == hero.name), None
+                )
+                if prev_hero is not None and not _same_power(hero.power, prev_hero.power):
+                    # Same name but different power → rematch (detail still open).
+                    rematched = _rematch_hero_name(
+                        hero,
+                        device,
+                        cfg,
+                        store,
+                        scrape_fn=scrape,
+                        ocr_fn=ocr_fn,
+                        sleep_fn=sleep,
+                        exclude_names=seen,
+                        rematch_name_fn=rematch_name_fn,
+                    )
+                    if rematched is not None and rematched.name not in seen:
+                        hero = rematched
+                        opened_detail = False  # already closed by rematch
+                        # Fall through to upsert below.
+                    else:
+                        if opened_detail:
+                            device.tap(cfg.nav.back.x, cfg.nav.back.y)
+                            sleep(cfg.delays.after_tap_ms / 1000.0)
+                        if on_progress is not None:
+                            on_progress("rematch", {"name": hero.name, "page": page, "index": index})
+                        consecutive_dups += 1
+                        if consecutive_dups >= max_consecutive_duplicates:
+                            if on_progress is not None:
+                                on_progress("stopped", {"page": page, "index": index, "reason": "consecutive_duplicates"})
+                            break
+                        continue
+                else:
+                    print(
+                        f"warn: duplicate hero skip page={page} index={index} "
+                        f"name={hero.name!r}"
+                    )
+                    if opened_detail:
+                        device.tap(cfg.nav.back.x, cfg.nav.back.y)
+                        sleep(cfg.delays.after_tap_ms / 1000.0)
+                    if on_progress is not None:
+                        on_progress("duplicate", {"name": hero.name, "page": page, "index": index})
+                    consecutive_dups += 1
+                    if consecutive_dups >= max_consecutive_duplicates:
+                        if on_progress is not None:
+                            on_progress("stopped", {"page": page, "index": index, "reason": "consecutive_duplicates"})
+                        break
+                    continue
+
             if opened_detail:
                 device.tap(cfg.nav.back.x, cfg.nav.back.y)
                 sleep(cfg.delays.after_tap_ms / 1000.0)
 
-            if hero is None:
-                continue
-            if hero.name in seen:
-                print(
-                    f"warn: duplicate hero skip page={page} index={index} "
-                    f"name={hero.name!r}"
-                )
-                continue
+            consecutive_dups = 0
             seen.add(hero.name)
             store.upsert(hero)
             collected.append(hero)
@@ -127,6 +188,8 @@ def collect_heroes(
                 f"power={hero.power} stars={hero.stars}+{hero.pellets}p "
                 f"name_shot={shot}"
             )
+            if on_progress is not None:
+                on_progress("hero", {"name": hero.name, "power": hero.power, "page": page, "index": index})
 
         if page_new == 0:
             break
@@ -138,6 +201,48 @@ def collect_heroes(
         sleep(cfg.delays.after_open_ms / 1000.0)
 
     return collected
+
+
+def _same_power(a: int | None, b: int | None, tol: int = 500) -> bool:
+    """True when two power values are close enough to be the same hero."""
+    if a is None or b is None:
+        return True  # can't distinguish
+    return abs(a - b) <= tol
+
+
+def _rematch_hero_name(
+    hero: HeroRecord,
+    device: DeviceProtocol,
+    cfg: HeroesConfig,
+    store: HeroStore,
+    *,
+    scrape_fn: Callable,
+    ocr_fn: object,
+    sleep_fn: Callable[[float], None],
+    exclude_names: set[str],
+    rematch_name_fn: Callable[..., str | None] | None,
+) -> HeroRecord | None:
+    """Re-OCR hero name on the open detail screen, excluding already-seen names.
+
+    Returns an updated HeroRecord with new name, or None if rematch failed.
+    Detail screen is closed before returning.
+    """
+    try:
+        if rematch_name_fn is not None:
+            new_name = rematch_name_fn(hero, exclude_names=exclude_names)
+        else:
+            new_name = None
+
+        if new_name is not None and new_name != hero.name and new_name not in exclude_names:
+            from dataclasses import replace as _replace
+            device.tap(cfg.nav.back.x, cfg.nav.back.y)
+            sleep_fn(cfg.delays.after_tap_ms / 1000.0)
+            return _replace(hero, name=new_name)
+    except Exception as exc:  # noqa: BLE001
+        print(f"warn: rematch failed for {hero.name!r}: {exc}")
+    device.tap(cfg.nav.back.x, cfg.nav.back.y)
+    sleep_fn(cfg.delays.after_tap_ms / 1000.0)
+    return None
 
 
 def capture_name_screenshots(
