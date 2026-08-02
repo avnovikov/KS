@@ -25,6 +25,8 @@
   {% if primary == 'optimiser' %}{% include "_subnav_optimiser.html" %}{% endif %}
   <main>{% block content %}{% endblock %}</main>
   <div id="toast" role="status" hidden></div>
+  {# Shared helpers first so page scripts can use (or still override) them. #}
+  <script src="/static/app.js"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>
