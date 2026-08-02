@@ -158,6 +158,65 @@ def test_patch_rarity_persists_and_locks_vs_ocr(tmp_path: Path) -> None:
     assert updated.rarity == "grey"
 
 
+def test_patch_slot_persists_and_locks_vs_ocr(tmp_path: Path) -> None:
+    """UI can correct a mis-slotted helm; OCR cannot clobber it."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.ui.app import create_app
+
+    store = GearStore(tmp_path)
+    store.upsert(
+        GearRecord(
+            piece_id="cell0",
+            name="Stonewall Helm",
+            troop_type="infantry",
+            slot="chest",  # OCR mislabel
+            rarity="blue",
+            enhancement_level=9,
+            power=19394,
+        )
+    )
+    client = TestClient(create_app(tmp_path))
+    res = client.patch("/api/gear/cell0", json={"slot": "helmet"})
+    assert res.status_code == 200
+    assert res.json()["piece"]["slot"] == "helmet"
+
+    store.reload()
+    # OCR wrong slot again — locked value wins.
+    store.upsert(
+        GearRecord(
+            piece_id="cell0",
+            name="Stonewall Helm",
+            troop_type="infantry",
+            slot="chest",
+            rarity="blue",
+            enhancement_level=9,
+            power=19394,
+        )
+    )
+    locked = store.get("cell0")
+    assert locked is not None
+    assert locked.slot == "helmet"
+
+    # Alias + clear paths.
+    assert update_piece_levels(store, "cell0", slot="helm").slot == "helmet"
+    cleared = update_piece_levels(store, "cell0", slot=None)
+    assert cleared.slot is None
+
+
+def test_patch_rejects_invalid_slot(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.ui.app import create_app
+
+    _seed(tmp_path)
+    client = TestClient(create_app(tmp_path))
+    res = client.patch("/api/gear/cell0", json={"slot": "cape"})
+    assert res.status_code == 400
+
+
 def test_rejects_out_of_range_enhancement(tmp_path: Path) -> None:
     store = _seed(tmp_path)
     with pytest.raises(ValueError, match="0..200"):

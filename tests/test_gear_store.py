@@ -80,6 +80,25 @@ def test_upsert_locks_enhancement_and_mastery(tmp_path: Path):
     assert raw["gear"][0]["enhancement_level"] == 30
 
 
+def test_upsert_locks_slot_against_ocr_mislabel(tmp_path: Path):
+    """Stored slot survives a later OCR that returns a different non-None slot."""
+    store = GearStore(tmp_path)
+    store.upsert(_sample())  # slot=helmet
+    incoming = GearRecord(
+        piece_id="page0-cell0",
+        name="Judicator's Armet",
+        troop_type="cavalry",
+        slot="chest",
+        rarity="mythic",
+        enhancement_level=30,
+        mastery_level=2,
+        inventory_page=0,
+        inventory_index=0,
+    )
+    stored = store.upsert(incoming)
+    assert stored.slot == "helmet", "locked slot must be preserved"
+
+
 def test_upsert_overwrite_unlocks_locked_fields(tmp_path: Path):
     """Passing overwrite={'enhancement_level'} allows new value to win."""
     store = GearStore(tmp_path)

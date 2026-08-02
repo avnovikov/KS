@@ -99,7 +99,8 @@
     .rarity.blue, .rarity.rare { color: #85c1e9; }
     .rarity.green, .rarity.uncommon { color: #82e0aa; }
     .rarity.grey, .rarity.gray, .rarity.common, .rarity.white { color: #9aa0a6; }
-    select.rarity-select {
+    select.rarity-select,
+    select.slot-select {
       padding: 0.25rem 0.45rem;
       border: 1px solid var(--border);
       border-radius: 4px;
@@ -110,6 +111,7 @@
       text-transform: capitalize;
       min-width: 5.5rem;
     }
+    select.slot-select { font-weight: 500; }
     select.rarity-select.rarity-grey {
       color: #c5c9ce;
       border-color: #9aa0a6;
@@ -247,7 +249,21 @@
             </div>
           </td>
           <td>{{ p.troop_type or "—" }}</td>
-          <td>{{ p.slot or "—" }}</td>
+          <td>
+            {% set s = (p.slot or '')|lower %}
+            {% set s_norm = 'helmet' if s in ['helm', 'hat', 'head']
+                 else 'chest' if s in ['armor', 'shroud']
+                 else 'gloves' if s in ['gauntlet', 'gauntlets', 'bracers']
+                 else 'boots' if s == 'greaves'
+                 else s %}
+            <select name="slot" class="slot-select">
+              <option value="" {% if not s_norm %}selected{% endif %}>—</option>
+              {% for opt in ['helmet', 'chest', 'gloves', 'boots'] %}
+              <option value="{{ opt }}"
+                {% if s_norm == opt %}selected{% endif %}>{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </td>
           <td>
             {% set r = (p.rarity or '')|lower %}
             {% set r_norm = 'grey' if r in ['gray','common','white']
@@ -492,21 +508,29 @@
       if (sel.value) sel.classList.add(`rarity-${sel.value}`);
     }
 
-    async function saveGearRow(row, { rarityOnly = false } = {}) {
+    async function saveGearRow(row, { rarityOnly = false, slotOnly = false } = {}) {
       const id = row.dataset.pieceId;
       const enh = row.querySelector('input[name="enhancement"]').value;
       const mast = row.querySelector('input[name="mastery"]').value;
       const raritySel = row.querySelector('select[name="rarity"]');
+      const slotSel = row.querySelector('select[name="slot"]');
       const rarity = raritySel ? raritySel.value : "";
+      const slot = slotSel ? slotSel.value : "";
       const body = {};
-      if (!rarityOnly) {
+      if (!rarityOnly && !slotOnly) {
         if (enh === "") body.clear_enhancement = true;
         else body.enhancement_level = Number(enh);
         if (mast === "") body.clear_mastery = true;
         else body.mastery_level = Number(mast);
       }
-      if (rarity === "") body.clear_rarity = true;
-      else body.rarity = rarity;
+      if (!slotOnly) {
+        if (rarity === "") body.clear_rarity = true;
+        else body.rarity = rarity;
+      }
+      if (!rarityOnly) {
+        if (slot === "") body.clear_slot = true;
+        else body.slot = slot;
+      }
       const res = await fetch(`/api/gear/${encodeURIComponent(id)}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -523,19 +547,28 @@
         row.dataset.enhancement =
           data.piece.enhancement_level == null ? "" : String(data.piece.enhancement_level);
         row.dataset.rarity = (data.piece.rarity || "").toLowerCase();
+        row.dataset.slot = (data.piece.slot || "").toLowerCase();
         if (raritySel) {
           raritySel.value = (data.piece.rarity || "").toLowerCase();
           paintRaritySelect(raritySel);
         }
+        if (slotSel) {
+          slotSel.value = (data.piece.slot || "").toLowerCase();
+        }
+        const iconImg = row.querySelector(".name-cell img");
+        if (iconImg && data.piece.icon_url) {
+          iconImg.src = data.piece.icon_url;
+        }
       }
-      showToast(`Saved ${data.piece?.name || id} · ${data.piece?.rarity || "—"} · power ${data.piece?.power ?? "—"}`, true);
+      showToast(`Saved ${data.piece?.name || id} · ${data.piece?.slot || "—"} · ${data.piece?.rarity || "—"} · power ${data.piece?.power ?? "—"}`, true);
       return data;
     }
 
     // Live power preview: update power cell when rarity/enhancement/mastery change.
-    // Rarity changes auto-persist rarity only so level edits stay on Save.
+    // Rarity/slot changes auto-persist those fields only so level edits stay on Save.
     document.querySelectorAll("#gear-table tbody tr").forEach((row) => {
       const raritySel = row.querySelector('select[name="rarity"]');
+      const slotSel = row.querySelector('select[name="slot"]');
       const enhInput = row.querySelector('input[name="enhancement"]');
       const mastInput = row.querySelector('input[name="mastery"]');
       const powerCell = row.querySelector(".power-cell");
@@ -563,6 +596,19 @@
             updateLivePower();
           } finally {
             raritySel.disabled = false;
+          }
+        });
+      }
+      if (slotSel) {
+        slotSel.addEventListener("change", async () => {
+          slotSel.disabled = true;
+          try {
+            await saveGearRow(row, { slotOnly: true });
+          } catch (err) {
+            showToast(String(err.message || err), false);
+            slotSel.value = row.dataset.slot || "";
+          } finally {
+            slotSel.disabled = false;
           }
         });
       }
