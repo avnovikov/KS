@@ -30,6 +30,9 @@ Grey/Green base–max not calibrated yet — power fallback only.
 2. **Set model:** still one transferable set per troop type (12 pieces) first; outfit top 5 with mythic shells when possible, but dump scarce XP/hammers into the combat-weighted pieces.
 3. **Priority order inside the set (combat weights):** Infantry Health (1.5) → Archer Lethality (1.3) → Cavalry Lethality (1.2) → Infantry Lethality (0.7) → Archer Health (0.6) → Cavalry Health (0.4).
 4. **Do not blindly follow their “skip R140/R180”:** those are Conquest/hero-wide buffs. For Arena/Conquest they matter; for Expedition-only they don’t.
+
+Conquest/Arena formation math: `ks-heroes conquest` / `ks-heroes arena` (shared `combat_formation` ILP). For early combat, prefer `early_game_combat` and do not skip Conquest imbuements (R+40 / R+80).
+
 5. **Early stage:** mythic + enhancement/mastery on high-weight pieces ≫ rushing red. Their own FAQ: delay red if weighted stat/resource is poor; F2P first red stop ≈ level 120.
 
 ## Attribution

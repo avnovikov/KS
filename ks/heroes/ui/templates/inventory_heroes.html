@@ -1,0 +1,140 @@
+{% extends "_layout.html" %}
+{% block title %}Heroes · Inventory · KS{% endblock %}
+
+{% block actions %}
+{# No confirm dialog: unlike the gear rescan this upserts into the roster
+   rather than wiping and replacing it. #}
+<button type="button" class="rescan" id="rescan-btn"
+        data-rescan-url="/api/heroes/rescan"
+        data-reload-url="/inventory/heroes"
+        data-rescan-note="OCR rescan started — leave the Heroes roster open"
+        title="Refresh roster via ADB OCR (Heroes screen must be open)">
+  Rescan from OCR
+</button>
+{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Heroes</h1>
+<p class="page-meta">{{ heroes_dir }} · {{ heroes|length }} heroes</p>
+<p class="hint">
+  Edit level, stars and pellets mid-event — changes save themselves. Level is
+  <strong>pinned</strong> (<span class="pin-legend">•</span>) once it holds a
+  value: an OCR rescan keeps what is there and discards what it read. Blank
+  the box to let the next rescan fill it in again. Tap a hero name for full
+  details. Power scales from the last OCR baseline.
+</p>
+{% include "_inventory_toolbar.html" %}
+<div class="table-wrap">
+  <table id="inventory-table" class="data-table sticky-first"
+         data-inventory-kind="heroes"
+         data-patch-base="/api/heroes/"
+         data-payload-key="hero">
+    <thead>
+      <tr>
+        <th class="sortable" tabindex="0" data-sort="name" scope="col" title="Sort by name">Name</th>
+        <th class="sortable" tabindex="0" data-sort="rarity" scope="col" title="Sort by rarity">Rarity</th>
+        <th class="sortable" tabindex="0" data-sort="troop" scope="col" title="Sort by troop">Troop</th>
+        <th class="sortable" tabindex="0" data-sort="level" scope="col" title="Sort by level">Level</th>
+        <th class="sortable" tabindex="0" data-sort="stars" scope="col" title="Sort by stars">Stars</th>
+        <th class="sortable" tabindex="0" data-sort="pellets" scope="col" title="Sort by pellets">Pellets</th>
+        <th class="sortable" tabindex="0" data-sort="power" scope="col" title="Sort by power">Power</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for h in heroes %}
+      {# data-incomplete-locked: `power is none` also makes the row
+         incomplete, and nothing on this page can supply a power (a star
+         edit rescales it, and None rescales to None) — so the script must
+         not clear the mark just because the star box got filled in. #}
+      <tr data-row-id="{{ h.name }}"
+          data-name="{{ h.name }}"
+          data-rarity="{{ (h.rarity or '')|lower }}"
+          data-troop="{{ (h.troop_type or '')|lower }}"
+          data-level="{{ h.level if h.level is not none else '' }}"
+          data-stars="{{ h.stars if h.stars is not none else '' }}"
+          data-pellets="{{ h.pellets if h.pellets is not none else '' }}"
+          data-power="{{ h.power if h.power is not none else '' }}"
+          {% if h.name in incomplete_names %}data-incomplete="1"{% endif %}
+          {% if h.power is none %}data-incomplete-locked="1"{% endif %}>
+        <td>
+          <div class="name-cell">
+            {% if icons.get(h.name) %}
+            <img class="rarity-{{ (h.rarity or '')|lower }} hero-open"
+                 data-name="{{ h.name }}"
+                 src="{{ icons[h.name] }}" alt="" width="44" height="44"
+                 role="button" tabindex="0" title="Open details" />
+            {% endif %}
+            <button type="button" class="hero-name-link hero-open"
+                    data-name="{{ h.name }}">{{ h.name }}</button>
+          </div>
+        </td>
+        <td class="rarity {{ (h.rarity or '')|lower }}">{{ h.rarity or "—" }}</td>
+        <td>{{ h.troop_type or "—" }}</td>
+        {# `level` is HeroStore's one _LOCKED_UNLESS_OVERWRITE field: any
+           value it holds survives every rescan that does not name it in an
+           overwrite set, and the only way back is storing None — which is
+           what blanking this box does (data-blank="null"). data-locked
+           mirrors the stored value, re-derived from the server's echoed
+           record after each save. #}
+        <td class="lock-cell"{% if h.level is not none %} data-locked="1"{% endif %}>
+          <input type="number" class="cell-input" inputmode="numeric"
+                 min="1" max="80" step="1"
+                 data-field="level"
+                 data-sort-key="level"
+                 data-blank="null"
+                 data-lockable
+                 data-label="{{ h.name }} level"
+                 aria-label="Level for {{ h.name }}"
+                 value="{{ h.level if h.level is not none else '' }}" />
+          <span class="pin" role="img" aria-label="Pinned — an OCR rescan keeps this value">•</span>
+        </td>
+        <td>
+          {# data-blank="null": PATCH /api/heroes/{name} has no clear_* flag,
+             it maps an explicit JSON null onto "unknown". #}
+          <input type="number" class="cell-input" inputmode="numeric"
+                 min="0" max="5" step="1"
+                 data-field="stars"
+                 data-sort-key="stars"
+                 data-blank="null"
+                 data-label="{{ h.name }} stars"
+                 data-required
+                 aria-label="Stars for {{ h.name }}"
+                 value="{{ h.stars if h.stars is not none else '' }}" />
+        </td>
+        <td>
+          <input type="number" class="cell-input" inputmode="numeric"
+                 min="0" max="5" step="1"
+                 data-field="pellets"
+                 data-sort-key="pellets"
+                 data-blank="null"
+                 data-label="{{ h.name }} pellets"
+                 aria-label="Pellets for {{ h.name }}"
+                 value="{{ h.pellets if h.pellets is not none else '' }}" />
+        </td>
+        <td class="power-cell">{{ h.power if h.power is not none else "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="empty no-matches" id="no-matches" hidden>No heroes match this filter.</p>
+</div>
+
+<div class="modal-backdrop" id="hero-detail-modal" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="hero-detail-title">
+    <div class="modal-header">
+      <img id="hero-detail-icon" alt="" width="64" height="64" />
+      <div>
+        <h2 id="hero-detail-title">Hero</h2>
+        <div class="modal-sub" id="hero-detail-sub"></div>
+      </div>
+      <button type="button" class="modal-close" id="hero-detail-close">Close</button>
+    </div>
+    <div class="modal-body" id="hero-detail-body"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/inventory.js"></script>
+<script src="/static/hero_detail.js"></script>
+{% endblock %}

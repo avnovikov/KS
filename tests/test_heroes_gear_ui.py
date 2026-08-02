@@ -332,12 +332,18 @@ def test_fastapi_rescan_replaces_inventory(tmp_path: Path) -> None:
     assert page.headers.get("cache-control") == "no-store"
     assert "?v=" in page.text
 
-    # SSE endpoint: read the stream and collect events.
+    # /api/gear/rescan answers with one JSON document (not an SSE stream):
+    # the /inventory IA needs the whole post-rescan set plus the trust diff
+    # in a single response so the page can render "needs attention" without
+    # replaying events. Porting the SSE progress log back is tracked
+    # separately.
     res = client.post("/api/gear/rescan")
     assert res.status_code == 200
-    body_text = res.text
-    # Stream should contain a "done" event with count.
-    assert "event: done" in body_text or "done" in body_text
+    payload = res.json()
+    assert payload["ok"] is True
+    assert payload["count"] == 1
+    assert payload["trust"]["flags"] == {"cell1": "new"}
+    assert [p["piece_id"] for p in payload["gear"]] == ["cell1"]
 
     listed = client.get("/api/gear").json()["gear"]
     assert len(listed) == 1
@@ -450,20 +456,14 @@ def test_update_piece_levels_with_overwrite_persists_locked_field(tmp_path: Path
     assert updated.power is not None and updated.power > 152100
 
 
-def test_gear_page_includes_power_curves_json(tmp_path: Path) -> None:
-    pytest.importorskip("fastapi")
-    from fastapi.testclient import TestClient
-
-    from ks.heroes.ui.app import create_app
-
-    _seed(tmp_path)
-    client = TestClient(create_app(tmp_path))
-    page = client.get("/gear")
-    assert page.status_code == 200
-    assert "grey" in page.text  # power_curves_json must include grey rarity
-    assert "POWER_CURVES" in page.text
-
-
+# `test_gear_page_includes_power_curves_json` lived here. It pinned the
+# inline `POWER_CURVES` constant that the deleted legacy gear template
+# embedded (unnameable here: a sibling test forbids naming it) so the
+# power cell could preview a rarity/enhancement edit before Save. The
+# /inventory shell forbids inline <script>, and its gear page has no editable
+# rarity yet, so there is nothing on any page to pin. The helper the feature
+# is built from is still covered by the next test; the preview itself is part
+# of the pending UI port.
 def test_rarity_power_curves_includes_grey() -> None:
     from ks.heroes.ui.power import rarity_power_curves
 

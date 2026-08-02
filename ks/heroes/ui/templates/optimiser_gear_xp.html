@@ -1,0 +1,140 @@
+{% extends "_layout.html" %}
+{% block title %}Gear XP · Optimiser · KS{% endblock %}
+
+{% block content %}
+{# Layout A, one column top to bottom: target → fodder bag → run → delta →
+   ordered spends → leftovers. Every label the script needs is rendered here
+   and read back off the markup (the event names, the per-fodder XP values,
+   the unit each event's utility is measured in), so the page holds exactly
+   one copy of each. #}
+<h1 class="page-title">Gear XP spend</h1>
+<p class="page-meta">{{ heroes_dir }}{% if gear_dir %} · {{ gear_dir }}{% endif %}</p>
+
+{% if not gear_enabled %}
+<p class="banner-err" id="gear-missing" role="alert">
+  Gear XP spend needs a gear inventory to level. Restart the UI with
+  <code>--gear</code> and this form comes back.
+</p>
+{% endif %}
+
+{# The fodder XP notes and the mode options are read off hand-edited tuning
+   YAML on every request, so that a retune shows up on reload. A typo in one
+   of those files used to take this whole page down with a 500; now the page
+   renders without whatever could not be read and says which file to look at.
+   A warning, not an error: the form still works, and the solve will report
+   its own failure if the same file breaks it. #}
+{% if tuning_error %}
+<p class="banner-warn" id="tuning-error" role="alert">
+  Some tuning files could not be read, so this form is showing less than
+  usual: {{ tuning_error }}
+</p>
+{% endif %}
+
+<form id="gear-xp-form" class="spend-form" data-api-url="/api/optimize/gear-xp" novalidate>
+  <section class="panel">
+    <h2 class="section-title">Target</h2>
+    <p class="hint">The lineup a spend has to make better.</p>
+    {# `data-unit` is what the delta line calls the number: sword and bear
+       utility is expected personal points, arena's is the formation score. #}
+    {%- macro seg(key, unit, label, on) -%}
+    <button type="button" class="seg{% if on %} on{% endif %}" data-event="{{ key }}" data-unit="{{ unit }}" aria-pressed="{{ 'true' if on else 'false' }}"{% if not gear_enabled %} disabled{% endif %}>{{ label }}</button>
+    {%- endmacro %}
+    <div class="seg-scroll">
+      <div class="segmented" role="group" aria-label="Event">
+        {{ seg("swordland", "Points", "Swordland", True) }}
+        {{ seg("beartrap", "Points", "Bear Trap", False) }}
+        {{ seg("arena", "Score", "Arena", False) }}
+      </div>
+    </div>
+
+    {# One field per event rather than one select whose options are rewritten:
+       each event's modes are a different set, and hiding the two that do not
+       apply keeps every option server-rendered and every label attached to a
+       control that really has it. #}
+    <div class="stack-field" data-mode-for="swordland">
+      <label class="field-label" for="mode-swordland">
+        Mode
+        <span class="field-note">leave on Best mode to let the search pick</span>
+      </label>
+      <select class="stack-input" id="mode-swordland" data-mode-select="swordland"{% if not gear_enabled %} disabled{% endif %}>
+        <option value="">Best mode</option>
+        {% for mode in sword_modes %}
+        <option value="{{ mode }}">{{ mode|replace("_", " ")|capitalize }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="stack-field" data-mode-for="beartrap" hidden>
+      <label class="field-label" for="mode-beartrap">
+        Mode
+        <span class="field-note">leave on Best mode to let the search pick</span>
+      </label>
+      <select class="stack-input" id="mode-beartrap" data-mode-select="beartrap"{% if not gear_enabled %} disabled{% endif %}>
+        <option value="">Best mode</option>
+        {% for mode in bear_modes %}
+        <option value="{{ mode }}">{{ mode|replace("_", " ")|capitalize }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="stack-field" data-mode-for="arena" hidden>
+      <label class="field-label" for="mode-arena">Side</label>
+      <select class="stack-input" id="mode-arena" data-mode-select="arena"{% if not gear_enabled %} disabled{% endif %}>
+        <option value="attack">Attack</option>
+        <option value="defense">Defense</option>
+      </select>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2 class="section-title">Fodder bag</h2>
+    <p class="hint">Spare pieces you are willing to feed in. A blank box counts as none.</p>
+    {% for key, label in [
+         ("grey", "Grey"),
+         ("green", "Green"),
+         ("blue", "Blue"),
+         ("purple", "Purple"),
+         ("part_100", "100-XP part"),
+       ] %}
+    <div class="stack-field">
+      <label class="field-label" for="fodder-{{ key }}">
+        {{ label }}
+        {# Omitted rather than left blank when the tuning file is unreadable:
+           an empty "XP each" note is a claim the page cannot back. #}
+        {% if key in fodder_xp %}
+        <span class="field-note">{{ fodder_xp[key] }} XP each</span>
+        {% endif %}
+      </label>
+      <input class="stack-input" type="number" inputmode="numeric" min="0" step="1"
+             id="fodder-{{ key }}" data-fodder="{{ key }}" data-label="{{ label }}"
+             value="0"{% if not gear_enabled %} disabled{% endif %} />
+    </div>
+    {% endfor %}
+  </section>
+
+  <div class="run-row">
+    <button type="submit" class="btn-run" id="run-btn"{% if not gear_enabled %} disabled{% endif %}>Find best spends</button>
+    <p class="run-note">
+      Proposals only — nothing here is written back to your gear inventory.
+    </p>
+  </div>
+  <p class="status-line" id="spend-status" role="status">{% if gear_enabled %}Enter your fodder counts, then find the best spends.{% else %}No gear inventory configured.{% endif %}</p>
+</form>
+
+{# Filled in by optimiser_gear_xp.js from one POST; hidden until there is
+   something to show, and hidden again the moment a new search starts. #}
+<section class="panel spend-result" id="spend-result" hidden>
+  <h2 class="section-title">Best spends</h2>
+  <p class="delta-line" id="delta-line"></p>
+  <p class="target-line" id="target-line"></p>
+  {# role="list" restores what `list-style: none` takes away: Safari/VoiceOver
+     stops treating a list with no markers as a list, and the order of these
+     steps *is* the answer. #}
+  <ol class="spend-list" id="spend-list" role="list"></ol>
+  <p class="empty" id="spend-empty" hidden></p>
+  <p class="leftover-line" id="leftover-line"></p>
+  <a class="result-link" href="/optimiser/events">Open Event lineups</a>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/optimiser_gear_xp.js"></script>
+{% endblock %}

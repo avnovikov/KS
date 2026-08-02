@@ -1,0 +1,68 @@
+{% extends "_layout.html" %}
+{% block title %}Event lineups · Optimiser · KS{% endblock %}
+
+{% block actions %}
+{# One control, not the legacy page's four. /api/optimize has no per-section
+   endpoint, so `data-regen="sword"`, `"bear"` and `"arena"` all fired the
+   same whole-bundle recompute as `"all"` did — three buttons promising a
+   narrower refresh than the API can give. #}
+<button type="button" id="regen-btn" data-regen="all"
+        title="Recompute from the current heroes, gear and troops">Regenerate</button>
+{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Event lineups</h1>
+<p class="page-meta">{{ heroes_dir }} · lineups solved from the current roster, gear and troops</p>
+
+{# Labels live here, not in the script: the page must name its four events in
+   server-rendered HTML (Swordland / Bear Trap / Arena / Conquest), and the
+   board reads them straight back off these buttons so there is only ever one
+   copy.
+
+   Conquest arrived from the other branch, where it was a fourth <section>
+   with its own heading and Regenerate button (`#conquest-block`). It is a
+   segment here for the same reason the other three are: /api/optimize solves
+   all of them in one call, so a separate section could only ever show the
+   same bundle a chip away. Four segments overflow 390px, which is what
+   .seg-scroll is for. #}
+<div class="seg-scroll">
+  <div class="segmented" role="group" aria-label="Event">
+    <button type="button" class="seg on" data-event="sword" aria-pressed="true">Swordland</button>
+    <button type="button" class="seg" data-event="bear" aria-pressed="false">Bear Trap</button>
+    <button type="button" class="seg" data-event="arena" aria-pressed="false">Arena</button>
+    <button type="button" class="seg" data-event="conquest" aria-pressed="false">Conquest</button>
+  </div>
+</div>
+
+<p class="status-line" id="lineup-status" role="status">Solving lineups…</p>
+
+<div class="mode-chips" id="mode-chips" role="group" aria-label="Modes"></div>
+{# The two regions optimiser_events.js rewrites at runtime. Both are
+   un-hidden before their text is written, exactly as app.js's toast is — but
+   without a role that ceremony announces nothing, so they carry one: polite
+   for the "skipped as infeasible" note, assertive for a section that failed
+   outright, matching #lineup-status and the troops editor's banner-err. #}
+<p class="mode-note" id="mode-note" role="status" hidden></p>
+<p class="banner-err" id="section-error" role="alert" hidden></p>
+
+<section class="panel board" id="board"></section>
+
+{# Bottom sheet on a phone, centred modal on a wide screen — `.sheet` opts
+   into the narrow-width rules in app.css. #}
+<div class="modal-backdrop sheet" id="gear-detail-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="gear-modal-title">
+    <div class="modal-header">
+      <div>
+        <h2 id="gear-modal-title">Hero</h2>
+        <div class="modal-sub" id="gear-modal-sub"></div>
+      </div>
+      <button type="button" class="modal-close" id="gear-modal-close">Close</button>
+    </div>
+    <div class="modal-body" id="gear-modal-body"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/optimiser_events.js"></script>
+{% endblock %}

@@ -90,17 +90,23 @@ def test_default_troops_path_siblings_gear_yaml() -> None:
     )
 
 
-def test_create_app_enables_troops_tab_with_default_path(tmp_path: Path) -> None:
+def test_create_app_links_troops_without_a_troops_path(tmp_path: Path) -> None:
+    """Troops is reachable from the heroes screen with no `troops_path` given.
+
+    Was `test_create_app_enables_troops_tab_with_default_path`, which pinned
+    the old `/heroes` page linking `/troops` and the tab being greyed out when
+    `config/troops.yaml` was absent. The /inventory IA has no gated tab: the
+    store seeds its own per-install copy, so the subtab is always live. What
+    is still worth pinning — and is what that test was really about — is that
+    the default (no-argument) app links the troops screen rather than
+    stranding it.
+    """
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
     from ks.heroes.models import HeroRecord
     from ks.heroes.store import HeroStore
     from ks.heroes.ui.app import create_app
-    from ks.heroes.ui.troops_inventory import DEFAULT_TROOPS_PATH
-
-    if not DEFAULT_TROOPS_PATH.is_file():
-        pytest.skip("repo config/troops.yaml missing")
 
     heroes_dir = tmp_path / "heroes"
     heroes_dir.mkdir()
@@ -108,10 +114,11 @@ def test_create_app_enables_troops_tab_with_default_path(tmp_path: Path) -> None
         HeroRecord(name="Helga", stars=1, pellets=0, scraped_at="t")
     )
     client = TestClient(create_app(heroes_dir=heroes_dir))
-    page = client.get("/heroes")
+    page = client.get("/inventory/heroes")
     assert page.status_code == 200
-    assert b'href="/troops"' in page.content
-    assert b'title="config/troops.yaml not found"' not in page.content
+    assert b'href="/inventory/troops"' in page.content
+    # Seeded next to the roster, from the packaged config.
+    assert (heroes_dir / "troops.yaml").is_file()
 
 
 def test_troop_icon_url_fallback_svg() -> None:
@@ -123,7 +130,18 @@ def test_troop_icon_url_fallback_svg() -> None:
     assert "t6" in url
 
 
-def test_fastapi_troops_page_and_patch(tmp_path: Path) -> None:
+def test_fastapi_troops_page_and_put(tmp_path: Path) -> None:
+    """`troops_path` points the whole troops screen at an existing document.
+
+    Was `test_fastapi_troops_page_and_patch`. The `/troops` page and the
+    granular `PATCH /api/troops/march-capacity` and
+    `PATCH /api/troops/{type}/{tier}` endpoints it exercised are not part of
+    the /inventory IA; `/inventory/troops` plus whole-document
+    `GET`/`PUT /api/troops` supersede them. What survives from the original
+    is the part that is not IA: passing `troops_path` must make that file —
+    not a freshly seeded one next to the roster — the file the screen reads
+    and the file an edit lands in.
+    """
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
@@ -139,37 +157,32 @@ def test_fastapi_troops_page_and_patch(tmp_path: Path) -> None:
     troops = _write_sample(tmp_path / "troops.yaml")
     client = TestClient(create_app(heroes_dir=heroes_dir, troops_path=troops))
 
-    page = client.get("/troops")
+    page = client.get("/inventory/troops")
     assert page.status_code == 200
-    assert b"Troops inventory" in page.content
+    assert b"Troops" in page.content
     assert b"infantry" in page.content
-
-    heroes_page = client.get("/heroes")
-    assert b'href="/troops"' in heroes_page.content
+    # The override wins: nothing was seeded beside the roster.
+    assert not (heroes_dir / "troops.yaml").exists()
 
     listed = client.get("/api/troops").json()
-    assert listed["march_capacity"] == 1000
-    assert listed["infantry"]["total"] == 110
-    tile6 = next(t for t in listed["infantry"]["tiles"] if t["tier"] == 6)
-    assert tile6["count"] == 100
-    assert tile6["icon_url"].startswith("/static/troops/")
+    assert listed["troops"]["march_capacity"] == 1000
+    assert listed["troops"]["truegold"] == 2
+    assert listed["totals"]["infantry"] == 110
 
-    res = client.patch("/api/troops/infantry/6", json={"count": 42})
+    # Tier keys come back over JSON as strings — JSON has no integer keys —
+    # and go back the same way; the store's loader accepts either.
+    body = dict(listed["troops"])
+    body["march_capacity"] = 7777
+    body["infantry"] = {**body["infantry"], "6": 42}
+    res = client.put("/api/troops", json=body)
     assert res.status_code == 200
-    assert res.json()["count"] == 42
-    raw = yaml.safe_load(troops.read_text(encoding="utf-8"))
-    assert raw["infantry"][6] == 42
-    assert raw["truegold"] == 2
+    assert res.json()["troops"]["march_capacity"] == 7777
+    assert res.json()["totals"]["infantry"] == 52
 
-    cap = client.patch(
-        "/api/troops/march-capacity", json={"march_capacity": 7777}
-    )
-    assert cap.status_code == 200
-    assert cap.json()["march_capacity"] == 7777
     raw = yaml.safe_load(troops.read_text(encoding="utf-8"))
     assert raw["march_capacity"] == 7777
+    assert int(raw["infantry"]["6"]) == 42
+    assert raw["truegold"] == 2
 
-    bad = client.patch("/api/troops/infantry/99", json={"count": 1})
-    assert bad.status_code == 404
-    neg = client.patch("/api/troops/cavalry/1", json={"count": -3})
-    assert neg.status_code == 400
+    neg = client.put("/api/troops", json={**body, "march_capacity": -3})
+    assert neg.status_code == 422

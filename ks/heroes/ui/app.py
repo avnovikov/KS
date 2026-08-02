@@ -10,11 +10,14 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
+import yaml
+
 from ks.heroes.config import DEFAULT_HEROES_CONFIG
 from ks.heroes.gear_config import DEFAULT_GEAR_CONFIG
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.gear_store import GearStore
 from ks.heroes.models import HeroRecord
+from ks.heroes.optimize.troops import troops_config_from_dict
 from ks.heroes.store import HeroStore
 from ks.heroes.ui.hero_icons import ensure_all_hero_icons
 from ks.heroes.ui.hero_power import scale_power_for_star_change
@@ -22,21 +25,77 @@ from ks.heroes.ui.heroes_rescan import rescan_heroes_from_ocr
 from ks.heroes.ui.icons import ensure_all_icons
 from ks.heroes.ui.power import compute_gear_power
 from ks.heroes.ui.rescan import rescan_gear_from_ocr
-from ks.heroes.ui.troop_icons import troop_icon_url
-from ks.heroes.ui.troops_inventory import (
-    DEFAULT_TROOPS_PATH,
-    TYPE_KEYS,
-    load_inventory,
-    set_count,
-    set_march_capacity,
+from ks.heroes.ui.troop_store import TroopStore
+from ks.heroes.ui.troops_form import troops_form_model
+from ks.heroes.ui.trust import (
+    flag_gear_rows,
+    flag_hero_rows,
+    gear_mastery_required,
+    gear_row_incomplete,
+    hero_row_incomplete,
+    summarize_flags,
 )
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 _STARS_RANGE = range(0, 6)
 _PELLETS_RANGE = range(0, 6)
 _HERO_LEVEL_RANGE = range(1, 81)
 _POWER_MIN = 0
 _POWER_MAX = 99_999_999
+
+#: What a hand-edited tuning YAML can throw on the way into a *page*.
+#: Deliberately wider than the parse error: a document that loads as a list
+#: instead of a mapping reaches `.get` (AttributeError), and a value that is
+#: not a number reaches `int()` (ValueError/TypeError). Every one of these is
+#: a file the user is expected to edit by hand, and none of them should be
+#: able to 500 the screen they would go to in order to notice the mistake.
+TUNING_ERRORS = (
+    OSError,
+    AttributeError,
+    KeyError,
+    TypeError,
+    ValueError,
+    yaml.YAMLError,
+)
+
+
+def startup_paths(*, gear: bool, heroes: bool) -> list[tuple[str, str]]:
+    """(label, path) for each screen `run_ui` advertises on the console.
+
+    Data rather than a run of print statements so the tests can check every
+    path against the app's own routes. The console was the last surface still
+    naming the pre-/inventory IA (`/heroes`, `/optimize`, …); those paths do
+    still redirect, which is exactly why nothing else caught it.
+
+    Hero levels is reachable in the subnav but not listed here: it is a
+    reserved placeholder, and the console is a list of things to go and do.
+    """
+    rows: list[tuple[str, str]] = []
+    if gear:
+        rows.append(("Inventory · Gear", "/inventory/gear"))
+    if heroes:
+        rows.append(("Inventory · Heroes", "/inventory/heroes"))
+    # Troops is editable whichever inventory is configured — the optimisers
+    # read it either way.
+    rows.append(("Inventory · Troops", "/inventory/troops"))
+    if heroes:
+        rows.append(("Optimiser · Event lineups", "/optimiser/events"))
+        rows.append(("Optimiser · Gear XP", "/optimiser/gear-xp"))
+    return rows
+
+
+def _troop_totals(raw: dict[str, Any]) -> dict[str, int]:
+    """Type/march-capacity totals for the troops API — computed via the same
+    validator save_raw() uses, so totals and validation never disagree.
+    """
+    cfg = troops_config_from_dict(raw)
+    return {
+        "march_capacity": cfg.march_capacity,
+        "infantry": cfg.infantry,
+        "cavalry": cfg.cavalry,
+        "archers": cfg.archers,
+    }
 
 
 def inventory_revision(dir_path: Path, filename: str) -> str:
@@ -57,7 +116,7 @@ def with_cache_bust(url: str | None, bust: str) -> str | None:
 
 try:
     from fastapi import Body, FastAPI, HTTPException, Request
-    from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+    from fastapi.responses import HTMLResponse, RedirectResponse
     from fastapi.staticfiles import StaticFiles
     from fastapi.templating import Jinja2Templates
 except ImportError:  # pragma: no cover - exercised when ui extras missing
@@ -67,7 +126,6 @@ except ImportError:  # pragma: no cover - exercised when ui extras missing
     Request = None  # type: ignore[assignment,misc]
     HTMLResponse = None  # type: ignore[assignment,misc]
     RedirectResponse = None  # type: ignore[assignment,misc]
-    StreamingResponse = None  # type: ignore[assignment,misc]
     StaticFiles = None  # type: ignore[assignment,misc]
     Jinja2Templates = None  # type: ignore[assignment,misc]
 
@@ -134,6 +192,43 @@ _SLOT_ALIASES = {
     "bracers": "gloves",
     "greaves": "boots",
 }
+
+
+#: The vocabularies the gear pickers offer, in game order rather than
+#: alphabetical. Kept beside the frozensets `normalize_ui_rarity` /
+#: `normalize_ui_slot` validate against, and pinned equal to them by
+#: `test_the_gear_pickers_offer_exactly_the_vocabulary_the_api_accepts` — a
+#: picker must never offer a value the PATCH it feeds would reject with a 400.
+UI_RARITY_CHOICES: tuple[str, ...] = ("grey", "green", "blue", "epic", "mythic", "red")
+UI_SLOT_CHOICES: tuple[str, ...] = ("helmet", "chest", "gloves", "boots")
+
+
+def ui_select_value(
+    raw: str | None, normalizer: Callable[[str | None], str | None]
+) -> str | None:
+    """What a gear picker should show for the rarity/slot currently stored.
+
+    Three outcomes, and the third is the load-bearing one:
+
+    - ``""`` — nothing is stored. The picker sits on its "—" option, which is
+      also the release control: choosing it clears the field, and a cleared
+      field is one the next OCR rescan is allowed to fill in again.
+    - the canonical spelling — the stored value is one the PATCH endpoint
+      accepts, with aliases folded (``purple`` → ``epic``, ``helm`` →
+      ``helmet``).
+    - ``None`` — it is neither, i.e. a value hand-edited into ``gear.json``
+      that this vocabulary cannot represent. The page renders that cell
+      read-only instead of offering a picker, because every save sends the
+      row's *whole* editable state: a picker showing "—" over a stored
+      ``chartreuse`` would quietly clear it the first time any other box on
+      that row was touched.
+    """
+    if raw is None or str(raw).strip() == "":
+        return ""
+    try:
+        return normalizer(raw)
+    except ValueError:
+        return None
 
 
 def normalize_ui_rarity(rarity: str | None) -> str | None:
@@ -351,12 +446,24 @@ def create_app(
     resolved_heroes = (
         _resolve_heroes_dir(heroes_dir) if heroes_dir is not None else None
     )
-    resolved_troops = (troops_path or DEFAULT_TROOPS_PATH).expanduser().resolve()
-    troops_enabled = resolved_troops.is_file()
     gear_store = GearStore(resolved_gear) if resolved_gear is not None else None
     hero_store = (
         HeroStore(resolved_heroes) if resolved_heroes is not None else None
     )
+    # Troops live alongside heroes when both halves are configured — heroes
+    # is what the optimisers actually consume troops for — else alongside
+    # gear. One of the two is always set (checked above), so this is never
+    # None; /inventory/troops and /api/troops stay ungated for the same
+    # reason. `troops_path` (CLI `--troops`) overrides the location outright,
+    # which is how a caller points the UI at an existing troops document.
+    troops_dir = resolved_heroes if resolved_heroes is not None else resolved_gear
+    troop_store = TroopStore(
+        troops_path.expanduser().resolve()
+        if troops_path is not None
+        else troops_dir / "troops.yaml",
+        seed_from=REPO_ROOT / "config" / "troops.yaml",
+    )
+    troop_store.ensure_exists()
     gear_config_path = (gear_config or DEFAULT_GEAR_CONFIG).expanduser().resolve()
     heroes_config_path = (
         (heroes_config or DEFAULT_HEROES_CONFIG).expanduser().resolve()
@@ -374,6 +481,7 @@ def create_app(
     app.state.gear_config = gear_config_path
     app.state.heroes_config = heroes_config_path
     app.state.serial = serial
+    app.state.troops_path = troop_store.path
     static_dir = Path(__file__).resolve().parent / "static"
     if static_dir.is_dir():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
@@ -406,57 +514,56 @@ def create_app(
             )
         return resolved_heroes, hero_store
 
-    def _require_troops() -> Path:
-        if not troops_enabled:
-            raise HTTPException(
-                status_code=404, detail="troops.yaml not found"
-            )
-        return resolved_troops
-
-    def _nav_flags(*, gear: bool | None = None, heroes: bool | None = None) -> dict[str, bool]:
-        return {
-            "gear_enabled": (
-                resolved_gear is not None if gear is None else gear
-            ),
-            "heroes_enabled": (
-                resolved_heroes is not None if heroes is None else heroes
-            ),
-            "troops_enabled": troops_enabled,
+    def _shell_page(
+        request: Request,
+        template: str,
+        *,
+        primary: str,
+        subtab: str,
+        **extra: Any,
+    ) -> HTMLResponse:
+        """Render a page inside the Inventory/Optimiser shell (never cached)."""
+        context: dict[str, Any] = {
+            "primary": primary,
+            "subtab": subtab,
+            "gear_enabled": resolved_gear is not None,
+            "heroes_enabled": resolved_heroes is not None,
         }
-
-    def _troops_api_payload(inventory: dict[str, Any]) -> dict[str, Any]:
-        out: dict[str, Any] = {
-            "path": str(resolved_troops),
-            "march_capacity": inventory["march_capacity"],
-            "truegold": inventory.get("truegold", 0),
-        }
-        for key in TYPE_KEYS:
-            levels = inventory[key]
-            tiles = [
-                {
-                    "tier": tier,
-                    "count": int(levels[tier]),
-                    "icon_url": troop_icon_url(key, tier),
-                }
-                for tier in range(1, 12)
-            ]
-            out[key] = {
-                "total": int(inventory["totals"][key]),
-                "tiles": tiles,
-            }
-        return out
+        context.update(extra)
+        response = templates.TemplateResponse(request, template, context)
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.get("/", include_in_schema=False)
     def home() -> RedirectResponse:
         if resolved_gear is not None:
-            return RedirectResponse(url="/gear", status_code=302)
-        return RedirectResponse(url="/heroes", status_code=302)
+            return RedirectResponse(url="/inventory/gear", status_code=302)
+        return RedirectResponse(url="/inventory/heroes", status_code=302)
 
-    @app.get("/gear", response_class=HTMLResponse)
-    def gear_page(request: Request) -> HTMLResponse:
-        from ks.heroes.ui.power import rarity_power_curves
-        import json as _json
+    # Legacy paths kept for bookmarks; the IA lives under /inventory and
+    # /optimiser now.
+    @app.get("/gear", include_in_schema=False)
+    def legacy_gear() -> RedirectResponse:
+        return RedirectResponse(url="/inventory/gear", status_code=302)
 
+    @app.get("/heroes", include_in_schema=False)
+    def legacy_heroes() -> RedirectResponse:
+        return RedirectResponse(url="/inventory/heroes", status_code=302)
+
+    @app.get("/optimize", include_in_schema=False)
+    def legacy_optimize() -> RedirectResponse:
+        return RedirectResponse(url="/optimiser/events", status_code=302)
+
+    @app.get("/optimize/events", include_in_schema=False)
+    def legacy_optimize_events() -> RedirectResponse:
+        return RedirectResponse(url="/optimiser/events", status_code=302)
+
+    @app.get("/optimize/gear-xp", include_in_schema=False)
+    def legacy_optimize_gear_xp() -> RedirectResponse:
+        return RedirectResponse(url="/optimiser/gear-xp", status_code=302)
+
+    @app.get("/inventory/gear", response_class=HTMLResponse)
+    def inventory_gear_page(request: Request) -> HTMLResponse:
         gear_path, store = _require_gear()
         store.reload()
         pieces = store.all_pieces()
@@ -465,22 +572,180 @@ def create_app(
             pid: with_cache_bust(url, bust)
             for pid, url in ensure_all_icons(pieces, gear_path).items()
         }
-        response = templates.TemplateResponse(
+        return _shell_page(
             request,
-            "gear.html",
-            {
-                "pieces": pieces,
-                "icons": icon_map,
-                "gear_dir": str(gear_path),
-                "cache_bust": bust,
-                "gear_enabled": True,
-                "heroes_enabled": resolved_heroes is not None,
-                "troops_enabled": troops_enabled,
-                "power_curves_json": _json.dumps(rarity_power_curves()),
+            "inventory_gear.html",
+            primary="inventory",
+            subtab="gear",
+            pieces=pieces,
+            icons=icon_map,
+            gear_dir=str(gear_path),
+            cache_bust=bust,
+            # "Needs attention" has to work on a plain page load, before any
+            # rescan has put a trust payload in sessionStorage — so the same
+            # predicate the rescan diff uses runs here, and the browser
+            # never carries a second copy of the rarity gate.
+            incomplete_ids={
+                p.piece_id for p in pieces if gear_row_incomplete(p)
             },
+            mastery_required_ids={
+                p.piece_id for p in pieces if gear_mastery_required(p.rarity)
+            },
+            # The two pickers restored from the pre-merge page. Values are
+            # normalised here rather than in Jinja so the `selected` option
+            # is decided by the same function the PATCH endpoint validates
+            # with; `None` means "this store value has no option" — see
+            # ui_select_value.
+            rarity_options=UI_RARITY_CHOICES,
+            slot_options=UI_SLOT_CHOICES,
+            rarity_values={
+                p.piece_id: ui_select_value(p.rarity, normalize_ui_rarity)
+                for p in pieces
+            },
+            slot_values={
+                p.piece_id: ui_select_value(p.slot, normalize_ui_slot)
+                for p in pieces
+            },
+            # Lowercased before de-duplication: the chip's data-filter and
+            # the row's data-troop are both `|lower`ed, so "Cavalry" and
+            # "cavalry" would otherwise render two chips filtering identically.
+            troop_types=sorted(
+                {p.troop_type.lower() for p in pieces if p.troop_type}
+            ),
         )
-        response.headers["Cache-Control"] = "no-store"
-        return response
+
+    @app.get("/inventory/heroes", response_class=HTMLResponse)
+    def inventory_heroes_page(request: Request) -> HTMLResponse:
+        heroes_path, store = _require_heroes()
+        store.reload()
+        heroes = store.all_heroes()
+        bust = inventory_revision(heroes_path, "heroes.json")
+        icon_map = {
+            name: with_cache_bust(url, bust)
+            for name, url in ensure_all_hero_icons(heroes, heroes_path).items()
+        }
+        return _shell_page(
+            request,
+            "inventory_heroes.html",
+            primary="inventory",
+            subtab="heroes",
+            heroes=heroes,
+            icons=icon_map,
+            heroes_dir=str(heroes_path),
+            cache_bust=bust,
+            incomplete_names={
+                h.name for h in heroes if hero_row_incomplete(h)
+            },
+            troop_types=sorted(
+                {h.troop_type.lower() for h in heroes if h.troop_type}
+            ),
+        )
+
+    @app.get("/inventory/troops", response_class=HTMLResponse)
+    def inventory_troops_page(request: Request) -> HTMLResponse:
+        """Server-render the troops editor from the store.
+
+        Unlike GET /api/troops, an unreadable or invalid document must not
+        take the *page* down: the editor is where a user repairs it (a
+        complete PUT is self-healing over corrupt YAML), so a load failure
+        renders the form with whatever was readable plus a banner carrying
+        the validator's message. Validation runs through _troop_totals, the
+        same path the API uses, so page and API never disagree about what
+        counts as broken.
+        """
+        raw: dict[str, Any] = {}
+        load_error: str | None = None
+        try:
+            raw = troop_store.load_raw()
+            _troop_totals(raw)
+        except (yaml.YAMLError, ValueError, TypeError) as exc:
+            load_error = str(exc)
+        return _shell_page(
+            request,
+            "inventory_troops.html",
+            primary="inventory",
+            subtab="troops",
+            form=troops_form_model(raw),
+            troops_path=str(troop_store.path),
+            load_error=load_error,
+        )
+
+    @app.get("/optimiser/events", response_class=HTMLResponse)
+    def optimiser_events_page(request: Request) -> HTMLResponse:
+        heroes_path, _ = _require_heroes()
+        return _shell_page(
+            request,
+            "optimiser_events.html",
+            primary="optimiser",
+            subtab="events",
+            heroes_dir=str(heroes_path),
+        )
+
+    @app.get("/optimiser/gear-xp", response_class=HTMLResponse)
+    def optimiser_gear_xp_page(request: Request) -> HTMLResponse:
+        heroes_path, _ = _require_heroes()
+        # Both lists the form offers are read off the same config the spend
+        # search itself consumes, never transcribed into the template:
+        #   - fodder XP values from pieces_and_stats.yaml, so the "30 XP each"
+        #     note beside a box cannot outlive a retune of that file;
+        #   - mode keys from the point-scenario files build_event_utility()
+        #     passes to recommend(), so the picker can never offer a mode the
+        #     optimiser would reject with a 400.
+        # Read per request rather than at startup: these are hand-edited
+        # tuning files and the page is already no-store.
+        #
+        # And read defensively, for the same reason. Reading per request is
+        # only useful if the page survives a bad edit: unguarded, a typo in
+        # one of these three files 500s the whole screen — including the
+        # fodder boxes and the run button, which have nothing to do with the
+        # file that broke. Each load degrades on its own (no XP notes, or an
+        # empty mode list) and the page names what it could not read.
+        from ks.heroes.optimize.scenarios import load_scenarios
+        from ks.heroes.optimize.xp_ladder import load_fodder_xp_values
+
+        events_dir = REPO_ROOT / "config"
+        tuning_errors: list[str] = []
+
+        def _tuned(what: str, load: Callable[[], Any], fallback: Any) -> Any:
+            try:
+                return load()
+            except TUNING_ERRORS as exc:
+                tuning_errors.append(f"{what} ({exc})")
+                return fallback
+
+        fodder_xp = _tuned("fodder XP values", load_fodder_xp_values, {})
+        sword_modes = _tuned(
+            "Swordland modes",
+            lambda: list(load_scenarios(events_dir / "point_scenarios.yaml")),
+            [],
+        )
+        bear_modes = _tuned(
+            "Bear Trap modes",
+            lambda: list(load_scenarios(events_dir / "point_scenarios_beartrap.yaml")),
+            [],
+        )
+        return _shell_page(
+            request,
+            "optimiser_gear_xp.html",
+            primary="optimiser",
+            subtab="gear-xp",
+            heroes_dir=str(heroes_path),
+            gear_dir=str(resolved_gear) if resolved_gear is not None else None,
+            fodder_xp=fodder_xp,
+            sword_modes=sword_modes,
+            bear_modes=bear_modes,
+            tuning_error="; ".join(tuning_errors) or None,
+        )
+
+    @app.get("/optimiser/hero-levels", response_class=HTMLResponse)
+    def optimiser_hero_levels_page(request: Request) -> HTMLResponse:
+        _require_heroes()
+        return _shell_page(
+            request,
+            "optimiser_hero_levels.html",
+            primary="optimiser",
+            subtab="hero-levels",
+        )
 
     @app.get("/api/gear")
     def api_list_gear() -> dict[str, Any]:
@@ -501,63 +766,55 @@ def create_app(
         }
 
     @app.post("/api/gear/rescan")
-    def api_rescan_gear() -> StreamingResponse:
-        """Walk Backpack > Gear via ADB OCR; emit SSE events per piece."""
+    def api_rescan_gear() -> dict[str, Any]:
+        """Replace inventory via ADB OCR (Backpack > Gear must be open)."""
         gear_path, store = _require_gear()
         if not gear_rescan_lock.acquire(blocking=False):
             raise HTTPException(
                 status_code=409,
                 detail="gear rescan already in progress",
             )
-
-        def _generate():
-            import json as _json
-
-            try:
-                events: list[tuple[str, object]] = []
-
-                def _on_progress(event: str, payload: object) -> None:
-                    events.append((event, payload))
-
-                do_gear_rescan(
-                    store,
-                    config_path=gear_config_path,
-                    serial=serial,
-                    on_progress=_on_progress,
-                )
-                # Flush queued events (collect_fn may buffer them).
-                for ev, payload in events:
-                    if ev in {"piece", "kept"}:
-                        piece = payload.get("piece") if isinstance(payload, dict) else None
-                        data = {"piece_id": payload.get("piece_id") if isinstance(payload, dict) else ""}
-                        if piece is not None:
-                            data["name"] = piece.name
-                            data["power"] = piece.power
-                            data["enhancement_level"] = piece.enhancement_level
-                            data["mastery_level"] = piece.mastery_level
-                            data["rarity"] = piece.rarity
-                        yield f"event: {ev}\ndata: {_json.dumps(data)}\n\n"
-                    elif ev == "duplicate":
-                        yield f"event: duplicate\ndata: {_json.dumps(payload if isinstance(payload, dict) else {})}\n\n"
-                store.reload()
-                pieces = store.all_pieces()
-                json_path = gear_path / "gear.json"
-                if json_path.is_file():
-                    now = time.time()
-                    os.utime(json_path, (now, now))
-                bust = inventory_revision(gear_path, "gear.json")
-                yield f"event: done\ndata: {_json.dumps({'count': len(pieces), 'cache_bust': bust})}\n\n"
-            except Exception as exc:  # noqa: BLE001 — surface ADB/OCR failures to UI
-                import json as _json
-                yield f"event: error\ndata: {_json.dumps({'detail': str(exc)})}\n\n"
-            finally:
-                gear_rescan_lock.release()
-
-        return StreamingResponse(
-            _generate(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
+        try:
+            # Snapshot before the rescan touches the store, so the trust
+            # diff below compares "what was here" to "what OCR just saw"
+            # rather than the new state against itself.
+            store.reload()
+            before = store.all_pieces()
+            pieces = do_gear_rescan(
+                store,
+                config_path=gear_config_path,
+                serial=serial,
+            )
+            store.reload()
+            pieces = store.all_pieces()
+            icons_path = gear_path / "icons"
+            if icons_path.is_dir():
+                shutil.rmtree(icons_path)
+            icons_path.mkdir(parents=True, exist_ok=True)
+            json_path = gear_path / "gear.json"
+            if json_path.is_file():
+                now = time.time()
+                os.utime(json_path, (now, now))
+        except Exception as exc:  # noqa: BLE001 — surface ADB/OCR failures to UI
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            gear_rescan_lock.release()
+        bust = inventory_revision(gear_path, "gear.json")
+        icon_map = ensure_all_icons(pieces, gear_path)
+        trust = summarize_flags(flag_gear_rows(before, pieces))
+        return {
+            "ok": True,
+            "count": len(pieces),
+            "trust": trust,
+            "cache_bust": bust,
+            "gear": [
+                {
+                    **p.to_dict(),
+                    "icon_url": with_cache_bust(icon_map.get(p.piece_id), bust),
+                }
+                for p in pieces
+            ],
+        }
 
     @app.delete("/api/gear/{piece_id}")
     def api_delete_gear(piece_id: str) -> dict[str, Any]:
@@ -619,32 +876,6 @@ def create_app(
             "ok": True,
             "piece": {**updated.to_dict(), "icon_url": icon_url},
         }
-
-    @app.get("/heroes", response_class=HTMLResponse)
-    def heroes_page(request: Request) -> HTMLResponse:
-        heroes_path, store = _require_heroes()
-        store.reload()
-        heroes = store.all_heroes()
-        bust = inventory_revision(heroes_path, "heroes.json")
-        icon_map = {
-            name: with_cache_bust(url, bust)
-            for name, url in ensure_all_hero_icons(heroes, heroes_path).items()
-        }
-        response = templates.TemplateResponse(
-            request,
-            "heroes.html",
-            {
-                "heroes": heroes,
-                "icons": icon_map,
-                "heroes_dir": str(heroes_path),
-                "cache_bust": bust,
-                "gear_enabled": resolved_gear is not None,
-                "heroes_enabled": True,
-                "troops_enabled": troops_enabled,
-            },
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return response
 
     @app.get("/api/heroes")
     def api_list_heroes() -> dict[str, Any]:
@@ -722,163 +953,92 @@ def create_app(
         }
 
     @app.post("/api/heroes/rescan")
-    def api_rescan_heroes() -> StreamingResponse:
-        """Upsert roster via ADB OCR (Heroes roster must be open); emits SSE events."""
+    def api_rescan_heroes() -> dict[str, Any]:
+        """Upsert roster via ADB OCR (Heroes roster must be open)."""
         heroes_path, store = _require_heroes()
         if not heroes_rescan_lock.acquire(blocking=False):
             raise HTTPException(
                 status_code=409,
                 detail="heroes rescan already in progress",
             )
-
-        def _generate():
-            import json as _json
-
-            try:
-                events: list[tuple[str, object]] = []
-
-                def _on_progress(event: str, payload: object) -> None:
-                    events.append((event, payload))
-
-                do_heroes_rescan(
-                    store,
-                    config_path=heroes_config_path,
-                    serial=serial,
-                    on_progress=_on_progress,
-                )
-                for ev, payload in events:
-                    data = payload if isinstance(payload, dict) else {}
-                    yield f"event: {ev}\ndata: {_json.dumps(data)}\n\n"
-                store.reload()
-                heroes = store.all_heroes()
-                json_path = heroes_path / "heroes.json"
-                if json_path.is_file():
-                    now = time.time()
-                    os.utime(json_path, (now, now))
-                bust = inventory_revision(heroes_path, "heroes.json")
-                yield f"event: done\ndata: {_json.dumps({'count': len(heroes), 'cache_bust': bust})}\n\n"
-            except Exception as exc:  # noqa: BLE001 — surface ADB/OCR failures to UI
-                import json as _json
-                yield f"event: error\ndata: {_json.dumps({'detail': str(exc)})}\n\n"
-            finally:
-                heroes_rescan_lock.release()
-
-        return StreamingResponse(
-            _generate(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-
-    def _optimize_ctx(heroes_path: Path) -> dict[str, Any]:
+        try:
+            # Snapshot before the rescan upserts into the store: heroes
+            # rescans never wipe the roster, so "new" must mean "not in the
+            # pre-rescan snapshot," not "not in the file we just wrote."
+            store.reload()
+            before = store.all_heroes()
+            do_heroes_rescan(
+                store,
+                config_path=heroes_config_path,
+                serial=serial,
+            )
+            store.reload()
+            heroes = store.all_heroes()
+            json_path = heroes_path / "heroes.json"
+            if json_path.is_file():
+                now = time.time()
+                os.utime(json_path, (now, now))
+        except Exception as exc:  # noqa: BLE001 — surface ADB/OCR failures to UI
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            heroes_rescan_lock.release()
+        bust = inventory_revision(heroes_path, "heroes.json")
+        icon_map = ensure_all_hero_icons(heroes, heroes_path)
+        trust = summarize_flags(flag_hero_rows(before, heroes))
         return {
-            "heroes_dir": str(heroes_path),
-            "gear_enabled": resolved_gear is not None,
-            "heroes_enabled": True,
-            "troops_enabled": troops_enabled,
+            "ok": True,
+            "count": len(heroes),
+            "trust": trust,
+            "cache_bust": bust,
+            "heroes": [
+                {
+                    **h.to_dict(),
+                    "icon_url": with_cache_bust(icon_map.get(h.name), bust),
+                }
+                for h in heroes
+            ],
         }
-
-    @app.get("/troops", response_class=HTMLResponse)
-    def troops_page(request: Request) -> HTMLResponse:
-        path = _require_troops()
-        inventory = load_inventory(path)
-        payload = _troops_api_payload(inventory)
-        response = templates.TemplateResponse(
-            request,
-            "troops.html",
-            {
-                "troops_path": str(path),
-                "march_capacity": inventory["march_capacity"],
-                "inventory": payload,
-                "type_keys": TYPE_KEYS,
-                **_nav_flags(),
-            },
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return response
 
     @app.get("/api/troops")
-    def api_list_troops() -> dict[str, Any]:
-        path = _require_troops()
-        return _troops_api_payload(load_inventory(path))
+    def api_get_troops() -> dict[str, Any]:
+        """Return the on-disk troops document and its computed totals.
 
-    @app.patch("/api/troops/march-capacity")
-    async def api_patch_march_capacity(request: Request) -> dict[str, Any]:
-        path = _require_troops()
+        The file is hand-editable YAML in the user's data dir, and
+        save_raw()'s writer is a non-atomic write_text, so either a hand
+        edit or an interrupted save can leave content that fails to parse
+        or fails validation. Surface that as 422 with the underlying
+        message (matching the PUT-side validation error) instead of a
+        blank 500, so the user can see what to repair.
+        """
+        try:
+            raw = troop_store.load_raw()
+            totals = _troop_totals(raw)
+        except (yaml.YAMLError, ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"troops": raw, "totals": totals}
+
+    @app.put("/api/troops")
+    async def api_put_troops(request: Request) -> dict[str, Any]:
+        """Merge the request body into the existing troops document.
+
+        See TroopStore.save_raw for the exact merge contract: keys present
+        in the body replace their counterparts; keys the body omits are
+        preserved from the existing document (so omitting truegold does not
+        delete it); a present type block (infantry/cavalry/archers) replaces
+        that whole block rather than being deep-merged tier by tier. Task
+        3's editor page is built against this contract.
+        """
         try:
             raw = await request.json()
         except Exception as exc:
             raise HTTPException(status_code=400, detail="JSON body required") from exc
-        if not isinstance(raw, dict) or "march_capacity" not in raw:
-            raise HTTPException(
-                status_code=400, detail="march_capacity required"
-            )
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="JSON object required")
         try:
-            updated = set_march_capacity(path, raw["march_capacity"])
+            saved = troop_store.save_raw(raw)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {
-            "ok": True,
-            "march_capacity": updated["march_capacity"],
-            "inventory": _troops_api_payload(updated),
-        }
-
-    @app.patch("/api/troops/{troop_type}/{tier}")
-    async def api_patch_troop_count(
-        troop_type: str, tier: int, request: Request
-    ) -> dict[str, Any]:
-        path = _require_troops()
-        try:
-            raw = await request.json()
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail="JSON body required") from exc
-        if not isinstance(raw, dict) or "count" not in raw:
-            raise HTTPException(status_code=400, detail="count required")
-        try:
-            updated = set_count(path, troop_type, tier, raw["count"])
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {
-            "ok": True,
-            "type": troop_type,
-            "tier": int(tier),
-            "count": int(updated[troop_type][int(tier)]),
-            "inventory": _troops_api_payload(updated),
-        }
-
-    @app.get("/optimize", response_class=HTMLResponse)
-    def optimize_hub(request: Request) -> HTMLResponse:
-        heroes_path, _store = _require_heroes()
-        response = templates.TemplateResponse(
-            request,
-            "optimize_hub.html",
-            _optimize_ctx(heroes_path),
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return response
-
-    @app.get("/optimize/events", response_class=HTMLResponse)
-    def optimize_events_page(request: Request) -> HTMLResponse:
-        heroes_path, _store = _require_heroes()
-        response = templates.TemplateResponse(
-            request,
-            "optimize_events.html",
-            _optimize_ctx(heroes_path),
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return response
-
-    @app.get("/optimize/gear-xp", response_class=HTMLResponse)
-    def optimize_gear_xp_page(request: Request) -> HTMLResponse:
-        heroes_path, _store = _require_heroes()
-        response = templates.TemplateResponse(
-            request,
-            "optimize_gear_xp.html",
-            _optimize_ctx(heroes_path),
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return response
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"troops": saved, "totals": _troop_totals(saved)}
 
     @app.get("/api/optimize")
     def api_optimize() -> dict[str, Any]:
@@ -907,7 +1067,9 @@ def create_app(
                     }
                 except Exception as exc:  # noqa: BLE001 — optimize without icons
                     icon_warning = f"gear icons unavailable: {exc}"
-        bundle = run_optimize_bundle(heroes, gear=gear_pieces)
+        bundle = run_optimize_bundle(
+            heroes, gear=gear_pieces, troops_path=app.state.troops_path
+        )
         if icon_by_id:
             attach_gear_icon_urls(bundle, icon_by_id)
         if icon_warning:
@@ -962,7 +1124,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="gear inventory is empty")
         try:
             utility_fn = build_event_utility(
-                event, heroes, mode=mode_s
+                event, heroes, mode=mode_s, troops_path=app.state.troops_path
             )
             result = allocate_fodder_xp(
                 gear_pieces,
@@ -988,7 +1150,7 @@ def run_ui(
     heroes_config: Path | None = None,
     serial: str | None = None,
 ) -> None:
-    """Serve the gear/heroes/optimize UI (blocking)."""
+    """Serve the Inventory/Optimiser UI (blocking)."""
     try:
         import uvicorn
     except ImportError as exc:  # pragma: no cover
@@ -1004,17 +1166,13 @@ def run_ui(
         heroes_config=heroes_config,
         serial=serial,
     )
+    for label, path in startup_paths(
+        gear=gear_dir is not None, heroes=heroes_dir is not None
+    ):
+        print(f"{label}: http://{host}:{port}{path}")
     if heroes_dir is not None:
-        print(f"Heroes UI: http://{host}:{port}/heroes")
-        print(f"Optimize hub: http://{host}:{port}/optimize")
-        print(f"Event lineups: http://{host}:{port}/optimize/events")
-        print(f"Gear XP spend: http://{host}:{port}/optimize/gear-xp")
         print(f"Heroes: {Path(heroes_dir).expanduser().resolve()}")
     if gear_dir is not None:
-        print(f"Gear UI: http://{host}:{port}/gear")
-        print(f"Inventory: {Path(gear_dir).expanduser().resolve()}")
-    troops = (troops_path or DEFAULT_TROOPS_PATH).expanduser().resolve()
-    if troops.is_file():
-        print(f"Troops UI: http://{host}:{port}/troops")
-        print(f"Troops: {troops}")
+        print(f"Gear: {Path(gear_dir).expanduser().resolve()}")
+    print(f"Troops: {app.state.troops_path}")
     uvicorn.run(app, host=host, port=port, log_level="info")

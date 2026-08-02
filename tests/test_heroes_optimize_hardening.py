@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
@@ -70,6 +71,157 @@ def test_run_optimize_bundle_isolates_section_failure() -> None:
     assert bundle["arena"]["defense"]["status"] == "Optimal"
 
 
+def _config_copy(tmp_path: Path) -> Path:
+    """A writable clone of the repo config tree, to corrupt one file in."""
+    root = Path(__file__).resolve().parents[1]
+    dest = tmp_path / "root"
+    dest.mkdir()
+    shutil.copytree(root / "config", dest / "config")
+    return dest
+
+
+@pytest.mark.parametrize(
+    ("roles_file", "broken_keys", "intact_key"),
+    [
+        ("conquest_roles.yaml", ("conquest",), "arena_attack"),
+        ("arena_roles.yaml", ("arena_attack", "arena_defense"), "conquest"),
+    ],
+)
+def test_a_broken_roles_file_fails_only_its_own_sections(
+    tmp_path: Path,
+    roles_file: str,
+    broken_keys: tuple[str, ...],
+    intact_key: str,
+) -> None:
+    """A malformed roles YAML must degrade to a section error, not a 500.
+
+    Both role loads used to run above the `errors` dict and outside every try
+    block, so either file being missing or malformed raised straight out of
+    run_optimize_bundle — Swordland, Bear Trap and Arena all disappeared
+    because Conquest's config was bad, which is precisely the partial failure
+    the Conquest spec ruled out. Not reachable in production (both files are
+    committed and config_root defaults to the repo), but the isolation is
+    cheap and this is what holds it.
+
+    Parametrised over both files because they had the identical exposure and
+    a fix that guarded only the one Conquest added would leave the older half
+    of the bug in place.
+    """
+    heroes = [
+        HeroRecord(name=n, stars=3, power=300_000)
+        for n in ("Helga", "Howard", "Jabel", "Chenko", "Saul", "Gordon", "Diana")
+    ]
+    root = _config_copy(tmp_path)
+    (root / "config" / roles_file).write_text("{[not: yaml", encoding="utf-8")
+
+    bundle = run_optimize_bundle(heroes, config_root=root)
+
+    # The broken half: named in errors, and given a real row rather than a
+    # missing key, so the board can select it and show the reason.
+    #
+    # The message is pinned, not just its truthiness. Skipping the section
+    # when its roles failed to load is what produces the *parse error*; fall
+    # through to the solver with roles=None instead and it grinds through the
+    # whole gear/ILP setup before dying on `roles.get(...)`, reporting
+    # "internal error: 'NoneType' object has no attribute 'get'" — which names
+    # neither the file nor the reason, and buries a traceback in the log. A
+    # truthy-only assertion here passed for both, so it pinned nothing.
+    for key in broken_keys:
+        assert key in bundle["errors"], bundle["errors"]
+        message = bundle["errors"][key]
+        assert "parsing" in message, message
+        assert "internal error" not in message, message
+        assert "NoneType" not in message, message
+    if "conquest" in broken_keys:
+        row = bundle["conquest"]
+        assert row["status"] == "Error"
+        assert row["mode"] == "conquest"
+        assert row["error"] == bundle["errors"]["conquest"]
+    else:
+        for side in ("attack", "defense"):
+            row = bundle["arena"][side]
+            assert row["status"] == "Error"
+            assert row["side"] == side
+            assert row["error"] == bundle["errors"][f"arena_{side}"]
+
+    # Everything else still solved.
+    assert intact_key not in bundle["errors"], bundle["errors"]
+    assert bundle["sword"]["modes"], bundle["errors"]
+    assert bundle["bear"]["modes"], bundle["errors"]
+    assert "sword" not in bundle["errors"] and "bear" not in bundle["errors"]
+    if intact_key == "conquest":
+        assert bundle["conquest"]["status"] == "Optimal"
+    else:
+        assert bundle["arena"]["attack"]["status"] == "Optimal"
+        assert bundle["arena"]["defense"]["status"] == "Optimal"
+
+
+def test_no_section_reads_a_second_troops_file(tmp_path: Path) -> None:
+    """`troops_path` must be the *only* troops file the whole bundle opens.
+
+    The bug this guards is one Task 2 already shipped once: a second read of
+    the troops config that ignored the parameter, so edited troop counts
+    applied to some sections and silently not to others. The merge that
+    brought Conquest in re-opened the question for a fourth section, and a
+    per-section equality check cannot answer it — a section that wrongly
+    reads the repo's config/troops.yaml produces a stable, plausible answer,
+    identical across two runs with different overrides. So this asserts on
+    the *reads themselves* rather than on the output:
+
+      - the override is genuinely consumed, and
+      - `<root>/config/troops.yaml` is never opened at all, by any section.
+
+    Every config loader under run_optimize_bundle goes through
+    Path.read_text (load_troops_config, load_catalog, load_scenarios,
+    load_event_profile, load_troop_stats, load_combat_roles), so recording
+    that one method sees all of them. Conquest currently reads no troops file
+    by any name — optimize_conquest scores from the catalog, conquest_roles
+    and gear — and this is what keeps that true: wire a load_troops_config
+    into it that resolves its own path and the repo file shows up here.
+
+    Scope, stated so this is not mistaken for more than it is: the guard is
+    only as broad as that one method. A loader that reached for the troops
+    file through builtin `open()`, `yaml.safe_load(open(...))`, `os.read` or
+    a C extension would not be recorded here and would pass — verified, not
+    assumed: a planted `open()` read of the repo file inside the conquest
+    section goes undetected. It holds because every loader in this subsystem
+    uses Path.read_text, which is a convention this test depends on rather
+    than one it enforces. A new loader that breaks with it needs either a
+    conversion to Path.read_text or a widening of the patch below.
+    """
+    heroes = [
+        HeroRecord(name=n, stars=3, power=300_000)
+        for n in ("Helga", "Howard", "Jabel", "Chenko", "Saul", "Gordon", "Diana")
+    ]
+    root = Path(__file__).resolve().parents[1]
+    repo_troops = root / "config" / "troops.yaml"
+
+    override = tmp_path / "troops.yaml"
+    override.write_text(repo_troops.read_text(encoding="utf-8"), encoding="utf-8")
+
+    reads: list[Path] = []
+    real_read_text = Path.read_text
+
+    def recording(self, *args, **kwargs):
+        reads.append(Path(self).resolve())
+        return real_read_text(self, *args, **kwargs)
+
+    with patch.object(Path, "read_text", recording):
+        bundle = run_optimize_bundle(heroes, config_root=root, troops_path=override)
+
+    # A section that blew up would take its reads with it and make the
+    # "never opened" half vacuous, so pin that all four actually ran.
+    assert bundle["errors"] == {}, bundle["errors"]
+    assert bundle["conquest"]["status"] == "Optimal"
+    assert bundle["arena"]["attack"]["status"] == "Optimal"
+    assert bundle["sword"]["modes"] and bundle["bear"]["modes"]
+
+    assert override.resolve() in reads, "the troops_path override was never read"
+    assert repo_troops.resolve() not in reads, (
+        "a section read the repo's config/troops.yaml instead of the override"
+    )
+
+
 def test_arena_defense_explanations_and_loo_critical() -> None:
     catalog = _five_catalog()
     heroes = [
@@ -131,10 +283,20 @@ def test_attach_gear_icon_urls_patches_arena_and_events() -> None:
                 }
             },
         },
+        "conquest": {
+            "gear_assignment": {
+                "Marlin": [{"slot": "helmet", "piece_id": "p4", "name": "M"}]
+            }
+        },
     }
     attach_gear_icon_urls(
         bundle,
-        {"p1": "/icons/a.svg", "p2": "/icons/b.svg", "p3": "/icons/c.svg"},
+        {
+            "p1": "/icons/a.svg",
+            "p2": "/icons/b.svg",
+            "p3": "/icons/c.svg",
+            "p4": "/icons/d.svg",
+        },
     )
     assert (
         bundle["sword"]["modes"]["garrison"]["gear_assignment"]["Helga"][0]["icon_url"]
@@ -144,6 +306,9 @@ def test_attach_gear_icon_urls_patches_arena_and_events() -> None:
     assert (
         bundle["arena"]["defense"]["gear_assignment"]["Howard"][0]["icon_url"]
         == "/icons/c.svg"
+    )
+    assert (
+        bundle["conquest"]["gear_assignment"]["Marlin"][0]["icon_url"] == "/icons/d.svg"
     )
 
 
@@ -160,8 +325,52 @@ def test_optimize_page_cache_control(tmp_path: Path) -> None:
     page = client.get("/optimize")
     assert page.status_code == 200
     assert page.headers.get("cache-control") == "no-store"
-    assert b'href="/optimize/events"' in page.content
+    assert b'href="/optimiser/events"' in page.content
     events = client.get("/optimize/events")
     assert events.status_code == 200
     assert events.headers.get("cache-control") == "no-store"
-    assert b"function esc(" in events.content
+    # The board's client-side rendering (and its esc() helper) is asserted by
+    # test_optimiser_events_page_has_esc_helper below; the shell must stay
+    # uncached either way.
+    assert b"Event lineups" in events.content
+
+
+# --- restoration tracking ----------------------------------------------------
+#
+# Task 1 (Apple shell) stubbed /optimiser/events, which forced this assertion
+# out of test_optimize_page_cache_control above. It was kept alive as a strict
+# xfail against the new route until the page that owes it shipped; Task 6
+# shipped it, so the mark is gone and this is an ordinary test again.
+#
+# Fix wave 1 RE-ANCHORED the needle without changing it. It used to read
+# `/optimiser/events`, which forced the board's script to be inline; the
+# escaping helper is now shared with hero_detail.js and lives in app.js, so
+# the identical `b"function esc("` is asserted against the bytes the app
+# serves for /static/app.js instead. The whole chain is pinned here — the
+# page loads the board module, the board module loads through the shared
+# helper, and the helper is defined once — so nothing is loosened by the
+# move. What esc() actually escapes is executed in
+# tests/test_heroes_optimiser_events_js.py.
+def test_optimiser_events_page_has_esc_helper(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.store import HeroStore
+    from ks.heroes.ui.app import create_app
+
+    store = HeroStore(tmp_path)
+    store.upsert(HeroRecord(name="Helga", stars=2, power=1000, scraped_at="t"))
+    client = TestClient(create_app(heroes_dir=tmp_path))
+    events = client.get("/optimiser/events")
+    assert events.status_code == 200
+
+    # The page ships the board, the board comes with the shared helpers.
+    assert b'src="/static/optimiser_events.js"' in events.content
+    assert b'src="/static/app.js"' in events.content
+    board = client.get("/static/optimiser_events.js")
+    assert board.status_code == 200
+    assert b"window.escapeHtml" in board.content
+
+    shared = client.get("/static/app.js")
+    assert shared.status_code == 200
+    assert b"function esc(" in shared.content

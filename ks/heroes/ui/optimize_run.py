@@ -1,4 +1,4 @@
-"""Run sword/bear/arena optimize bundles for the UI."""
+"""Run sword/bear/arena/conquest optimize bundles for the UI."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from ks.heroes.gear_models import GearRecord
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.arena import load_arena_roles, optimize_arena
 from ks.heroes.optimize.catalog import load_catalog
+from ks.heroes.optimize.combat_formation import load_combat_roles
+from ks.heroes.optimize.conquest import optimize_conquest
 from ks.heroes.optimize.events import load_event_profile
 from ks.heroes.optimize.recommend import recommend
 from ks.heroes.optimize.scenarios import load_scenarios
@@ -80,33 +82,96 @@ def _section_error(label: str, message: str) -> dict[str, Any]:
     return {"label": label, "modes": {}, "status": "Error", "error": message}
 
 
+def _formation_error(message: str, **identity: str) -> dict[str, Any]:
+    """The shape a failed 5-hero formation section returns.
+
+    `identity` is `side="attack"` for an arena side and `mode="conquest"` for
+    Conquest, matching which of the two keys CombatFormationResult.to_dict()
+    emits for each — it omits `side` when the solver had none.
+    """
+    return {
+        **identity,
+        "status": "Error",
+        "formation": {},
+        "heroes": [],
+        "score": None,
+        "reasons": {},
+        "error": message,
+    }
+
+
 def run_optimize_bundle(
     heroes: list[HeroRecord],
     *,
     gear: list[GearRecord] | None = None,
     config_root: Path | None = None,
+    troops_path: Path | None = None,
     gear_profile_events: str = "early_game_growth",
     gear_profile_arena: str = "early_game_combat",
 ) -> dict[str, Any]:
-    """Compute sword + bear mode tables and arena attack/defense."""
+    """Compute sword + bear mode tables, arena attack/defense, and conquest.
+
+    `troops_path` overrides where troop counts/truegold are read from (the
+    UI-editable copy); it defaults to the repo-relative config/troops.yaml
+    used by every caller before Task 2 wired in a store.
+
+    Only the two event bundles consume it. `optimize_arena` and
+    `optimize_conquest` score a 5-hero formation from the catalog, their
+    roles YAML and gear alone — neither reads troop counts or truegold, so
+    there is no fourth place for an edited troop count to leak past. That is
+    a behavioural claim, not a comment: the sole read of a troops file under
+    this function is `_event_bundle`'s, and
+    test_no_section_reads_a_second_troops_file pins that the repo's
+    config/troops.yaml is never opened once an override is supplied.
+    """
     root = (config_root or REPO_ROOT).expanduser().resolve()
     catalog_path = root / "config" / "hero_catalog.yaml"
-    troops_path = root / "config" / "troops.yaml"
+    resolved_troops_path = (
+        Path(troops_path).expanduser().resolve()
+        if troops_path is not None
+        else root / "config" / "troops.yaml"
+    )
     troop_stats_path = root / "config" / "troop_stats.yaml"
     roles_path = root / "config" / "arena_roles.yaml"
+    conquest_roles_path = root / "config" / "conquest_roles.yaml"
+    # The catalog is the one genuinely shared input — every section scores
+    # against it — so a failure here is still fatal for the request.
     catalog = load_catalog(None, catalog_path)
-    roles = load_arena_roles(roles_path, catalog=catalog)
 
     errors: dict[str, str] = {}
     warnings: list[str] = []
     out: dict[str, Any] = {"errors": errors, "warnings": warnings}
+
+    def _load_roles(loader: Any, path: Path, keys: tuple[str, ...]) -> Any:
+        """Load one roles YAML, charging any failure to its own sections.
+
+        These two loads used to sit above `errors`, outside every try block,
+        so a missing or malformed conquest_roles.yaml raised straight out of
+        run_optimize_bundle and 500'd /api/optimize — taking Swordland, Bear
+        Trap and Arena down with Conquest, which is exactly the partial
+        failure the Conquest spec said must not happen. arena_roles.yaml had
+        the identical exposure.
+        """
+        try:
+            return loader(path, catalog=catalog)
+        except _DOMAIN_ERRORS as exc:
+            for key in keys:
+                errors[key] = str(exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("%s roles load failed", path.name)
+            for key in keys:
+                errors[key] = f"internal error: {exc}"
+        return None
+
+    roles = _load_roles(load_arena_roles, roles_path, ("arena_attack", "arena_defense"))
+    conquest_roles = _load_roles(load_combat_roles, conquest_roles_path, ("conquest",))
 
     try:
         out["sword"] = _event_bundle(
             "Swordland",
             heroes,
             catalog,
-            troops_path=troops_path,
+            troops_path=resolved_troops_path,
             event_path=root / "config" / "events" / "swordland.yaml",
             scenarios_path=root / "config" / "point_scenarios.yaml",
             troop_stats_path=troop_stats_path,
@@ -126,7 +191,7 @@ def run_optimize_bundle(
             "Bear Trap",
             heroes,
             catalog,
-            troops_path=troops_path,
+            troops_path=resolved_troops_path,
             event_path=root / "config" / "events" / "beartrap.yaml",
             scenarios_path=root / "config" / "point_scenarios_beartrap.yaml",
             troop_stats_path=troop_stats_path,
@@ -143,6 +208,10 @@ def run_optimize_bundle(
 
     arena: dict[str, Any] = {}
     for side in ("attack", "defense"):
+        if roles is None:
+            # _load_roles already charged the failure to both arena keys.
+            arena[side] = _formation_error(errors[f"arena_{side}"], side=side)
+            continue
         try:
             result = optimize_arena(
                 side,
@@ -159,28 +228,38 @@ def run_optimize_bundle(
             arena[side] = payload
         except _DOMAIN_ERRORS as exc:
             errors[f"arena_{side}"] = str(exc)
-            arena[side] = {
-                "side": side,
-                "status": "Error",
-                "formation": {},
-                "heroes": [],
-                "score": None,
-                "reasons": {},
-                "error": str(exc),
-            }
+            arena[side] = _formation_error(str(exc), side=side)
         except Exception as exc:  # noqa: BLE001
             logger.exception("arena %s optimize failed", side)
             errors[f"arena_{side}"] = f"internal error: {exc}"
-            arena[side] = {
-                "side": side,
-                "status": "Error",
-                "formation": {},
-                "heroes": [],
-                "score": None,
-                "reasons": {},
-                "error": errors[f"arena_{side}"],
-            }
+            arena[side] = _formation_error(errors[f"arena_{side}"], side=side)
     out["arena"] = arena
+
+    if conquest_roles is None:
+        # _load_roles already charged the failure to errors["conquest"].
+        # Deliberately not an early `return out`: this is the last section
+        # today, and a `return` here would silently skip a fifth one added
+        # below it.
+        out["conquest"] = _formation_error(errors["conquest"], mode="conquest")
+    else:
+        try:
+            conquest_result = optimize_conquest(
+                heroes,
+                catalog,
+                conquest_roles,
+                gear=gear,
+                gear_profile=gear_profile_arena,
+            )
+            out["conquest"] = conquest_result.to_dict()
+            if conquest_result.status != "Optimal":
+                errors["conquest"] = f"status={conquest_result.status}"
+        except _DOMAIN_ERRORS as exc:
+            errors["conquest"] = str(exc)
+            out["conquest"] = _formation_error(str(exc), mode="conquest")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("conquest optimize failed")
+            errors["conquest"] = f"internal error: {exc}"
+            out["conquest"] = _formation_error(errors["conquest"], mode="conquest")
     return out
 
 
@@ -207,3 +286,6 @@ def attach_gear_icon_urls(
     for side_row in arena.values():
         if isinstance(side_row, dict):
             _patch_assignment(side_row.get("gear_assignment"))
+    conquest = bundle.get("conquest")
+    if isinstance(conquest, dict):
+        _patch_assignment(conquest.get("gear_assignment"))
