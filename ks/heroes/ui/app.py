@@ -27,7 +27,14 @@ from ks.heroes.ui.power import compute_gear_power
 from ks.heroes.ui.rescan import rescan_gear_from_ocr
 from ks.heroes.ui.troop_store import TroopStore
 from ks.heroes.ui.troops_form import troops_form_model
-from ks.heroes.ui.trust import flag_gear_rows, flag_hero_rows, summarize_flags
+from ks.heroes.ui.trust import (
+    flag_gear_rows,
+    flag_hero_rows,
+    gear_mastery_required,
+    gear_row_incomplete,
+    hero_row_incomplete,
+    summarize_flags,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -373,6 +380,17 @@ def create_app(
             icons=icon_map,
             gear_dir=str(gear_path),
             cache_bust=bust,
+            # "Needs attention" has to work on a plain page load, before any
+            # rescan has put a trust payload in sessionStorage — so the same
+            # predicate the rescan diff uses runs here, and the browser
+            # never carries a second copy of the rarity gate.
+            incomplete_ids={
+                p.piece_id for p in pieces if gear_row_incomplete(p)
+            },
+            mastery_required_ids={
+                p.piece_id for p in pieces if gear_mastery_required(p.rarity)
+            },
+            troop_types=sorted({p.troop_type for p in pieces if p.troop_type}),
         )
 
     @app.get("/inventory/heroes", response_class=HTMLResponse)
@@ -394,6 +412,10 @@ def create_app(
             icons=icon_map,
             heroes_dir=str(heroes_path),
             cache_bust=bust,
+            incomplete_names={
+                h.name for h in heroes if hero_row_incomplete(h)
+            },
+            troop_types=sorted({h.troop_type for h in heroes if h.troop_type}),
         )
 
     @app.get("/inventory/troops", response_class=HTMLResponse)

@@ -1,0 +1,34 @@
+{# Shared Spreadsheet+ chrome above both inventory tables: the post-rescan
+   trust banner and the filter chips / name search.
+
+   Expects: troop_types (list[str]), heroes_enabled (bool).
+
+   The banner ships empty and `hidden`; inventory.js fills it in from the
+   sessionStorage payload HeroesTrust carried across the rescan reload, and
+   un-hides it only when that payload still has flags for rows on this page.
+   The CTA is deliberately soft — a link, never a gate — and is dropped
+   entirely on a gear-only app, where /optimiser/events does not exist. #}
+<div class="trust-banner" id="trust-banner" role="status" hidden>
+  <p class="trust-summary" id="trust-summary"></p>
+  <div class="trust-actions">
+    <button type="button" id="mark-reviewed">Mark all reviewed</button>
+    {% if heroes_enabled %}
+    <a class="trust-cta" href="/optimiser/events">Open the optimiser</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="table-toolbar">
+  <div class="chips" id="filter-chips" role="group" aria-label="Filter rows">
+    <button type="button" class="chip on" data-filter="all" aria-pressed="true">All</button>
+    <button type="button" class="chip" data-filter="attention" aria-pressed="false">Needs attention</button>
+    {% for troop in troop_types %}
+    <button type="button" class="chip" data-filter="troop:{{ troop|lower }}"
+            aria-pressed="false">{{ troop|capitalize }}</button>
+    {% endfor %}
+  </div>
+  <input type="search" class="search-input" id="row-search"
+         placeholder="Search name" aria-label="Search by name"
+         autocomplete="off" />
+</div>
+<p class="row-count" id="row-count" aria-live="polite"></p>

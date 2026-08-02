@@ -60,11 +60,27 @@ def _safe_normalize_rarity(rarity: str | None) -> str | None:
         return None
 
 
-def _gear_incomplete(piece: GearRecord) -> bool:
+def gear_mastery_required(rarity: str | None) -> bool:
+    """True when this rarity always carries a mastery track.
+
+    Public because the inventory table needs the same gate the rescan diff
+    uses: `/inventory/gear` marks only the mastery boxes that a blank value
+    would make *incomplete*, so the browser never has to carry a second copy
+    of `_MASTERY_REQUIRED_RARITIES` that could drift from this one.
+    """
+    return _safe_normalize_rarity(rarity) in _MASTERY_REQUIRED_RARITIES
+
+
+def gear_row_incomplete(piece: GearRecord) -> bool:
+    """True when OCR left progression data missing on this piece.
+
+    Public for the same reason as `gear_mastery_required`: the inventory
+    page's "Needs attention" filter has to agree with the rescan diff even
+    on a plain page load, where there is no rescan payload to read.
+    """
     if piece.enhancement_level is None:
         return True
-    rarity = _safe_normalize_rarity(piece.rarity)
-    return rarity in _MASTERY_REQUIRED_RARITIES and piece.mastery_level is None
+    return gear_mastery_required(piece.rarity) and piece.mastery_level is None
 
 
 def _gear_signature(piece: GearRecord) -> tuple[object, ...]:
@@ -95,7 +111,12 @@ def _gear_signature(piece: GearRecord) -> tuple[object, ...]:
     )
 
 
-def _hero_incomplete(hero: HeroRecord) -> bool:
+def hero_row_incomplete(hero: HeroRecord) -> bool:
+    """True when the roster row is missing one of the two fields the trust
+    UI leans on. Public alongside `gear_row_incomplete`, for the same
+    reason: `/inventory/heroes` marks these rows on every render, not only
+    after a rescan.
+    """
     return hero.stars is None or hero.power is None
 
 
@@ -180,7 +201,7 @@ def flag_gear_rows(before: list[GearRecord], after: list[GearRecord]) -> dict[st
         before,
         after,
         key_fn=lambda p: p.piece_id,
-        incomplete_fn=_gear_incomplete,
+        incomplete_fn=gear_row_incomplete,
         signature_fn=_gear_signature,
     )
 
@@ -208,7 +229,7 @@ def flag_hero_rows(before: list[HeroRecord], after: list[HeroRecord]) -> dict[st
         before,
         after,
         key_fn=lambda h: h.name,
-        incomplete_fn=_hero_incomplete,
+        incomplete_fn=hero_row_incomplete,
         signature_fn=_hero_signature,
     )
 

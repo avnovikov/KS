@@ -18,6 +18,8 @@
   --err-text: #b3261e;
   /* Faint --err wash behind a field the editor has flagged. */
   --err-tint: #fff6f5;
+  /* Faint --warn wash behind a row the last rescan flagged for a look. */
+  --warn-tint: #fff8ec;
 
   --radius-lg: 16px;
   --radius: 12px;
@@ -470,6 +472,106 @@ input.tier-input {
   text-align: right;
 }
 
+/* --- inventory toolbar: trust banner, filter chips, name search ---------- */
+
+/* Post-rescan summary. A warning tone, never an error: the page works, some
+   rows just want a look. Sets no `display`, so the UA's `[hidden]` rule still
+   wins until inventory.js un-hides it. */
+.trust-banner {
+  margin: 0 0 0.8rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--panel);
+  font-size: 0.85rem;
+}
+
+.trust-summary {
+  margin: 0 0 0.55rem;
+}
+
+.trust-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+/* Soft CTA into the Optimiser — a link sized like a tap target, never a gate. */
+.trust-cta {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+  font-weight: 500;
+}
+
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.6rem;
+}
+
+/* Scrolls rather than widening the page: at 390px the chip row is the first
+   thing that would force a horizontal page scroll. `min-width: 0` is what
+   lets a flex item actually shrink below its content width. */
+.chips {
+  display: flex;
+  flex: 1 1 12rem;
+  gap: 0.4rem;
+  min-width: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.chips::-webkit-scrollbar {
+  display: none;
+}
+
+.chip {
+  min-height: var(--tap);
+  padding: 0 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 980px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.83rem;
+  font-weight: 500;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.chip.on {
+  border-color: var(--accent);
+  background: rgba(0, 113, 227, 0.1);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* `input.` prefix on purpose: the shared input[type="search"] rule sets a
+   4.75rem width via an attribute selector, which a bare class would tie with
+   and lose to on source order. */
+input.search-input {
+  flex: 1 1 9rem;
+  width: auto;
+  min-width: 0;
+  max-width: 18rem;
+}
+
+.row-count {
+  margin: 0 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  min-height: 1.1em;
+}
+
+.no-matches {
+  padding: 0.9rem;
+  margin: 0;
+}
+
 /* --- tables -------------------------------------------------------------- */
 
 .table-wrap {
@@ -511,8 +613,12 @@ table.data-table {
   letter-spacing: 0.04em;
 }
 
+/* `height`, not `min-height`: on a `display: table-cell` box CSS 2.1 17.5.3
+   makes `height` the minimum the cell may be, while `min-height` has no
+   defined effect there. These headers are tap targets, so the floor has to
+   actually apply. */
 .data-table th.sortable {
-  min-height: var(--tap);
+  height: var(--tap);
   cursor: pointer;
   user-select: none;
 }
@@ -543,6 +649,35 @@ table.data-table {
   z-index: 1;
   background: var(--panel);
   border-right: 1px solid var(--border);
+}
+
+/* Post-rescan trust cues: a --warn tint and hairline, per the locked
+   palette. Advisory only — nothing here blocks the user from moving on.
+   Qualified with `.data-table tbody` to out-specify the row-hover rule
+   above, which would otherwise wash the tint off the row being pointed at —
+   i.e. exactly the row the user is about to check. */
+.data-table tbody tr[data-trust] > td {
+  background: var(--warn-tint);
+  border-bottom-color: var(--warn);
+}
+
+/* The sticky first column paints its own opaque background, which would
+   punch a hole in the tint above — restate it there, and hang the marker
+   bar off the same cell so it stays visible while the row scrolls sideways. */
+.data-table.sticky-first tr[data-trust] > td:first-child {
+  background: var(--warn-tint);
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+
+/* The design's brief "cell saved flash": auto-save fires on a debounce, so a
+   toast per save would bury the error toasts that need reading. */
+.data-table tbody tr.row-saved > td {
+  background: rgba(52, 199, 89, 0.14);
+  transition: background 0.25s ease;
+}
+
+.data-table.sticky-first tr.row-saved > td:first-child {
+  background: rgba(52, 199, 89, 0.14);
 }
 
 .name-cell {

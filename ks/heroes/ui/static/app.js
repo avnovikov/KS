@@ -1,14 +1,14 @@
 /* Shared UI helpers loaded by _layout.html on every page.
  *
- * Kept inside an IIFE that only publishes window.showToast: the inventory
- * gear/heroes pages still declare their own top-level `const toast` in an
- * inline script, and a second top-level `const` of the same name in another
- * classic script would be a redeclaration SyntaxError. Those two pages also
- * still declare their own showToast (Task 5 migrates them); a function
- * declaration in a later script simply wins, so loading this first is safe.
+ * Kept inside an IIFE that only publishes window.showToast: every page script
+ * is a classic (non-module) script sharing one global scope, so anything not
+ * deliberately exported would collide across files. The inventory gear/heroes
+ * pages used to inline their own showToast — near-identical copies that
+ * shadowed this one and had already drifted apart on timing; both now call
+ * this and declare no script of their own.
  *
  * A second IIFE below publishes window.HeroesTrust — see its own comment
- * for the sessionStorage contract Task 5 consumes.
+ * for the sessionStorage contract inventory.js consumes.
  */
 (function () {
   "use strict";

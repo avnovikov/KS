@@ -185,7 +185,12 @@ def _css_rule_body(css: str, needle: str) -> str:
     Anchors an assertion to a specific selector instead of a bare substring
     search, so the check actually breaks if that rule is edited/removed
     rather than incidentally matching some unrelated rule elsewhere.
+
+    A renamed/removed selector is a test failure, not a helper crash: the
+    `assert` reports which selector went missing instead of letting
+    `str.index` raise a bare "substring not found".
     """
+    assert needle in css, f"selector {needle!r} missing from the stylesheet"
     start = css.index(needle)
     open_brace = css.index("{", start)
     close_brace = css.index("}", open_brace)
@@ -215,6 +220,12 @@ def test_stylesheet_is_phone_first(tmp_path: Path) -> None:
     # (which the --tap: 44px declaration itself would always satisfy).
     seg_rule = _css_rule_body(css, ".segmented .seg {")
     assert "var(--tap)" in seg_rule
+
+    # "Subtabs horizontally scrollable under 640px" is an explicit global
+    # constraint, and narrowing the .table-wrap assertion above left it
+    # asserted by nothing. .segmented is `width: max-content` at narrow
+    # widths, so the scroll has to live on the .subnav container.
+    assert "overflow-x: auto" in _css_rule_body(css, ".subnav {")
 
 
 @pytest.mark.parametrize("path", SHELL_PAGES)
@@ -333,6 +344,333 @@ def test_inventory_heroes_renders_roster(tmp_path: Path) -> None:
     assert "Rescan from OCR" in r.text
 
 
+# --- Spreadsheet+ inventory tables (Task 5) --------------------------------
+#
+# What these pin is the *contract between the templates and inventory.js*:
+# every behaviour the script drives is declared in markup (row ids, patch
+# URLs, per-field blank semantics, filter chips), so a template rename breaks
+# a test here rather than silently disabling auto-save in the browser. What
+# the script then *does* with those attributes is executed for real in
+# tests/test_heroes_inventory_js.py.
+
+
+def _spreadsheet_client(tmp_path: Path) -> TestClient:
+    """Gear + heroes with enough variety to exercise filters and trust cues.
+
+    Deliberately mixed: two troop types, one mastery-requiring rarity with
+    mastery missing (incomplete), one rarity with no mastery track at all
+    (complete despite a blank mastery box), one hero with no power (an
+    incompleteness no amount of editing on this page can clear).
+    """
+    gear_dir = tmp_path / "gear"
+    heroes_dir = tmp_path / "heroes"
+    gear_dir.mkdir()
+    heroes_dir.mkdir()
+    gear = GearStore(gear_dir)
+    gear.upsert(
+        GearRecord(
+            piece_id="cell0", name="Judicator's Armet", troop_type="cavalry",
+            slot="helmet", rarity="mythic", enhancement_level=51,
+            mastery_level=2, power=152_100, inventory_index=0,
+        )
+    )
+    gear.upsert(
+        GearRecord(
+            piece_id="cell1", name="Scout's Cap", troop_type="infantry",
+            slot="helmet", rarity="blue", enhancement_level=7,
+            mastery_level=None, power=18_362, inventory_index=1,
+        )
+    )
+    gear.upsert(
+        GearRecord(
+            piece_id="cell2", name="Unread Boots", troop_type="infantry",
+            slot="boots", rarity="mythic", enhancement_level=None,
+            mastery_level=None, inventory_index=2,
+        )
+    )
+    heroes = HeroStore(heroes_dir)
+    heroes.upsert(
+        HeroRecord(
+            name="Helga", power=1_000_000, troop_type="infantry",
+            rarity="legendary", stars=2, pellets=0, scraped_at="t",
+        )
+    )
+    heroes.upsert(
+        HeroRecord(
+            name="Gordon", power=None, troop_type="cavalry", rarity="epic",
+            stars=3, pellets=1, scraped_at="t",
+        )
+    )
+    return TestClient(create_app(gear_dir, heroes_dir=heroes_dir))
+
+
+def _row_blocks(body: str) -> dict[str, str]:
+    """Map each table row's `data-row-id` to its whole `<tr>…</tr>` source."""
+    return {
+        m.group(1): m.group(0)
+        for m in re.finditer(r'data-row-id="([^"]+)".*?</tr>', body, flags=re.S)
+    }
+
+
+@pytest.mark.parametrize(
+    ("path", "kind", "patch_base", "payload_key"),
+    [
+        ("/inventory/gear", "gear", "/api/gear/", "piece"),
+        ("/inventory/heroes", "heroes", "/api/heroes/", "hero"),
+    ],
+)
+def test_inventory_table_declares_its_wiring_for_the_shared_script(
+    tmp_path: Path, path: str, kind: str, patch_base: str, payload_key: str
+) -> None:
+    """inventory.js is table-agnostic: everything that differs between the
+    two pages is a data attribute, which is what lets one script serve both
+    instead of the two near-identical inline copies this task deleted."""
+    body = _spreadsheet_client(tmp_path).get(path).text
+    assert 'id="inventory-table"' in body
+    assert f'data-inventory-kind="{kind}"' in body
+    assert f'data-patch-base="{patch_base}"' in body
+    assert f'data-payload-key="{payload_key}"' in body
+    assert 'src="/static/inventory.js"' in body
+
+
+@pytest.mark.parametrize("path", ["/inventory/gear", "/inventory/heroes"])
+def test_inventory_pages_ship_no_inline_script(tmp_path: Path, path: str) -> None:
+    """Carried-over findings 1 and 2: both pages used to inline their own
+    `showToast` (shadowing the shared one in app.js) and a verbatim copy of
+    RARITY_RANK/TROOP_RANK/sortValue/sortTable. Both now come from shared
+    files, so neither name may appear in the rendered HTML at all."""
+    body = _spreadsheet_client(tmp_path).get(path).text
+    assert "<script>" not in body
+    assert "function showToast" not in body
+    assert "RARITY_RANK" not in body
+    assert "sortTable" not in body
+
+
+@pytest.mark.parametrize("path", ["/inventory/gear", "/inventory/heroes"])
+def test_per_row_save_buttons_are_gone(tmp_path: Path, path: str) -> None:
+    """Auto-save replaces them; a leftover Save button would be dead UI."""
+    body = _spreadsheet_client(tmp_path).get(path).text
+    assert ">Save<" not in body
+    assert 'class="save"' not in body
+    assert 'class="save-btn"' not in body
+
+
+def test_gear_rows_declare_autosave_fields_and_blank_semantics(
+    tmp_path: Path,
+) -> None:
+    """A cleared gear box means "OCR could not read this", which the API
+    spells `clear_enhancement`/`clear_mastery` — so the template, not the
+    script, says how each field's blank is serialized."""
+    body = _spreadsheet_client(tmp_path).get("/inventory/gear").text
+    assert 'data-row-id="cell0"' in body
+    assert re.search(
+        r'data-field="enhancement_level"[^>]*data-blank="clear_enhancement"', body
+    )
+    assert re.search(
+        r'data-field="mastery_level"[^>]*data-blank="clear_mastery"', body
+    )
+    assert 'max="200"' in body  # enhancement bound the script validates against
+    assert 'max="20"' in body  # mastery
+
+
+def test_hero_rows_declare_autosave_fields_and_blank_semantics(
+    tmp_path: Path,
+) -> None:
+    """PATCH /api/heroes/{name} has no clear_* flags: a blank star box is
+    sent as an explicit JSON null, which update_hero_stars maps to None."""
+    body = _spreadsheet_client(tmp_path).get("/inventory/heroes").text
+    assert 'data-row-id="Helga"' in body
+    assert re.search(r'data-field="stars"[^>]*data-blank="null"', body)
+    assert re.search(r'data-field="pellets"[^>]*data-blank="null"', body)
+
+
+def test_gear_icons_declare_the_size_the_stylesheet_gives_them(
+    tmp_path: Path,
+) -> None:
+    """Carried-over finding 4: the gear icons said width/height 40 while
+    `.name-cell img` sizes them at var(--tap) = 44px. CSS wins either way, so
+    the mismatch only cost a first-paint reflow — but the heroes page already
+    agreed at 44, and disagreeing attributes are just wrong."""
+    body = _spreadsheet_client(tmp_path).get("/inventory/gear").text
+    assert 'width="44" height="44"' in body
+    assert 'width="40"' not in body
+
+
+@pytest.mark.parametrize("path", ["/inventory/gear", "/inventory/heroes"])
+def test_filter_chips_cover_all_needs_attention_and_each_troop_type(
+    tmp_path: Path, path: str
+) -> None:
+    body = _spreadsheet_client(tmp_path).get(path).text
+    assert 'data-filter="all"' in body
+    assert 'data-filter="attention"' in body
+    # Both fixtures carry one cavalry and one infantry row.
+    for troop in ("cavalry", "infantry"):
+        assert f'data-filter="troop:{troop}"' in body
+    assert 'id="row-search"' in body
+
+
+def test_troop_chips_are_derived_from_the_rows_actually_present(
+    tmp_path: Path,
+) -> None:
+    """No chip for a troop type nothing on the page has — an always-empty
+    filter is worse than no filter."""
+    body = _spreadsheet_client(tmp_path).get("/inventory/gear").text
+    assert 'data-filter="troop:archers"' not in body
+
+
+def test_incomplete_rows_are_marked_server_side_by_the_trust_predicate(
+    tmp_path: Path,
+) -> None:
+    """"Needs attention" must work on a plain page load, with no rescan
+    payload in sessionStorage — so incompleteness is computed in Python by
+    the same predicate trust.py's rescan diff uses, not re-derived in JS
+    where the rarity gate would drift.
+    """
+    rows = _row_blocks(_spreadsheet_client(tmp_path).get("/inventory/gear").text)
+    assert 'data-incomplete="1"' in rows["cell2"]  # mythic, no enhancement
+    assert 'data-incomplete="1"' not in rows["cell0"]  # mythic, fully read
+    # Blue gear has no mastery track at all, so its blank mastery box is
+    # expected rather than a gap to chase.
+    assert 'data-incomplete="1"' not in rows["cell1"]
+
+
+def test_only_mastery_bearing_rarities_require_a_mastery_value(
+    tmp_path: Path,
+) -> None:
+    """The per-input `data-required` flag is how the script re-evaluates a
+    row's completeness after a save without shipping the rarity table to the
+    browser. Blue gear's mastery box must not carry it."""
+    blocks = _row_blocks(_spreadsheet_client(tmp_path).get("/inventory/gear").text)
+    mythic = blocks["cell0"]
+    blue = blocks["cell1"]
+    assert re.search(r'data-field="mastery_level"[^>]*data-required', mythic, re.S)
+    assert not re.search(r'data-field="mastery_level"[^>]*data-required', blue, re.S)
+    assert re.search(r'data-field="enhancement_level"[^>]*data-required', blue, re.S)
+
+
+def test_hero_row_with_no_power_is_incomplete_in_a_way_editing_cannot_clear(
+    tmp_path: Path,
+) -> None:
+    """`_hero_incomplete` counts a missing power as incomplete, and nothing
+    on this page can supply one (star edits rescale power, and None rescales
+    to None). The row says so, or the script would helpfully un-flag it the
+    first time the user touched its stars."""
+    blocks = _row_blocks(_spreadsheet_client(tmp_path).get("/inventory/heroes").text)
+    assert 'data-incomplete="1"' in blocks["Gordon"]
+    assert 'data-incomplete-locked="1"' in blocks["Gordon"]
+    assert 'data-incomplete="1"' not in blocks["Helga"]
+
+
+@pytest.mark.parametrize("path", ["/inventory/gear", "/inventory/heroes"])
+def test_trust_banner_and_mark_all_reviewed_are_present_but_hidden(
+    tmp_path: Path, path: str
+) -> None:
+    """The banner is filled in from sessionStorage on the render *after* a
+    rescan, so it ships hidden and the script un-hides it."""
+    body = _spreadsheet_client(tmp_path).get(path).text
+    assert re.search(r'id="trust-banner"[^>]*hidden', body)
+    assert 'id="trust-summary"' in body
+    assert 'id="mark-reviewed"' in body
+    # Soft CTA, never a gate.
+    assert 'href="/optimiser/events"' in body
+
+
+def test_trust_cta_is_omitted_when_there_is_no_optimiser_to_link_to(
+    tmp_path: Path,
+) -> None:
+    """A gear-only app (no --heroes) has no /optimiser/events, and the shell
+    already renders that tab disabled — the banner must not smuggle a live
+    link to a 404 back in."""
+    gear_dir = tmp_path / "gear"
+    gear_dir.mkdir()
+    GearStore(gear_dir).upsert(GearRecord(piece_id="cell0", name="A"))
+    body = TestClient(create_app(gear_dir)).get("/inventory/gear").text
+    assert 'id="trust-banner"' in body
+    assert 'href="/optimiser/events"' not in body
+
+
+@pytest.mark.parametrize(
+    ("path", "rescan_url", "reload_url"),
+    [
+        ("/inventory/gear", "/api/gear/rescan", "/inventory/gear"),
+        ("/inventory/heroes", "/api/heroes/rescan", "/inventory/heroes"),
+    ],
+)
+def test_rescan_button_declares_its_endpoint_and_where_to_land(
+    tmp_path: Path, path: str, rescan_url: str, reload_url: str
+) -> None:
+    body = _spreadsheet_client(tmp_path).get(path).text
+    assert f'data-rescan-url="{rescan_url}"' in body
+    assert f'data-reload-url="{reload_url}"' in body
+
+
+def test_only_the_gear_rescan_asks_for_confirmation(tmp_path: Path) -> None:
+    """Gear rescan wipes and replaces the whole inventory; the heroes rescan
+    upserts. Only the destructive one gets a confirm dialog — which is the
+    pre-existing behaviour of the two inline scripts, kept."""
+    c = _spreadsheet_client(tmp_path)
+    assert "data-rescan-confirm" in c.get("/inventory/gear").text
+    assert "data-rescan-confirm" not in c.get("/inventory/heroes").text
+
+
+def test_both_inventory_tables_keep_a_sortable_name_column(
+    tmp_path: Path,
+) -> None:
+    c = _spreadsheet_client(tmp_path)
+    body = c.get("/inventory/gear").text
+    assert re.search(r'class="sortable"[^>]*data-sort="name"', body)
+    assert 'data-sort="power"' in body
+    heroes = c.get("/inventory/heroes").text
+    assert re.search(r'class="sortable"[^>]*data-sort="name"', heroes)
+
+
+def test_inventory_script_is_served_and_is_the_file_on_disk(
+    tmp_path: Path,
+) -> None:
+    """Same wiring check troops.js gets: the <script src> resolves, the mount
+    serves it as JavaScript, and the bytes on the wire are the same file the
+    JS harness executes — so the two can never drift."""
+    c = _spreadsheet_client(tmp_path)
+    r = c.get("/static/inventory.js")
+    assert r.status_code == 200
+    assert "javascript" in r.headers["content-type"]
+    on_disk = (
+        REPO_ROOT / "ks" / "heroes" / "ui" / "static" / "inventory.js"
+    ).read_text(encoding="utf-8")
+    assert r.text == on_disk
+
+
+def test_hero_detail_modal_script_is_served_to_the_heroes_page_only(
+    tmp_path: Path,
+) -> None:
+    c = _spreadsheet_client(tmp_path)
+    assert 'src="/static/hero_detail.js"' in c.get("/inventory/heroes").text
+    assert 'src="/static/hero_detail.js"' not in c.get("/inventory/gear").text
+    r = c.get("/static/hero_detail.js")
+    assert r.status_code == 200
+    assert "javascript" in r.headers["content-type"]
+
+
+def test_spreadsheet_styles_are_phone_first(tmp_path: Path) -> None:
+    css = _client(tmp_path).get("/static/app.css").text
+
+    # Carried-over finding 3: `min-height` on a `display: table-cell` box is
+    # not what CSS 2.1 17.5.3 defines — `height` is the spec-blessed way to
+    # give a cell a floor, and this header is a tap target.
+    sortable = _css_rule_body(css, ".data-table th.sortable {")
+    assert "height: var(--tap)" in sortable
+    assert "min-height" not in sortable
+
+    # Filter chips are tap targets, and the chip row scrolls rather than
+    # widening the page at 390px.
+    chip = _css_rule_body(css, ".chip {")
+    assert "var(--tap)" in chip
+    assert "overflow-x: auto" in _css_rule_body(css, ".chips {")
+
+    # Trust cues use the warn token, per the design's locked palette.
+    assert "var(--warn)" in _css_rule_body(css, "tr[data-trust]")
+
+
 # --- trust diff helpers (Task 4) --------------------------------------------
 #
 # Precedence pin: when a row is both "new" (absent from `before`) and
@@ -367,7 +705,7 @@ def test_flag_gear_rows_new_and_changed_gear() -> None:
 
 def test_flag_gear_rows_mastery_incompleteness_is_rarity_gated() -> None:
     """Blue/green gear has no mastery track, so a missing mastery there is
-    expected, not incomplete; epic/mythic/red always carry one."""
+    expected, not incomplete; epic/purple/mythic/red always carry one."""
     after = [
         GearRecord(piece_id="g", name="G", rarity="green", enhancement_level=1, mastery_level=None),
         GearRecord(piece_id="r", name="R", rarity="red", enhancement_level=1, mastery_level=None),

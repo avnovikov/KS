@@ -2,7 +2,12 @@
 {% block title %}Heroes · Inventory · KS{% endblock %}
 
 {% block actions %}
+{# No confirm dialog: unlike the gear rescan this upserts into the roster
+   rather than wiping and replacing it. #}
 <button type="button" class="rescan" id="rescan-btn"
+        data-rescan-url="/api/heroes/rescan"
+        data-reload-url="/inventory/heroes"
+        data-rescan-note="OCR rescan started — leave the Heroes roster open"
         title="Refresh roster via ADB OCR (Heroes screen must be open)">
   Rescan from OCR
 </button>
@@ -11,10 +16,15 @@
 {% block content %}
 <p class="page-meta">{{ heroes_dir }} · {{ heroes|length }} heroes</p>
 <p class="hint">
-  Edit stars/pellets mid-event. Tap a hero name for full details. Power scales from the last OCR baseline.
+  Edit stars/pellets mid-event — changes save themselves. Tap a hero name for
+  full details. Power scales from the last OCR baseline.
 </p>
+{% include "_inventory_toolbar.html" %}
 <div class="table-wrap">
-  <table id="heroes-table" class="data-table sticky-first">
+  <table id="inventory-table" class="data-table sticky-first"
+         data-inventory-kind="heroes"
+         data-patch-base="/api/heroes/"
+         data-payload-key="hero">
     <thead>
       <tr>
         <th class="sortable" data-sort="name" scope="col" title="Sort by name">Name</th>
@@ -23,17 +33,23 @@
         <th class="sortable" data-sort="stars" scope="col" title="Sort by stars">Stars</th>
         <th class="sortable" data-sort="pellets" scope="col" title="Sort by pellets">Pellets</th>
         <th class="sortable" data-sort="power" scope="col" title="Sort by power">Power</th>
-        <th></th>
       </tr>
     </thead>
     <tbody>
       {% for h in heroes %}
-      <tr data-name="{{ h.name }}"
+      {# data-incomplete-locked: `power is none` also makes the row
+         incomplete, and nothing on this page can supply a power (a star
+         edit rescales it, and None rescales to None) — so the script must
+         not clear the mark just because the star box got filled in. #}
+      <tr data-row-id="{{ h.name }}"
+          data-name="{{ h.name }}"
           data-rarity="{{ (h.rarity or '')|lower }}"
           data-troop="{{ (h.troop_type or '')|lower }}"
           data-stars="{{ h.stars if h.stars is not none else '' }}"
           data-pellets="{{ h.pellets if h.pellets is not none else '' }}"
-          data-power="{{ h.power if h.power is not none else '' }}">
+          data-power="{{ h.power if h.power is not none else '' }}"
+          {% if h.name in incomplete_names %}data-incomplete="1"{% endif %}
+          {% if h.power is none %}data-incomplete-locked="1"{% endif %}>
         <td>
           <div class="name-cell">
             {% if icons.get(h.name) %}
@@ -49,23 +65,34 @@
         <td class="rarity {{ (h.rarity or '')|lower }}">{{ h.rarity or "—" }}</td>
         <td>{{ h.troop_type or "—" }}</td>
         <td>
-          <input type="number" min="0" max="5" step="1"
-                 class="stars-input"
+          {# data-blank="null": PATCH /api/heroes/{name} has no clear_* flag,
+             it maps an explicit JSON null onto "unknown". #}
+          <input type="number" class="cell-input" inputmode="numeric"
+                 min="0" max="5" step="1"
+                 data-field="stars"
+                 data-sort-key="stars"
+                 data-blank="null"
+                 data-label="{{ h.name }} stars"
+                 data-required
+                 aria-label="Stars for {{ h.name }}"
                  value="{{ h.stars if h.stars is not none else '' }}" />
         </td>
         <td>
-          <input type="number" min="0" max="5" step="1"
-                 class="pellets-input"
+          <input type="number" class="cell-input" inputmode="numeric"
+                 min="0" max="5" step="1"
+                 data-field="pellets"
+                 data-sort-key="pellets"
+                 data-blank="null"
+                 data-label="{{ h.name }} pellets"
+                 aria-label="Pellets for {{ h.name }}"
                  value="{{ h.pellets if h.pellets is not none else '' }}" />
         </td>
         <td class="power-cell">{{ h.power if h.power is not none else "—" }}</td>
-        <td>
-          <button type="button" class="save-btn">Save</button>
-        </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  <p class="empty no-matches" id="no-matches" hidden>No heroes match this filter.</p>
 </div>
 
 <div class="modal-backdrop" id="hero-detail-modal" aria-hidden="true">
@@ -84,249 +111,6 @@
 {% endblock %}
 
 {% block scripts %}
-<script>
-  function showToast(msg, ok) {
-    const el = document.getElementById("toast");
-    el.textContent = msg;
-    el.className = ok ? "ok" : "err";
-    el.hidden = false;
-    clearTimeout(showToast._t);
-    showToast._t = setTimeout(() => { el.className = ""; el.hidden = true; }, 3200);
-  }
-
-  function fmt(v) {
-    return v == null || v === "" ? "—" : String(v);
-  }
-
-  function esc(s) {
-    return String(s)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
-  }
-
-  function rarityClass(r) {
-    return (r || "").toLowerCase();
-  }
-
-  function statsTable(title, obj) {
-    const entries = Object.entries(obj || {});
-    if (!entries.length) return "";
-    const rows = entries.map(([k, v]) =>
-      `<tr><td>${esc(k)}</td><td class="fact-v">${esc(v)}</td></tr>`
-    ).join("");
-    return `<h3 class="section-title">${esc(title)}</h3>
-      <table class="stat-table"><thead><tr><th>Stat</th><th>Value</th></tr></thead>
-      <tbody>${rows}</tbody></table>`;
-  }
-
-  function skillsTable(skills) {
-    if (!skills || !skills.length) {
-      return `<h3 class="section-title">Skills</h3><p class="empty">No skills scraped.</p>`;
-    }
-    const rows = skills.map((s) => {
-      const bonus = s.current_bonus != null ? ` · bonus ${s.current_bonus}` : "";
-      const desc = s.description || s.upgrade_preview || s.raw_text || "";
-      return `<tr>
-        <td>${esc(s.slot)}</td>
-        <td><strong>${esc(s.name || "—")}</strong>
-          <div class="skill-desc">Lv ${esc(fmt(s.level))}${esc(bonus)}</div>
-          ${desc ? `<div class="skill-desc">${esc(desc)}</div>` : ""}
-        </td>
-      </tr>`;
-    }).join("");
-    return `<h3 class="section-title">Skills</h3>
-      <table class="skill-table"><thead><tr><th>Slot</th><th>Skill</th></tr></thead>
-      <tbody>${rows}</tbody></table>`;
-  }
-
-  function renderHeroDetail(hero) {
-    const icon = document.getElementById("hero-detail-icon");
-    icon.src = hero.icon_url || "";
-    icon.className = "rarity-" + rarityClass(hero.rarity);
-    icon.style.display = hero.icon_url ? "block" : "none";
-    document.getElementById("hero-detail-title").textContent = hero.name || "Hero";
-    document.getElementById("hero-detail-sub").innerHTML =
-      `<span class="rarity ${esc(rarityClass(hero.rarity))}">${esc(fmt(hero.rarity))}</span>` +
-      ` · ${esc(fmt(hero.troop_type))}` +
-      ` · ${esc(hero.stars ?? 0)}★ + ${esc(hero.pellets ?? 0)}p`;
-
-    const facts = [
-      ["Power", hero.power],
-      ["Level", hero.level],
-      ["Escorts", hero.escorts],
-      ["Stars", hero.stars],
-      ["Pellets", hero.pellets],
-      ["Roster", `p${hero.roster_page ?? 0} #${hero.roster_index ?? 0}`],
-      ["Scraped", hero.scraped_at],
-    ];
-    const factHtml = facts.map(([k, v]) =>
-      `<div class="fact"><span class="fact-k">${esc(k)}</span>` +
-      `<span class="fact-v">${esc(fmt(v))}</span></div>`
-    ).join("");
-
-    const stats = hero.stats || {};
-    const body = document.getElementById("hero-detail-body");
-    body.innerHTML =
-      `<div class="fact-grid">${factHtml}</div>` +
-      statsTable("Conquest", stats.conquest) +
-      statsTable("Expedition", stats.expedition) +
-      skillsTable(hero.skills);
-  }
-
-  const modal = document.getElementById("hero-detail-modal");
-  function openHeroModal(name) {
-    modal.classList.add("open");
-    modal.setAttribute("aria-hidden", "false");
-    document.getElementById("hero-detail-body").innerHTML =
-      `<p class="empty">Loading ${esc(name)}…</p>`;
-    fetch("/api/heroes/" + encodeURIComponent(name))
-      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
-      .then(({ ok, data }) => {
-        if (!ok) throw new Error(data.detail || "Failed to load hero");
-        renderHeroDetail(data.hero);
-      })
-      .catch((err) => {
-        document.getElementById("hero-detail-body").innerHTML =
-          `<p class="empty">${esc(err.message || err)}</p>`;
-      });
-  }
-  function closeHeroModal() {
-    modal.classList.remove("open");
-    modal.setAttribute("aria-hidden", "true");
-  }
-  document.getElementById("hero-detail-close").addEventListener("click", closeHeroModal);
-  modal.addEventListener("click", (ev) => {
-    if (ev.target === modal) closeHeroModal();
-  });
-  document.addEventListener("keydown", (ev) => {
-    if (ev.key === "Escape" && modal.classList.contains("open")) closeHeroModal();
-  });
-
-  const RARITY_RANK = {
-    legendary: 6, mythic: 5, gold: 5, red: 5,
-    epic: 4, purple: 4,
-    rare: 3, blue: 3,
-    uncommon: 2, green: 2,
-    common: 1, grey: 1, gray: 1, white: 1,
-  };
-  const TROOP_RANK = { infantry: 1, cavalry: 2, archers: 3, archer: 3 };
-
-  function sortValue(row, key) {
-    const raw = row.dataset[key] || "";
-    if (key === "power" || key === "stars" || key === "pellets") {
-      if (raw === "") return -1;
-      const n = Number(raw);
-      return Number.isFinite(n) ? n : -1;
-    }
-    if (key === "rarity") return RARITY_RANK[raw] || 0;
-    if (key === "troop") return TROOP_RANK[raw] || 99;
-    if (key === "name") return (row.dataset.name || "").toLowerCase();
-    return raw;
-  }
-
-  function sortTable(key, dir) {
-    const table = document.getElementById("heroes-table");
-    const tbody = table.querySelector("tbody");
-    const rows = Array.from(tbody.querySelectorAll("tr"));
-    const mult = dir === "asc" ? 1 : -1;
-    rows.sort((a, b) => {
-      const va = sortValue(a, key);
-      const vb = sortValue(b, key);
-      if (va < vb) return -1 * mult;
-      if (va > vb) return 1 * mult;
-      return (a.dataset.name || "").localeCompare(b.dataset.name || "");
-    });
-    rows.forEach((row) => tbody.appendChild(row));
-    table.querySelectorAll("th.sortable").forEach((th) => {
-      if (th.dataset.sort === key) {
-        th.setAttribute("aria-sort", dir === "asc" ? "ascending" : "descending");
-      } else {
-        th.removeAttribute("aria-sort");
-      }
-    });
-  }
-
-  document.querySelectorAll("#heroes-table th.sortable").forEach((th) => {
-    th.addEventListener("click", () => {
-      const key = th.dataset.sort;
-      const current = th.getAttribute("aria-sort");
-      const dir = current === "ascending" ? "desc" : "asc";
-      sortTable(key, dir);
-    });
-  });
-
-  document.querySelectorAll(".hero-open").forEach((el) => {
-    const open = () => openHeroModal(el.dataset.name);
-    el.addEventListener("click", open);
-    el.addEventListener("keydown", (ev) => {
-      if (ev.key === "Enter" || ev.key === " ") {
-        ev.preventDefault();
-        open();
-      }
-    });
-  });
-
-  document.querySelectorAll("#heroes-table tbody tr").forEach((row) => {
-    const btn = row.querySelector(".save-btn");
-    if (!btn) return;
-    btn.addEventListener("click", async () => {
-      const name = row.dataset.name;
-      const starsRaw = row.querySelector(".stars-input").value;
-      const pelletsRaw = row.querySelector(".pellets-input").value;
-      const body = {};
-      if (starsRaw !== "") body.stars = Number(starsRaw);
-      if (pelletsRaw !== "") body.pellets = Number(pelletsRaw);
-      btn.disabled = true;
-      try {
-        const res = await fetch("/api/heroes/" + encodeURIComponent(name), {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(data.detail || res.statusText);
-        }
-        const powerCell = row.querySelector(".power-cell");
-        const p = data.hero.power;
-        powerCell.textContent = p == null ? "—" : String(p);
-        row.dataset.power = p == null ? "" : String(p);
-        row.dataset.stars = data.hero.stars == null ? "" : String(data.hero.stars);
-        row.dataset.pellets = data.hero.pellets == null ? "" : String(data.hero.pellets);
-        showToast("Saved " + name + (p != null ? " · power " + p : ""), true);
-      } catch (err) {
-        showToast(String(err.message || err), false);
-      } finally {
-        btn.disabled = false;
-      }
-    });
-  });
-
-  const rescanBtn = document.getElementById("rescan-btn");
-  if (rescanBtn) {
-    rescanBtn.addEventListener("click", async () => {
-      if (rescanBtn.disabled) return;
-      rescanBtn.disabled = true;
-      rescanBtn.classList.add("busy");
-      rescanBtn.textContent = "Scanning…";
-      showToast("OCR rescan started — leave Heroes roster open", true);
-      try {
-        const res = await fetch("/api/heroes/rescan", { method: "POST" });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(data.detail || res.statusText);
-        }
-        showToast("Rescanned " + data.count + " heroes", true);
-        location.reload();
-      } catch (err) {
-        showToast(String(err.message || err), false);
-        rescanBtn.disabled = false;
-        rescanBtn.classList.remove("busy");
-        rescanBtn.textContent = "Rescan from OCR";
-      }
-    });
-  }
-</script>
+<script src="/static/inventory.js"></script>
+<script src="/static/hero_detail.js"></script>
 {% endblock %}
