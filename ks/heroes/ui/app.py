@@ -22,10 +22,21 @@ from ks.heroes.ui.heroes_rescan import rescan_heroes_from_ocr
 from ks.heroes.ui.icons import ensure_all_icons
 from ks.heroes.ui.power import compute_gear_power
 from ks.heroes.ui.rescan import rescan_gear_from_ocr
+from ks.heroes.ui.troop_icons import troop_icon_url
+from ks.heroes.ui.troops_inventory import (
+    DEFAULT_TROOPS_PATH,
+    TYPE_KEYS,
+    load_inventory,
+    set_count,
+    set_march_capacity,
+)
 
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 _STARS_RANGE = range(0, 6)
 _PELLETS_RANGE = range(0, 6)
+_HERO_LEVEL_RANGE = range(1, 81)
+_POWER_MIN = 0
+_POWER_MAX = 99_999_999
 
 
 def inventory_revision(dir_path: Path, filename: str) -> str:
@@ -222,8 +233,15 @@ def update_hero_stars(
     *,
     stars: int | None | object = ...,
     pellets: int | None | object = ...,
+    power: int | None | object = ...,
+    level: int | None | object = ...,
 ) -> HeroRecord:
-    """Update stars/pellets; rescale naked power via star_progress_factor."""
+    """Update stars/pellets/power/level.
+
+    When stars/pellets change and ``power`` is omitted, rescale power via
+    ``star_progress_factor``. Explicit ``power`` always wins (OCR fixes).
+    Level is stored only — no invented level→power formula.
+    """
     heroes = {h.name: h for h in store.all_heroes()}
     hero = heroes.get(name)
     if hero is None:
@@ -231,37 +249,82 @@ def update_hero_stars(
 
     new_stars = hero.stars
     new_pellets = hero.pellets
+    new_power = hero.power
+    new_level = hero.level
+    power_explicit = False
+
     if stars is not ...:
         if stars is not None:
-            level = int(stars)
-            if level not in _STARS_RANGE:
-                raise ValueError(f"stars must be 0..5; got {level}")
-            new_stars = level
+            value = int(stars)
+            if value not in _STARS_RANGE:
+                raise ValueError(f"stars must be 0..5; got {value}")
+            new_stars = value
         else:
             new_stars = None
     if pellets is not ...:
         if pellets is not None:
-            level = int(pellets)
-            if level not in _PELLETS_RANGE:
-                raise ValueError(f"pellets must be 0..5; got {level}")
-            new_pellets = level
+            value = int(pellets)
+            if value not in _PELLETS_RANGE:
+                raise ValueError(f"pellets must be 0..5; got {value}")
+            new_pellets = value
         else:
             new_pellets = None
+    if level is not ...:
+        if level is not None:
+            value = int(level)
+            if value not in _HERO_LEVEL_RANGE:
+                raise ValueError(f"level must be 1..80; got {value}")
+            new_level = value
+        else:
+            new_level = None
+    if power is not ...:
+        power_explicit = True
+        if power is not None:
+            value = int(power)
+            if value < _POWER_MIN or value > _POWER_MAX:
+                raise ValueError(
+                    f"power must be {_POWER_MIN}..{_POWER_MAX}; got {value}"
+                )
+            new_power = value
+        else:
+            new_power = None
 
-    if new_stars == hero.stars and new_pellets == hero.pellets:
+    stars_changed = new_stars != hero.stars or new_pellets != hero.pellets
+    if stars_changed and not power_explicit:
+        new_power = scale_power_for_star_change(
+            hero.power,
+            hero.stars,
+            hero.pellets,
+            new_stars,
+            new_pellets,
+        )
+
+    if (
+        new_stars == hero.stars
+        and new_pellets == hero.pellets
+        and new_power == hero.power
+        and new_level == hero.level
+    ):
         return hero
 
-    new_power = scale_power_for_star_change(
-        hero.power,
-        hero.stars,
-        hero.pellets,
-        new_stars,
-        new_pellets,
-    )
     updated = replace(
-        hero, stars=new_stars, pellets=new_pellets, power=new_power
+        hero,
+        stars=new_stars,
+        pellets=new_pellets,
+        power=new_power,
+        level=new_level,
     )
-    store.upsert(updated)
+    overwrite = frozenset(
+        field
+        for field, before, after in (
+            ("stars", hero.stars, new_stars),
+            ("pellets", hero.pellets, new_pellets),
+            ("power", hero.power, new_power),
+            ("level", hero.level, new_level),
+        )
+        if before != after
+    )
+    store.upsert(updated, overwrite=overwrite)
     return updated
 
 
@@ -269,6 +332,7 @@ def create_app(
     gear_dir: Path | None = None,
     *,
     heroes_dir: Path | None = None,
+    troops_path: Path | None = None,
     gear_config: Path | None = None,
     heroes_config: Path | None = None,
     serial: str | None = None,
@@ -287,6 +351,8 @@ def create_app(
     resolved_heroes = (
         _resolve_heroes_dir(heroes_dir) if heroes_dir is not None else None
     )
+    resolved_troops = (troops_path or DEFAULT_TROOPS_PATH).expanduser().resolve()
+    troops_enabled = resolved_troops.is_file()
     gear_store = GearStore(resolved_gear) if resolved_gear is not None else None
     hero_store = (
         HeroStore(resolved_heroes) if resolved_heroes is not None else None
@@ -340,6 +406,46 @@ def create_app(
             )
         return resolved_heroes, hero_store
 
+    def _require_troops() -> Path:
+        if not troops_enabled:
+            raise HTTPException(
+                status_code=404, detail="troops.yaml not found"
+            )
+        return resolved_troops
+
+    def _nav_flags(*, gear: bool | None = None, heroes: bool | None = None) -> dict[str, bool]:
+        return {
+            "gear_enabled": (
+                resolved_gear is not None if gear is None else gear
+            ),
+            "heroes_enabled": (
+                resolved_heroes is not None if heroes is None else heroes
+            ),
+            "troops_enabled": troops_enabled,
+        }
+
+    def _troops_api_payload(inventory: dict[str, Any]) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "path": str(resolved_troops),
+            "march_capacity": inventory["march_capacity"],
+            "truegold": inventory.get("truegold", 0),
+        }
+        for key in TYPE_KEYS:
+            levels = inventory[key]
+            tiles = [
+                {
+                    "tier": tier,
+                    "count": int(levels[tier]),
+                    "icon_url": troop_icon_url(key, tier),
+                }
+                for tier in range(1, 12)
+            ]
+            out[key] = {
+                "total": int(inventory["totals"][key]),
+                "tiles": tiles,
+            }
+        return out
+
     @app.get("/", include_in_schema=False)
     def home() -> RedirectResponse:
         if resolved_gear is not None:
@@ -369,6 +475,7 @@ def create_app(
                 "cache_bust": bust,
                 "gear_enabled": True,
                 "heroes_enabled": resolved_heroes is not None,
+                "troops_enabled": troops_enabled,
                 "power_curves_json": _json.dumps(rarity_power_curves()),
             },
         )
@@ -533,6 +640,7 @@ def create_app(
                 "cache_bust": bust,
                 "gear_enabled": resolved_gear is not None,
                 "heroes_enabled": True,
+                "troops_enabled": troops_enabled,
             },
         )
         response.headers["Cache-Control"] = "no-store"
@@ -581,10 +689,16 @@ def create_app(
 
         stars_arg: Any = ...
         pellets_arg: Any = ...
+        power_arg: Any = ...
+        level_arg: Any = ...
         if "stars" in raw:
             stars_arg = raw.get("stars")
         if "pellets" in raw:
             pellets_arg = raw.get("pellets")
+        if "power" in raw:
+            power_arg = raw.get("power")
+        if "level" in raw:
+            level_arg = raw.get("level")
 
         try:
             updated = update_hero_stars(
@@ -592,6 +706,8 @@ def create_app(
                 name,
                 stars=stars_arg,
                 pellets=pellets_arg,
+                power=power_arg,
+                level=level_arg,
             )
         except KeyError as exc:
             raise HTTPException(
@@ -658,6 +774,77 @@ def create_app(
             "heroes_dir": str(heroes_path),
             "gear_enabled": resolved_gear is not None,
             "heroes_enabled": True,
+            "troops_enabled": troops_enabled,
+        }
+
+    @app.get("/troops", response_class=HTMLResponse)
+    def troops_page(request: Request) -> HTMLResponse:
+        path = _require_troops()
+        inventory = load_inventory(path)
+        payload = _troops_api_payload(inventory)
+        response = templates.TemplateResponse(
+            request,
+            "troops.html",
+            {
+                "troops_path": str(path),
+                "march_capacity": inventory["march_capacity"],
+                "inventory": payload,
+                "type_keys": TYPE_KEYS,
+                **_nav_flags(),
+            },
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.get("/api/troops")
+    def api_list_troops() -> dict[str, Any]:
+        path = _require_troops()
+        return _troops_api_payload(load_inventory(path))
+
+    @app.patch("/api/troops/march-capacity")
+    async def api_patch_march_capacity(request: Request) -> dict[str, Any]:
+        path = _require_troops()
+        try:
+            raw = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="JSON body required") from exc
+        if not isinstance(raw, dict) or "march_capacity" not in raw:
+            raise HTTPException(
+                status_code=400, detail="march_capacity required"
+            )
+        try:
+            updated = set_march_capacity(path, raw["march_capacity"])
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "ok": True,
+            "march_capacity": updated["march_capacity"],
+            "inventory": _troops_api_payload(updated),
+        }
+
+    @app.patch("/api/troops/{troop_type}/{tier}")
+    async def api_patch_troop_count(
+        troop_type: str, tier: int, request: Request
+    ) -> dict[str, Any]:
+        path = _require_troops()
+        try:
+            raw = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="JSON body required") from exc
+        if not isinstance(raw, dict) or "count" not in raw:
+            raise HTTPException(status_code=400, detail="count required")
+        try:
+            updated = set_count(path, troop_type, tier, raw["count"])
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "ok": True,
+            "type": troop_type,
+            "tier": int(tier),
+            "count": int(updated[troop_type][int(tier)]),
+            "inventory": _troops_api_payload(updated),
         }
 
     @app.get("/optimize", response_class=HTMLResponse)
@@ -794,6 +981,7 @@ def run_ui(
     gear_dir: Path | None = None,
     *,
     heroes_dir: Path | None = None,
+    troops_path: Path | None = None,
     host: str = "127.0.0.1",
     port: int = 8765,
     gear_config: Path | None = None,
@@ -811,6 +999,7 @@ def run_ui(
     app = create_app(
         gear_dir,
         heroes_dir=heroes_dir,
+        troops_path=troops_path,
         gear_config=gear_config,
         heroes_config=heroes_config,
         serial=serial,
@@ -824,4 +1013,8 @@ def run_ui(
     if gear_dir is not None:
         print(f"Gear UI: http://{host}:{port}/gear")
         print(f"Inventory: {Path(gear_dir).expanduser().resolve()}")
+    troops = (troops_path or DEFAULT_TROOPS_PATH).expanduser().resolve()
+    if troops.is_file():
+        print(f"Troops UI: http://{host}:{port}/troops")
+        print(f"Troops: {troops}")
     uvicorn.run(app, host=host, port=port, log_level="info")

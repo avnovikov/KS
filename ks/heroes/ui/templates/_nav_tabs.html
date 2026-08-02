@@ -1,4 +1,4 @@
-{# Shared tab bar. Expects: active ("gear"|"heroes"|"optimize"), gear_enabled, heroes_enabled #}
+{# Shared tab bar. Expects: active ("gear"|"heroes"|"troops"|"optimize"), gear_enabled, heroes_enabled, troops_enabled #}
 <style>
   .tab-bar {
     display: inline-flex;
@@ -35,7 +35,8 @@
     cursor: not-allowed;
   }
 </style>
-{% set show_tabs = gear_enabled or heroes_enabled %}
+{% set troops_on = troops_enabled if troops_enabled is defined else false %}
+{% set show_tabs = gear_enabled or heroes_enabled or troops_on %}
 {% if show_tabs %}
 <nav class="tab-bar" aria-label="Inventory screens" role="tablist">
   {% if gear_enabled %}
@@ -56,6 +57,16 @@
     {% endif %}
   {% else %}
     <span class="tab is-disabled" title="Start UI with --heroes to enable" role="tab" aria-disabled="true">Heroes inventory</span>
+  {% endif %}
+
+  {% if troops_on %}
+    {% if active == "troops" %}
+    <span class="tab is-active" role="tab" aria-selected="true">Troops inventory</span>
+    {% else %}
+    <a class="tab" href="/troops" role="tab" aria-selected="false">Troops inventory</a>
+    {% endif %}
+  {% else %}
+    <span class="tab is-disabled" title="config/troops.yaml not found" role="tab" aria-disabled="true">Troops inventory</span>
   {% endif %}
 
   {% if heroes_enabled %}

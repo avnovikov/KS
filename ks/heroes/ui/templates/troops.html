@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KS Troops Inventory</title>
+  <style>
+    :root {
+      --bg: #1a1d23;
+      --panel: #242830;
+      --text: #e8eaed;
+      --muted: #9aa0a6;
+      --accent: #6cb2ff;
+      --ok: #7dcea0;
+      --err: #f1959b;
+      --border: #3a3f4b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.4;
+    }
+    header {
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, #2a303a, var(--bg));
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem 1.25rem;
+    }
+    .header-text { min-width: 12rem; }
+    h1 { margin: 0 0 0.35rem; font-size: 1.35rem; font-weight: 600; }
+    .meta { color: var(--muted); font-size: 0.85rem; }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+    .cap-label {
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    main { padding: 1rem 1.5rem 2rem; }
+    .hint { color: var(--muted); font-size: 0.85rem; margin: 0 0 1rem; }
+    .type-block {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.85rem 1rem 1rem;
+      margin-bottom: 1rem;
+    }
+    .type-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 0.75rem;
+    }
+    .type-head h2 {
+      margin: 0;
+      font-size: 1rem;
+      font-weight: 600;
+      text-transform: capitalize;
+    }
+    .type-total { color: var(--muted); font-size: 0.85rem; }
+    .tile-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
+      gap: 0.55rem;
+    }
+    .tile {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.5rem;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .tile.is-zero { opacity: 0.55; }
+    .tile img {
+      width: 44px;
+      height: 44px;
+      object-fit: contain;
+      border-radius: 6px;
+      background: rgba(0,0,0,0.2);
+    }
+    .tile .tier {
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-weight: 550;
+    }
+    input[type="number"] {
+      width: 100%;
+      max-width: 5.5rem;
+      padding: 0.3rem 0.4rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--panel);
+      color: var(--text);
+      text-align: center;
+    }
+    button {
+      padding: 0.3rem 0.7rem;
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      background: transparent;
+      color: var(--accent);
+      cursor: pointer;
+      font-size: 0.8rem;
+    }
+    button:hover { background: rgba(108, 178, 255, 0.12); }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    #toast {
+      position: fixed;
+      bottom: 1.25rem;
+      right: 1.25rem;
+      padding: 0.65rem 0.9rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      display: none;
+      z-index: 50;
+      max-width: 22rem;
+    }
+    #toast.ok { display: block; background: #1e3a2f; color: var(--ok); border: 1px solid #2d5a45; }
+    #toast.err { display: block; background: #3a1e22; color: var(--err); border: 1px solid #5a2d35; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-text">
+      <h1>KS Inventory</h1>
+      <div class="meta">{{ troops_path }}</div>
+      {% set active = "troops" %}
+      {% include "_nav_tabs.html" %}
+    </div>
+    <div class="header-actions">
+      <label class="cap-label" for="march-capacity">March capacity</label>
+      <input type="number" id="march-capacity" min="0" step="1"
+             value="{{ march_capacity }}" />
+      <button type="button" id="save-capacity">Save</button>
+    </div>
+  </header>
+  <main>
+    <p class="hint">
+      Edit troop counts per tier (T1–T11). Save each tile or march capacity separately.
+      Changes write to <code>troops.yaml</code> used by Optimize.
+    </p>
+
+    {% for type_key in type_keys %}
+    {% set block = inventory[type_key] %}
+    <section class="type-block" data-type="{{ type_key }}">
+      <div class="type-head">
+        <h2>{{ type_key }}</h2>
+        <div class="type-total">total <span class="total-val">{{ block.total }}</span></div>
+      </div>
+      <div class="tile-grid">
+        {% for tile in block.tiles %}
+        <div class="tile {% if tile.count == 0 %}is-zero{% endif %}"
+             data-type="{{ type_key }}" data-tier="{{ tile.tier }}">
+          <img src="{{ tile.icon_url }}" alt="{{ type_key }} T{{ tile.tier }}" width="44" height="44" />
+          <div class="tier">T{{ tile.tier }}</div>
+          <input type="number" class="count-input" min="0" step="1" value="{{ tile.count }}" />
+          <button type="button" class="save-btn">Save</button>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endfor %}
+  </main>
+
+  <div id="toast" role="status"></div>
+  <script>
+    function showToast(msg, ok) {
+      const el = document.getElementById("toast");
+      el.textContent = msg;
+      el.className = ok ? "ok" : "err";
+      clearTimeout(showToast._t);
+      showToast._t = setTimeout(() => { el.className = ""; el.style.display = "none"; }, 3200);
+    }
+
+    function refreshTotals(inventory) {
+      if (!inventory) return;
+      for (const type of Object.keys(inventory)) {
+        if (!inventory[type] || inventory[type].total == null) continue;
+        const block = document.querySelector('.type-block[data-type="' + type + '"]');
+        if (!block) continue;
+        const el = block.querySelector(".total-val");
+        if (el) el.textContent = String(inventory[type].total);
+      }
+    }
+
+    document.querySelectorAll(".tile .save-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const tile = btn.closest(".tile");
+        const type = tile.dataset.type;
+        const tier = tile.dataset.tier;
+        const input = tile.querySelector(".count-input");
+        const count = Number(input.value);
+        btn.disabled = true;
+        try {
+          const res = await fetch(
+            "/api/troops/" + encodeURIComponent(type) + "/" + encodeURIComponent(tier),
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ count }),
+              cache: "no-store",
+            }
+          );
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.detail || res.statusText);
+          tile.classList.toggle("is-zero", Number(data.count) === 0);
+          refreshTotals(data.inventory);
+          showToast("Saved " + type + " T" + tier + " · " + data.count, true);
+        } catch (err) {
+          showToast(String(err.message || err), false);
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    });
+
+    document.getElementById("save-capacity").addEventListener("click", async () => {
+      const btn = document.getElementById("save-capacity");
+      const input = document.getElementById("march-capacity");
+      const march_capacity = Number(input.value);
+      btn.disabled = true;
+      try {
+        const res = await fetch("/api/troops/march-capacity", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ march_capacity }),
+          cache: "no-store",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || res.statusText);
+        input.value = String(data.march_capacity);
+        showToast("Saved march capacity · " + data.march_capacity, true);
+      } catch (err) {
+        showToast(String(err.message || err), false);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
