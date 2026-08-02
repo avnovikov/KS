@@ -12,9 +12,11 @@
  * all, and on blur an empty field is filled in with a visible 0 and saved —
  * so what is stored is always what is shown.
  *
- * Out-of-range inputs: `max` is a client-only bound the API does not enforce,
- * so a document already over it on load is clamped (visibly, and saved) rather
- * than left to block every *other* field's save.
+ * Out-of-range inputs: `min`/`max` are client-only bounds the API does not
+ * enforce, so a document already outside them on load is clamped in the DOM —
+ * visibly, and reported in a banner — rather than left to block every *other*
+ * field's save. Rendering the page never writes: the correction goes to disk
+ * with the user's first real edit.
  */
 (function () {
   "use strict";
@@ -26,6 +28,7 @@
   var DEBOUNCE_MS = 600;
 
   var statusEl = document.getElementById("save-status");
+  var noticeEl = document.getElementById("troops-repair-notice");
   var scalarInputs = Array.prototype.slice.call(
     form.querySelectorAll("input[data-field]")
   );
@@ -95,13 +98,16 @@
     else input.setAttribute("aria-invalid", "true");
   }
 
+  function fieldLabel(input) {
+    return input.dataset.label || input.id;
+  }
+
   function invalidMessage(input) {
-    var label = input.dataset.label || input.id;
     var max = input.getAttribute("max");
     if (max !== null) {
-      return label + " must be a whole number from 0 to " + max;
+      return fieldLabel(input) + " must be a whole number from 0 to " + max;
     }
-    return label + " must be a whole number, 0 or more";
+    return fieldLabel(input) + " must be a whole number, 0 or more";
   }
 
   /* Group digits the way the server-rendered total already is.
@@ -247,50 +253,93 @@
     });
   });
 
-  /** Pull any box already over its `max` back to the bound, and say so.
+  /** Pull what can be pulled back in range, and collect what cannot.
    *
-   *  `max` is a client-only bound (truegold is outside the schema /api/troops
-   *  validates), so a hand-edited or future-version troops.yaml can render a
-   *  value the editor considers unsendable. readInt() would return null for
-   *  it, and save() blocks on *any* null — which used to brick the whole
-   *  form: no tier was saveable until the user found the one bad field.
-   *  Clamping on load keeps the page usable, and the immediate save below
-   *  keeps the promise that what is stored is always what is shown.
-   *  @returns {string[]} human-readable descriptions of what was clamped
+   *  `min`/`max` are client-only bounds the API does not enforce, and
+   *  troops_form.py renders whatever integer was on disk, so the page can
+   *  load holding a value readInt() refuses to send. save() blocks on *any*
+   *  unreadable field, so a single bad number — `truegold: 7`, or an
+   *  `infantry: {1: -3}` left behind by a hand edit — used to make the whole
+   *  form unsaveable, the only clue being a toast naming a field the user
+   *  never touched.
+   *
+   *  A value with an unambiguous in-range neighbour is moved to it: below
+   *  `min` becomes `min`, above `max` becomes `max`. Anything else (text the
+   *  browser rejected, a count past Number.MAX_SAFE_INTEGER) has no
+   *  defensible replacement, so it is left alone and reported instead.
+   *
+   *  Nothing is written to disk here. This runs during a GET, the pre-clamp
+   *  number is the user's, and destroying it before they have seen the notice
+   *  would be worse than the stale value: the correction rides along with
+   *  their first real edit, which is why lastSavedBody is snapshotted first.
+   *  @returns {{clamped: string[], blocked: Element[]}}
    */
-  function clampOutOfRange() {
+  function reviewLoadedValues() {
     var clamped = [];
     allInputs.forEach(function (input) {
-      var max = input.getAttribute("max");
-      if (max === null) return;
       var raw = String(input.value).trim();
-      if (!/^\d+$/.test(raw)) return; // not a number we can clamp; save() nags
-      if (Number(raw) <= Number(max)) return;
-      input.value = max;
-      clamped.push(
-        (input.dataset.label || input.id) + " was " + raw + ", set to " + max
-      );
+      if (!/^-?\d+$/.test(raw)) return;
+      var value = Number(raw);
+      if (!Number.isSafeInteger(value)) return;
+      var min = input.getAttribute("min");
+      var max = input.getAttribute("max");
+      var bound = null;
+      if (min !== null && value < Number(min)) bound = min;
+      else if (max !== null && value > Number(max)) bound = max;
+      if (bound === null) return;
+      input.value = bound;
+      clamped.push(fieldLabel(input) + " was " + raw + ", shown as " + bound);
     });
-    return clamped;
+    var blocked = allInputs.filter(function (input) {
+      return readInt(input) === null;
+    });
+    // Flag them now rather than waiting for a save the user cannot trigger.
+    blocked.forEach(function (input) {
+      markValidity(input, false);
+    });
+    return { clamped: clamped, blocked: blocked };
+  }
+
+  /** Report load-time repairs in the persistent banner, not a toast.
+   *
+   *  A toast is the wrong channel for this: #toast is shared and runs on one
+   *  timer, so a clamp notice raised at load is overwritten by the very next
+   *  message — including the validation error that an unclampable field in
+   *  the same file triggers — and then times out unread. The banner sits
+   *  above the form until the page is left.
+   */
+  function showRepairNotice(review) {
+    if (!noticeEl) return;
+    var parts = [];
+    if (review.clamped.length) {
+      parts.push(
+        "Out of range in your troops file: " +
+          review.clamped.join("; ") +
+          ". Your next edit saves the corrected value."
+      );
+    }
+    if (review.blocked.length) {
+      parts.push(
+        "Nothing can save until you fix: " +
+          review.blocked.map(invalidMessage).join("; ") +
+          "."
+      );
+    }
+    if (!parts.length) return;
+    noticeEl.textContent = parts.join(" ");
+    noticeEl.hidden = false;
   }
 
   // Trust the server's own sum once it answers, but start from what was
   // rendered so a stale total can never sit on screen.
   recomputeTotals();
   // Snapshot *before* clamping, so a clamp reads as a real pending change
-  // that the save below actually sends rather than dedupes away.
+  // that the user's first edit sends rather than one the dedupe eats.
   lastSavedBody = JSON.stringify(readDoc());
 
-  var clampedOnLoad = clampOutOfRange();
-  if (clampedOnLoad.length) {
-    recomputeTotals();
-    toast(
-      clampedOnLoad.join("; ") + " — outside the supported range, saving the " +
-        "corrected value.",
-      false
-    );
-    save();
-  }
+  var loadReview = reviewLoadedValues();
+  if (loadReview.clamped.length) recomputeTotals();
+  showRepairNotice(loadReview);
 
   window.addEventListener("pagehide", function () {
     if (timer) save();

@@ -333,6 +333,20 @@ input[aria-invalid="true"] {
   font-size: 0.85rem;
 }
 
+/* Load-time repair notice. A warning, not an error — the page works, the file
+   needs a save — so it borrows --warn for the rule and leaves the body text at
+   --text rather than inventing another darkened variant. Sets no `display`, so
+   the UA's `[hidden] { display: none }` still wins until troops.js un-hides
+   it. */
+.banner-warn {
+  margin: 0 0 0.8rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--panel);
+  font-size: 0.85rem;
+}
+
 /* iOS-style grouped rows: label left, value right, hairline between. */
 .field {
   display: flex;

@@ -9,6 +9,11 @@
   as 0 — fix them here and the next save rewrites the file.
 </p>
 {% endif %}
+{# Filled in and un-hidden by troops.js when it has to pull a value on disk
+   back into range, or when one cannot be repaired automatically. A banner
+   rather than a toast: #toast is shared and single-timer, so a notice raised
+   at load would be overwritten by the next message and time out unread. #}
+<p class="banner-warn" id="troops-repair-notice" role="alert" hidden></p>
 
 <form id="troops-form" class="troops-form" data-save-url="/api/troops" novalidate>
   <section class="panel">

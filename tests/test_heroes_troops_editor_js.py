@@ -184,20 +184,80 @@ def test_edits_during_one_in_flight_save_coalesce(js_run: dict) -> None:
 
 
 def test_out_of_range_value_on_disk_does_not_brick_the_editor(js_run: dict) -> None:
-    """`max` is client-only, so the API can hand back a value the editor
-    considers unsendable. It must be clamped, announced and written back —
-    not left to make readInt() return null and block every other field."""
+    """`min`/`max` are client-only, so the API can hand back a value the
+    editor considers unsendable — `truegold: 7`, or an `infantry: {1: -3}`
+    that troops_form.py renders straight through. `readInt()` returns null for
+    it and `save()` blocks on *any* null, so one bad number made the whole
+    form unsaveable. Repairable values are clamped in the DOM; the rest are
+    flagged and named."""
     _assert_ran(
         js_run,
         [
-            "the out-of-range field is pulled back to its bound",
-            "the clamp is announced rather than silent",
-            "and written back, so what is stored is what is shown",
+            "a value over max is pulled back to the bound",
+            "a value below min is pulled up to the bound",
             "every other field is saveable again",
+            "and that first edit carries the corrected value to disk",
+            "an unrelated field saves despite the negative on disk",
+            "and the repaired negative goes with it",
+            "an unclampable value is left alone",
+            "it is flagged on load rather than on a save the user cannot trigger",
+            "and the banner explains that nothing can save until it is fixed",
             "no field is left flagged invalid",
             "an in-range document is not touched on load",
+            "and its banner stays hidden",
         ],
     )
+
+
+def test_rendering_the_page_never_writes_to_the_troops_file(js_run: dict) -> None:
+    """Regression: clamping on load must not PUT.
+
+    An earlier fix clamped *and* saved, so merely opening /inventory/troops
+    rewrote troops.yaml and destroyed the pre-clamp value on disk, announced
+    only by a self-dismissing toast. Since `max` lives solely in the
+    template's attribute, a bound that lagged behind config/troop_stats.yaml
+    would have silently downgraded the user's truegold on a page view. The
+    clamp now only touches the DOM; the correction reaches disk with the
+    user's first real edit, which is what the two follow-up checks assert.
+    """
+    _assert_ran(
+        js_run,
+        [
+            "a clamping page load fires no PUT at all",
+            "clamping a negative fires no PUT either",
+            "and fires no PUT",
+            "still no PUT",
+            "and that first edit carries the corrected value to disk",
+            "and the repaired negative goes with it",
+        ],
+    )
+    assert js_run["data"]["clamp_load_puts"] == 0
+
+
+def test_load_time_repairs_are_reported_where_they_survive(js_run: dict) -> None:
+    """Regression: the clamp notice used to be a toast.
+
+    `#toast` is shared and runs on one timer, so a file holding both a
+    clampable and an unclampable value produced two messages through the same
+    element — the clamp notice overwritten by the validation error a moment
+    later, leaving the user with a form showing 5, a disk holding 7, and
+    nothing on screen saying so. It is a persistent banner now.
+    """
+    _assert_ran(
+        js_run,
+        [
+            "the clamp is reported in the persistent banner",
+            "and not in a toast the next message would overwrite",
+            "the banner says the correction is not on disk yet",
+            "the negative is named in the banner",
+            "a clamp and an unrepairable value are both reported, not one over the other",
+            "the surviving validation error still blocks the save, as it must",
+            "and the banner is still on screen next to that toast",
+        ],
+    )
+    notice = js_run["data"]["both_notice"]
+    assert "Truegold was 7, shown as 5" in notice
+    assert "archers T2" in notice
 
 
 def test_live_totals_are_grouped_exactly_as_the_server_rendered_them(
@@ -210,6 +270,16 @@ def test_live_totals_are_grouped_exactly_as_the_server_rendered_them(
         js_run,
         ["live totals pin their grouping instead of following the viewer's locale"],
     )
+    if not js_run["data"]["intl_grouping"]:
+        # qjs and d8 are routinely built without Intl, and node can be built
+        # --without-intl; there toLocaleString("en-US") returns bare digits
+        # however correct the source is. The check above still ran and still
+        # proves an explicit locale is passed; only this comparison is moot.
+        pytest.skip(
+            f"{js_run['engine'][0]} has no Intl grouping "
+            f"(Intl present: {js_run['data']['intl_present']}), so "
+            "toLocaleString cannot produce separators on this host"
+        )
     # 1015 + 30084 + 2759 seeded, with tier 2 typed up to 1234567.
     expected = "{:,}".format(1015 + 30084 + 2759 + 1234567)
     assert js_run["data"]["live_total_infantry"] == expected

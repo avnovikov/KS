@@ -79,18 +79,24 @@ var MARCH = 80280;
 /**
  * Build a page, install it over the globals troops.js reaches for, and hand
  * back the levers the driver needs. Every suite gets its own, so state never
- * leaks between scenarios.
- * @param {{truegold?: number|string}} [opts]
+ * leaks between scenarios. Attributes mirror inventory_troops.html exactly —
+ * every input carries min="0", truegold also carries max="5" — because the
+ * clamp logic reads its bounds off those attributes.
+ * @param {{truegold?: number|string, tierValues?: Object}} [opts]
+ *        tierValues is keyed "type:tier", e.g. {"infantry:1": "-3"}.
  */
 function makeDom(opts) {
   opts = opts || {};
+  var tierValues = opts.tierValues || {};
 
   var scalars = [];
   var tiers = [];
   var totals = {};
 
   function makeScalar(field, label, value, max) {
-    var el = new El("input", max === undefined ? {} : { max: String(max) });
+    var attrs = { min: "0", step: "1" };
+    if (max !== undefined) attrs.max = String(max);
+    var el = new El("input", attrs);
     el.dataset.field = field;
     el.dataset.label = label;
     el.value = String(value);
@@ -104,11 +110,15 @@ function makeDom(opts) {
     totals[type] = new El("span");
     totals[type].textContent = String(SEED_TOTALS[type]);
     for (var tier = 1; tier <= 11; tier++) {
-      var el = new El("input");
+      var el = new El("input", { min: "0", step: "1" });
       el.dataset.type = type;
       el.dataset.tier = String(tier);
       el.dataset.label = type + " T" + tier;
-      el.value = String((SEED[type] && SEED[type][tier]) || 0);
+      var override = tierValues[type + ":" + tier];
+      el.value =
+        override === undefined
+          ? String((SEED[type] && SEED[type][tier]) || 0)
+          : String(override);
       tiers.push(el);
     }
   });
@@ -126,6 +136,8 @@ function makeDom(opts) {
   };
 
   var statusEl = new El("p");
+  var noticeEl = new El("p");
+  noticeEl.hidden = true; // matches the template's `hidden` attribute
 
   /* The toast lives behind accessors so the order of writes is observable:
      app.js must un-hide the live region *before* it writes the message. */
@@ -156,6 +168,7 @@ function makeDom(opts) {
     getElementById: function (id) {
       if (id === "troops-form") return form;
       if (id === "save-status") return statusEl;
+      if (id === "troops-repair-notice") return noticeEl;
       if (id === "toast") return toastEl;
       return null;
     },
@@ -233,6 +246,10 @@ function makeDom(opts) {
   return {
     form: form,
     statusEl: statusEl,
+    noticeEl: noticeEl,
+    notice: function () {
+      return noticeEl.hidden ? "" : noticeEl.textContent;
+    },
     toastEl: toastEl,
     toastLog: toastLog,
     stubShowToast: stubShowToast,
@@ -258,7 +275,19 @@ function makeDom(opts) {
     status: function () {
       return statusEl.textContent;
     },
+    /* Shaped like a real request even when nothing was sent, so a check that
+       expected a PUT and did not get one fails with its own message instead
+       of throwing and taking the rest of the suite down with it — this
+       harness is only useful if a regression reports every symptom. */
     lastPut: function () {
+      if (!puts.length) {
+        return {
+          url: null,
+          method: null,
+          keepalive: false,
+          body: { infantry: {}, cavalry: {}, archers: {} },
+        };
+      }
       return puts[puts.length - 1];
     },
     timerCount: function () {
@@ -299,6 +328,19 @@ async function settle() {
   for (var i = 0; i < 50; i++) await Promise.resolve();
 }
 
+/** Set by detectIntlGrouping(): false on an engine built without Intl. */
+var INTL_GROUPING = false;
+
+/**
+ * Pick the expected rendering of a total for this engine. Both spellings are
+ * written out rather than derived from toLocaleString, so the assertion is
+ * never comparing the implementation against itself; the grouping itself is
+ * pinned by suiteLocale() and by the Python side's "{:,}".format check.
+ */
+function grouped(withSeparators, plain) {
+  return INTL_GROUPING ? withSeparators : plain;
+}
+
 /* --- the units under test, injected verbatim by the pytest runner ---------- */
 
 /** Runs ks/heroes/ui/static/troops.js against whatever makeDom() last installed. */
@@ -323,7 +365,7 @@ async function suiteSaving() {
   check("load fires no PUT", d.puts.length === 0, "puts=" + d.puts.length);
   check(
     "totals are recomputed from the rendered inputs",
-    d.total("infantry") === "33,858",
+    d.total("infantry") === grouped("33,858", "33858"),
     d.total("infantry")
   );
 
@@ -338,7 +380,7 @@ async function suiteSaving() {
   );
   check(
     "the total updates live while typing",
-    d.total("infantry") === "33,863",
+    d.total("infantry") === grouped("33,863", "33863"),
     d.total("infantry")
   );
   d.runTimers();
@@ -620,22 +662,36 @@ async function suiteInFlight() {
   check("and it does not report failure", d.status() === "Saved", d.status());
 }
 
-/* An out-of-range value already on disk must not brick every other field. */
+/* A value outside the client-only min/max bounds already on disk must not
+   brick every other field — and repairing it must not touch the file. */
 async function suiteClampOnLoad() {
   var d = makeDom({ truegold: 7 }); // max="5"; the API does not enforce it
   loadTroopsEditor();
   await settle();
 
-  check("the out-of-range field is pulled back to its bound", d.scalar("truegold").value === "5", d.scalar("truegold").value);
   check(
-    "the clamp is announced rather than silent",
-    d.toasts.length === 1 && /Truegold/.test(d.toasts[0].msg),
+    "a value over max is pulled back to the bound",
+    d.scalar("truegold").value === "5",
+    d.scalar("truegold").value
+  );
+  // The regression test for "rendering the page must not rewrite the file":
+  // a GET is not permission to destroy the number that was on disk.
+  check("a clamping page load fires no PUT at all", d.puts.length === 0, "puts=" + d.puts.length);
+  record("clamp_load_puts", d.puts.length);
+  check(
+    "the clamp is reported in the persistent banner",
+    /Truegold was 7, shown as 5/.test(d.notice()),
+    d.notice()
+  );
+  check(
+    "and not in a toast the next message would overwrite",
+    d.toasts.length === 0,
     JSON.stringify(d.toasts)
   );
   check(
-    "and written back, so what is stored is what is shown",
-    d.puts.length === 1 && d.lastPut().body.truegold === 5,
-    JSON.stringify(d.puts.map(function (p) { return p.body.truegold; }))
+    "the banner says the correction is not on disk yet",
+    /next edit saves/.test(d.notice()),
+    d.notice()
   );
 
   var before = d.puts.length;
@@ -648,14 +704,95 @@ async function suiteClampOnLoad() {
     d.puts.length === before + 1 && d.lastPut().body.infantry["1"] === 5,
     "puts=+" + (d.puts.length - before)
   );
-  check("no field is left flagged invalid", t.classes.invalid === false && d.scalar("truegold").classes.invalid === false);
+  check(
+    "and that first edit carries the corrected value to disk",
+    d.lastPut().body.truegold === 5,
+    String(d.lastPut().body.truegold)
+  );
+  check(
+    "no field is left flagged invalid",
+    t.classes.invalid === false && d.scalar("truegold").classes.invalid === false
+  );
+
+  // Below min is the same class of bug: troops_form.py renders a negative
+  // straight through, readInt() rejects it, and save() blocks on every field.
+  var neg = makeDom({ tierValues: { "infantry:1": "-3" } });
+  loadTroopsEditor();
+  await settle();
+  check("a value below min is pulled up to the bound", neg.tier("infantry", 1).value === "0", neg.tier("infantry", 1).value);
+  check("clamping a negative fires no PUT either", neg.puts.length === 0, "puts=" + neg.puts.length);
+  check(
+    "the negative is named in the banner",
+    /infantry T1 was -3, shown as 0/.test(neg.notice()),
+    neg.notice()
+  );
+  var t2 = neg.tier("cavalry", 3);
+  t2.value = "9";
+  t2.fire("blur");
+  await settle();
+  check(
+    "an unrelated field saves despite the negative on disk",
+    neg.puts.length === 1 && neg.lastPut().body.cavalry["3"] === 9,
+    "puts=" + neg.puts.length
+  );
+  check("and the repaired negative goes with it", neg.lastPut().body.infantry["1"] === 0);
+
+  // Not everything can be repaired: a count past Number.MAX_SAFE_INTEGER has
+  // no defensible replacement. It must be flagged and named, not swallowed.
+  var huge = makeDom({ tierValues: { "archers:2": "99999999999999999999" } });
+  loadTroopsEditor();
+  await settle();
+  check("an unclampable value is left alone", huge.tier("archers", 2).value === "99999999999999999999");
+  check("and fires no PUT", huge.puts.length === 0, "puts=" + huge.puts.length);
+  check(
+    "it is flagged on load rather than on a save the user cannot trigger",
+    huge.tier("archers", 2).classes.invalid === true &&
+      huge.tier("archers", 2).getAttribute("aria-invalid") === "true"
+  );
+  check(
+    "and the banner explains that nothing can save until it is fixed",
+    /Nothing can save until you fix: archers T2 must be a whole number/.test(huge.notice()),
+    huge.notice()
+  );
+
+  // Both at once: the case where a toast lost the clamp notice to the
+  // validation error raised a moment later.
+  var both = makeDom({ truegold: 7, tierValues: { "archers:2": "99999999999999999999" } });
+  loadTroopsEditor();
+  await settle();
+  record("both_notice", both.notice());
+  check(
+    "a clamp and an unrepairable value are both reported, not one over the other",
+    /Truegold was 7, shown as 5/.test(both.notice()) &&
+      /Nothing can save until you fix: archers T2/.test(both.notice()),
+    both.notice()
+  );
+  check("still no PUT", both.puts.length === 0, "puts=" + both.puts.length);
+  var t3 = both.tier("cavalry", 3);
+  t3.value = "9";
+  t3.fire("blur");
+  await settle();
+  check(
+    "the surviving validation error still blocks the save, as it must",
+    both.puts.length === 0 && both.toasts.length === 1,
+    "puts=" + both.puts.length + " toasts=" + JSON.stringify(both.toasts)
+  );
+  check(
+    "and the banner is still on screen next to that toast",
+    /Truegold was 7/.test(both.notice()),
+    both.notice()
+  );
 
   // Control: an in-range document is left completely alone.
   var clean = makeDom({ truegold: 5 });
   loadTroopsEditor();
   await settle();
-  check("an in-range document is not touched on load", clean.puts.length === 0 && clean.toasts.length === 0,
-        "puts=" + clean.puts.length + " toasts=" + clean.toasts.length);
+  check(
+    "an in-range document is not touched on load",
+    clean.puts.length === 0 && clean.toasts.length === 0 && clean.notice() === "",
+    "puts=" + clean.puts.length + " toasts=" + clean.toasts.length + " notice=" + clean.notice()
+  );
+  check("and its banner stays hidden", clean.noticeEl.hidden === true);
 }
 
 /* Live totals must be grouped the way Jinja's "{:,}".format grouped them, not
@@ -677,6 +814,9 @@ async function suiteLocale() {
     t.fire("input");
     var shown = d.total("infantry");
     record("live_total_infantry", shown);
+    // Holds on any engine: the sentinel only proves that *some* locale was
+    // passed, which is the actual fix. Whether the result is comma-grouped
+    // depends on the engine having Intl, checked separately below.
     check(
       "live totals pin their grouping instead of following the viewer's locale",
       shown.indexOf("LOCALE-DEFAULT") === -1,
@@ -685,6 +825,20 @@ async function suiteLocale() {
   } finally {
     Number.prototype.toLocaleString = original;
   }
+}
+
+/* qjs and d8 are routinely built without Intl, and node can be built with
+   --without-intl; there, toLocaleString("en-US") returns ungrouped digits
+   however correct the source is. Reported so the Python side can skip the
+   exact-string comparison instead of failing with a baffling diff. */
+function detectIntlGrouping() {
+  try {
+    INTL_GROUPING = (1234567).toLocaleString("en-US") === "1,234,567";
+  } catch (err) {
+    INTL_GROUPING = false;
+  }
+  record("intl_grouping", INTL_GROUPING);
+  record("intl_present", typeof Intl !== "undefined");
 }
 
 /* app.js: the shared live region must be un-hidden before its text is written,
@@ -733,6 +887,7 @@ function suiteToastOrder() {
 
 (async function main() {
   try {
+    detectIntlGrouping();
     await suiteSaving();
     await suiteInFlight();
     await suiteClampOnLoad();

@@ -825,6 +825,13 @@ def test_troops_editor_script_is_served(tmp_path: Path) -> None:
     ).read_text(encoding="utf-8")
     assert r.text == on_disk
 
+    # The script reports a load-time clamp into a persistent banner rather
+    # than the shared #toast, which the next message overwrites. The JS
+    # harness supplies that element from its fake DOM, so it cannot notice if
+    # the template stops shipping it — hence this end of the contract.
+    assert 'id="troops-repair-notice"' in page
+    assert 'getElementById("troops-repair-notice")' in on_disk
+
 
 def test_shared_app_js_is_loaded_by_every_shell_page(tmp_path: Path) -> None:
     """Task 5 extracts the duplicated inline showToast; this task lands the
