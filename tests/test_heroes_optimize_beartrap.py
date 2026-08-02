@@ -168,3 +168,70 @@ def test_beartrap_recommend_only_starter_or_joiner() -> None:
     result = recommend(heroes, catalog, troops, scenarios, event=event)
     assert result.recommended_mode in {"rally_lead", "joiner"}
     assert result.expected_personal_points > 0
+
+
+def test_beartrap_rally_lead_uses_damage_simulator() -> None:
+    from ks.heroes.optimize.bear_damage import BeartrapBuffs, load_beartrap_buffs
+    from ks.heroes.optimize.troop_stats import load_troop_stats
+
+    root = Path(__file__).resolve().parents[1]
+    event = load_event_profile(root / "config" / "events" / "beartrap.yaml")
+    scenarios = load_scenarios(root / "config" / "point_scenarios_beartrap.yaml")
+    troop_stats = load_troop_stats(root / "config" / "troop_stats.yaml")
+    buffs = load_beartrap_buffs(root / "config" / "beartrap_buffs.yaml")
+    assert isinstance(buffs, BeartrapBuffs)
+
+    heroes = [
+        HeroRecord(name="Amadeus", power=2000, escorts=100, stars=5),
+        HeroRecord(name="Petra", power=1800, escorts=100, stars=5),
+        HeroRecord(name="Marlin", power=1700, escorts=100, stars=5),
+    ]
+    catalog = {
+        "Amadeus": CatalogEntry(
+            name="Amadeus",
+            troop="infantry",
+            widget_type="attack",
+            rally_widget_priority=5,
+            effects=(EffectTag("rally_attack", 15.0, "widget"),),
+        ),
+        "Petra": CatalogEntry(
+            name="Petra",
+            troop="cavalry",
+            widget_type="attack",
+            rally_widget_priority=4,
+            effects=(EffectTag("rally_attack", 15.0, "widget"),),
+        ),
+        "Marlin": CatalogEntry(
+            name="Marlin",
+            troop="archer",
+            widget_type="attack",
+            rally_widget_priority=3,
+            effects=(EffectTag("rally_lethality", 15.0, "widget"),),
+        ),
+    }
+    troops = TroopsConfig(
+        infantry=30_000,
+        cavalry=30_000,
+        archers=40_000,
+        march_capacity=18_000,
+        infantry_levels=((6, 30_000),),
+        cavalry_levels=((6, 30_000),),
+        archers_levels=((6, 40_000),),
+    )
+    result = recommend(
+        heroes,
+        catalog,
+        troops,
+        scenarios,
+        force_mode="rally_lead",
+        event=event,
+        troop_stats=troop_stats,
+        beartrap_buffs=buffs,
+    )
+    assert result.recommended_mode == "rally_lead"
+    assert "bear_damage" in result.breakdown
+    assert result.breakdown["skillmod"] > 0
+    assert result.troops["archers"] >= result.troops["infantry"]
+    assert sum(result.troops.values()) == result.effective_capacity
+    assert result.expected_personal_points == result.breakdown["bear_damage"]
+    assert result.effective_capacity == 18_000 + 300  # escorts
