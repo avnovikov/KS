@@ -7,11 +7,13 @@ from typing import Any
 
 import yaml
 
+from ks.heroes.gear_config import DEFAULT_GEAR_CONFIG
+
 TYPE_KEYS = ("infantry", "cavalry", "archers")
 TIERS = tuple(range(1, 12))
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_TROOPS_PATH = _PROJECT_ROOT / "config" / "troops.yaml"
+# Same config/ directory as gear.yaml / heroes.yaml (not relative to ui/).
+DEFAULT_TROOPS_PATH = DEFAULT_GEAR_CONFIG.parent / "troops.yaml"
 
 
 def _empty_levels() -> dict[int, int]:
