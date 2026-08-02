@@ -344,25 +344,71 @@ def collect_heroes(
         def _after_upsert(hero: HeroRecord) -> None:
             if not last_breakdown:
                 return
-            from ks.heroes.power_history import record_breakdown_for_hero
+            from dataclasses import replace
 
-            breakdown = last_breakdown[0]
+            from ks.heroes.power_history import record_breakdown_for_hero
+            from ks.heroes.power_i_capture import PowerICapture
+
+            captured = last_breakdown[0]
             last_breakdown.clear()
+            if isinstance(captured, PowerICapture):
+                breakdown = captured.breakdown
+                observed = captured.observed_name
+                raw_name = captured.raw_name
+            else:
+                # Back-compat if tests pass a bare PowerBreakdown.
+                breakdown = captured
+                observed = None
+                raw_name = ""
+
+            # Prefer on-screen name when it resolves to a known store hero —
+            # roster keep_name/templates can label the wrong cell after layout drift.
+            target = hero
+            if observed:
+                match = next(
+                    (h for h in store.all_heroes() if h.name.lower() == observed.lower()),
+                    None,
+                )
+                if match is not None:
+                    if match.name != hero.name:
+                        print(
+                            f"power-i name correct {hero.name!r} → {match.name!r} "
+                            f"(raw={raw_name!r})"
+                        )
+                    target = replace(
+                        match,
+                        stars=hero.stars if hero.stars is not None else match.stars,
+                        pellets=hero.pellets
+                        if hero.pellets is not None
+                        else match.pellets,
+                        skills=hero.skills or match.skills,
+                        scraped_at=hero.scraped_at or match.scraped_at,
+                    )
+
+            naked = breakdown.naked_or_total_minus_gear()
+            if naked is not None:
+                target = replace(target, power=int(naked))
+                store.upsert(target)
+                print(f"naked power {target.name} ← {naked} (Power-i Level+Stars+Skills)")
+
             try:
-                appended = record_breakdown_for_hero(history_dir, hero, breakdown)
+                appended = record_breakdown_for_hero(history_dir, target, breakdown)
             except Exception as exc:  # noqa: BLE001
-                print(f"warn: power history write failed for {hero.name}: {exc}")
+                print(f"warn: power history write failed for {target.name}: {exc}")
                 return
             print(
-                f"power history {'append' if appended else 'unchanged'} {hero.name} "
-                f"L={hero.level} Plvl={breakdown.from_level}"
+                f"power history {'append' if appended else 'unchanged'} {target.name} "
+                f"L={target.level} Plvl={breakdown.from_level} naked={naked}"
             )
             if on_progress is not None:
                 on_progress(
                     "power_history",
                     {
-                        "name": hero.name,
+                        "name": target.name,
+                        "observed_name": observed,
+                        "slot_name": hero.name,
                         "appended": appended,
+                        "naked_power": naked,
                         "from_level": breakdown.from_level,
                         "from_stars": breakdown.from_stars,
                         "from_skills": breakdown.from_skills,

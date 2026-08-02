@@ -33,10 +33,20 @@ class PowerBreakdown:
 
     @property
     def naked(self) -> int | None:
+        """Hero power without gear: Level + Stars + Skills."""
         parts = [self.from_level, self.from_stars, self.from_skills]
         if any(p is None for p in parts):
             return None
         return int(parts[0]) + int(parts[1]) + int(parts[2])  # type: ignore[arg-type]
+
+    def naked_or_total_minus_gear(self) -> int | None:
+        """Prefer component sum; else hero_power − gear when both present."""
+        naked = self.naked
+        if naked is not None:
+            return naked
+        if self.hero_power is not None and self.gear_strength is not None:
+            return int(self.hero_power) - int(self.gear_strength)
+        return None
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
