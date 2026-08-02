@@ -7,7 +7,8 @@ def test_cli_dry_run(capsys):
     out = capsys.readouterr().out
     assert "dry-run" in out
     assert "roster cells: 16" in out
-    assert "skill slots: 6" in out
+    # Skill-slot counts became per-rarity; assert each so a dropped tier fails.
+    assert "skill slots: rare=4 epic=5 legendary=6" in out
 
 
 def test_cli_bad_config(tmp_path, capsys):
