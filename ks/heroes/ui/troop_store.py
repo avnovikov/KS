@@ -102,18 +102,38 @@ class TroopStore:
         also means arbitrary junk keys the caller sends persist into the
         YAML right alongside the fields we understand.
 
+        An existing on-disk document that fails to *parse* (corrupt YAML —
+        e.g. from the non-atomic write_text below being interrupted mid-
+        save) is treated as "nothing to merge from", not as a merge
+        failure: merging into garbage is meaningless anyway, and a complete,
+        valid `data` must still be able to repair a corrupted file through
+        this same method — that self-healing path existed when save_raw was
+        a blind overwrite, and merging must not remove it. A document that
+        parses but is not a mapping (e.g. a YAML list) is a different,
+        narrower failure and is NOT given this treatment: load_raw()'s
+        ValueError for that case still propagates (a body that omits every
+        key would otherwise "merge" into an empty document, which is likely
+        not what a caller sending that shape intended).
+
         Validates the *merged* result via troops_config_from_dict. Raises
         ValueError on an invalid merged shape: either troops_config_from_dict's
         own ValueError messages, or its TypeError (e.g. `int(None)` for a
         null march_capacity/tier count) re-raised as ValueError so HTTP
         callers can map it to 422 the same way as any other validation
-        failure.
+        failure. load_raw()'s ValueError (non-mapping content) also
+        propagates as-is. FileNotFoundError can propagate from
+        ensure_exists() if `seed_from` is configured but missing (Minor 10)
+        — a deploy/config error, not a data error, so it is not swallowed
+        here.
         """
         if not isinstance(data, dict):
             raise ValueError(
                 f"troops data must be a mapping; got {type(data).__name__}"
             )
-        existing = self.load_raw()
+        try:
+            existing = self.load_raw()
+        except yaml.YAMLError:
+            existing = {}
         merged = {**existing, **data}
         try:
             troops_config_from_dict(merged)

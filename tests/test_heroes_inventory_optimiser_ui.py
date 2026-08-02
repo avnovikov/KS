@@ -584,6 +584,39 @@ def test_get_troops_returns_422_on_corrupt_yaml(tmp_path: Path) -> None:
     assert r.json()["detail"]
 
 
+def test_put_troops_repairs_corrupt_on_disk_file(tmp_path: Path) -> None:
+    """Fix wave 2 regression: save_raw() became read-modify-write for the
+    Important 3 merge, so a PUT with unreadable existing content on disk
+    used to 500 (yaml.YAMLError propagating from the load-before-merge, not
+    caught by the route's `except ValueError`). A blind-overwrite PUT could
+    always repair a corrupt troops.yaml before that change; merging must not
+    remove that self-healing path. save_raw() now treats an existing
+    document that fails to *parse* as "nothing to merge from", so a
+    complete, valid PUT body still repairs the file.
+    """
+    c = _client(tmp_path, with_gear=False)
+    assert c.get("/api/troops").status_code == 200  # seeds the file first
+    troops_path = tmp_path / "heroes" / "troops.yaml"
+    troops_path.write_text("march_capacity: [unterminated\n", encoding="utf-8")
+
+    good = {
+        "march_capacity": 12345,
+        "truegold": 2,
+        "infantry": {"1": 10},
+        "cavalry": {"1": 5},
+        "archers": {"1": 3},
+    }
+    r = c.put("/api/troops", json=good)
+    assert r.status_code == 200, r.text
+    assert r.json()["troops"]["march_capacity"] == 12345
+
+    again = c.get("/api/troops")
+    assert again.status_code == 200
+    assert again.json()["troops"]["march_capacity"] == 12345
+    # File itself is valid YAML again, not just the API's view of it.
+    assert yaml.safe_load(troops_path.read_text(encoding="utf-8"))["march_capacity"] == 12345
+
+
 def test_get_troops_returns_422_on_invalid_content(tmp_path: Path) -> None:
     """Important 2: valid YAML that fails troops validation (missing a
     required key) must also surface as 422 with the validator's message —
@@ -778,6 +811,15 @@ def test_gear_xp_api_uses_edited_march_capacity_and_tier_counts_not_repo_file(
     # for "swordland" by hand, loading troops explicitly from the edited
     # file — independent of whichever path the code under test actually
     # reads for the TroopsConfig half of the wiring.
+    #
+    # This intentionally mirrors two specific choices made in
+    # ks/heroes/optimize/spend_xp.py's build_event_utility(): the
+    # gear_profile="early_game_growth" literal set for the sword/swordland
+    # branch, and the `max(results.values(), key=lambda r:
+    # r.expected_personal_points)` mode-selection rule in its no-`mode`
+    # branch. If either of those legitimately changes, update the
+    # corresponding line below to match, or this test starts asserting
+    # against a stale ground truth.
     from ks.heroes.optimize.catalog import load_catalog
     from ks.heroes.optimize.events import load_event_profile
     from ks.heroes.optimize.recommend import recommend_all_modes
