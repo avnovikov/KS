@@ -19,8 +19,15 @@ def collect_gear(
     ocr_fn=None,
     sleep_fn: Callable[[float], None] | None = None,
     scrape_fn=None,
+    on_progress: Callable[[str, object], None] | None = None,
 ) -> list[GearRecord]:
-    """Walk the gear grid with paging; upsert each scraped piece into store."""
+    """Walk the gear grid with paging; upsert each scraped piece into store.
+
+    Emits progress events via on_progress(event_type, payload):
+      "piece"     — new or updated piece stored
+      "kept"      — piece stored but locked level(s) preserved from prior record
+      "duplicate" — piece skipped (same identity key already seen this run)
+    """
     sleep = sleep_fn or time.sleep
     scrape = scrape_fn or scrape_gear_piece
     seen: set[str] = set()
@@ -51,7 +58,6 @@ def collect_gear(
             if opened:
                 close_gear_detail(device, cfg, sleep_fn=sleep)
             else:
-                # Empty cell or mis-tap — brief settle, no close needed
                 sleep(cfg.delays.after_tap_ms / 1000.0)
 
             if piece is None:
@@ -63,17 +69,29 @@ def collect_gear(
                     f"warn: gear dedupe skip page={page} index={index} "
                     f"key={dedupe_key}"
                 )
+                if on_progress is not None:
+                    on_progress("duplicate", {"piece_id": piece.piece_id, "key": dedupe_key})
                 continue
             seen.add(dedupe_key)
-            store.upsert(piece)
-            collected.append(piece)
+
+            # Capture OCR levels before merge so we can detect lock preservation.
+            ocr_enh = piece.enhancement_level
+            ocr_mastery = piece.mastery_level
+            prev = store.get(piece.piece_id)
+
+            stored = store.upsert(piece)
+            collected.append(stored)
             page_new += 1
-            label = piece.name or piece.piece_id
+            label = stored.name or stored.piece_id
             print(
                 f"collected [{len(collected)}] {label} "
-                f"+{piece.enhancement_level} mastery={piece.mastery_level} "
-                f"power={piece.power}"
+                f"+{stored.enhancement_level} mastery={stored.mastery_level} "
+                f"power={stored.power}"
             )
+
+            if on_progress is not None:
+                kept = _lock_was_preserved(prev, stored, ocr_enh, ocr_mastery)
+                on_progress("kept" if kept else "piece", {"piece_id": stored.piece_id, "piece": stored})
 
         if page_new == 0:
             break
@@ -85,6 +103,28 @@ def collect_gear(
         sleep(cfg.delays.after_open_ms / 1000.0)
 
     return collected
+
+
+def _lock_was_preserved(
+    prev: GearRecord | None,
+    stored: GearRecord,
+    ocr_enh: int | None,
+    ocr_mastery: int | None,
+) -> bool:
+    """True when OCR missed a level but the prior locked value was kept."""
+    if prev is None:
+        return False
+    enh_preserved = (
+        ocr_enh is None
+        and stored.enhancement_level is not None
+        and stored.enhancement_level == prev.enhancement_level
+    )
+    mastery_preserved = (
+        ocr_mastery is None
+        and stored.mastery_level is not None
+        and stored.mastery_level == prev.mastery_level
+    )
+    return enh_preserved or mastery_preserved
 
 
 def _dedupe_key(piece: GearRecord) -> str:

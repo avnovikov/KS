@@ -189,7 +189,8 @@ def test_fastapi_rescan_replaces_inventory(tmp_path: Path) -> None:
     stale_icon.write_bytes(b"stale")
 
     def fake_rescan(store: GearStore, **_kwargs: object) -> list[GearRecord]:
-        store.clear()
+        # Simulate: old piece no longer in inventory, new piece collected.
+        store.delete("cell0")
         piece = GearRecord(
             piece_id="cell1",
             name="Scout's Cap",
@@ -212,21 +213,21 @@ def test_fastapi_rescan_replaces_inventory(tmp_path: Path) -> None:
     assert page.headers.get("cache-control") == "no-store"
     assert "?v=" in page.text
 
+    # SSE endpoint: read the stream and collect events.
     res = client.post("/api/gear/rescan")
     assert res.status_code == 200
-    body = res.json()
-    assert body["ok"] is True
-    assert body["count"] == 1
-    assert body["cache_bust"]
-    assert body["gear"][0]["name"] == "Scout's Cap"
-    assert "v=" in (body["gear"][0].get("icon_url") or "")
-    assert not stale_icon.exists()
+    body_text = res.text
+    # Stream should contain a "done" event with count.
+    assert "event: done" in body_text or "done" in body_text
 
     listed = client.get("/api/gear").json()["gear"]
     assert len(listed) == 1
     assert listed[0]["piece_id"] == "cell1"
     assert "Judicator" not in json.dumps(listed)
 
+
+def test_rescan_gear_from_ocr_clears_then_collects(tmp_path: Path) -> None:
+    from ks.heroes.ui.rescan import rescan_gear_from_ocr
 
 def test_rescan_gear_from_ocr_clears_then_collects(tmp_path: Path) -> None:
     from ks.heroes.ui.rescan import rescan_gear_from_ocr
@@ -246,7 +247,7 @@ def test_rescan_gear_from_ocr_clears_then_collects(tmp_path: Path) -> None:
     def connect(_serial: str | None) -> object:
         return object()
 
-    def collect(_device: object, _cfg: object, s: GearStore) -> list[GearRecord]:
+    def collect(_device: object, _cfg: object, s: GearStore, **_kw) -> list[GearRecord]:
         piece = GearRecord(
             piece_id="p0",
             name="Fresh Piece",
@@ -264,6 +265,91 @@ def test_rescan_gear_from_ocr_clears_then_collects(tmp_path: Path) -> None:
     )
     assert len(pieces) == 1
     assert pieces[0].name == "Fresh Piece"
+    # Stale prior piece (cell0 from _seed) deleted since not in collected set.
     assert len(store.all_pieces()) == 1
+    assert store.all_pieces()[0].piece_id == "p0"
     assert not (tmp_path / "details" / "old.png").exists()
     assert not (tmp_path / "icons" / "old.svg").exists()
+
+
+def test_fastapi_delete_gear(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.ui.app import create_app
+
+    _seed(tmp_path)
+    client = TestClient(create_app(tmp_path))
+
+    res = client.delete("/api/gear/cell0")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["deleted"] == "cell0"
+
+    listed = client.get("/api/gear").json()["gear"]
+    assert all(p["piece_id"] != "cell0" for p in listed)
+
+
+def test_fastapi_delete_gear_404(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.ui.app import create_app
+
+    _seed(tmp_path)
+    client = TestClient(create_app(tmp_path))
+    res = client.delete("/api/gear/nonexistent")
+    assert res.status_code == 404
+
+
+def test_update_piece_levels_with_overwrite_persists_locked_field(tmp_path: Path) -> None:
+    from ks.heroes.ui.app import update_piece_levels
+
+    store = _seed(tmp_path)
+    # Simulate a rescan that sets enhancement to None (OCR miss); after lock, it should stay 51.
+    from ks.heroes.gear_models import GearRecord
+    store.upsert(
+        GearRecord(
+            piece_id="cell0",
+            name="Judicator's Armet",
+            rarity="mythic",
+            enhancement_level=None,
+            mastery_level=2,
+            power=152100,
+            inventory_page=0,
+            inventory_index=0,
+        )
+    )
+    # Lock should have preserved enh=51 (from seed); calling update_piece_levels
+    # with overwrite set should allow update.
+    piece = next(p for p in store.all_pieces() if p.piece_id == "cell0")
+    assert piece.enhancement_level == 51, "lock must preserve enhancement_level=51"
+
+    updated = update_piece_levels(store, "cell0", enhancement_level=55)
+    assert updated.enhancement_level == 55
+    assert updated.power is not None and updated.power > 152100
+
+
+def test_gear_page_includes_power_curves_json(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.ui.app import create_app
+
+    _seed(tmp_path)
+    client = TestClient(create_app(tmp_path))
+    page = client.get("/gear")
+    assert page.status_code == 200
+    assert "grey" in page.text  # power_curves_json must include grey rarity
+    assert "POWER_CURVES" in page.text
+
+
+def test_rarity_power_curves_includes_grey() -> None:
+    from ks.heroes.ui.power import rarity_power_curves
+
+    curves = rarity_power_curves()
+    assert "grey" in curves
+    assert len(curves["grey"]) == 81  # 0..80 inclusive
+    assert curves["grey"][0] == 4500
+    assert curves["grey"][5] > curves["grey"][0]

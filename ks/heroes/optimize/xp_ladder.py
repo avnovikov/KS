@@ -49,19 +49,30 @@ def load_xp_ladder(*, path: Path | None = None) -> dict[str, Any]:
             "epic_max": int(caps.get("epic_max", 80)),
             "mythic_max": int(caps.get("mythic_max", 100)),
             "red_max": int(caps.get("red_max", 200)),
+            "blue_max": int(caps.get("blue_max", 60)),
+            "green_max": int(caps.get("green_max", 40)),
+            "grey_max": int(caps.get("grey_max", 20)),
         },
         "by_level": by_level,
     }
 
 
 def cap_for_rarity(rarity: str | None, *, ladder: dict[str, Any] | None = None) -> int:
+    """Max enhancement level by rarity (community caps + optimizer ladder)."""
     caps = (ladder or load_xp_ladder())["caps"]
     key = (rarity or "").strip().lower()
     if key in {"red"}:
         return int(caps["red_max"])
     if key in {"mythic", "gold"}:
         return int(caps["mythic_max"])
-    # grey/green/blue/epic/purple and unknown → epic_max as safe soft cap for v1
+    if key in {"epic", "purple"}:
+        return int(caps["epic_max"])
+    if key in {"blue", "rare"}:
+        return int(caps.get("blue_max", 60))
+    if key in {"green", "uncommon"}:
+        return int(caps.get("green_max", 40))
+    if key in {"grey", "gray", "common"}:
+        return int(caps.get("grey_max", 20))
     return int(caps["epic_max"])
 
 

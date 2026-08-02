@@ -46,7 +46,7 @@ def with_cache_bust(url: str | None, bust: str) -> str | None:
 
 try:
     from fastapi import Body, FastAPI, HTTPException, Request
-    from fastapi.responses import HTMLResponse, RedirectResponse
+    from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
     from fastapi.staticfiles import StaticFiles
     from fastapi.templating import Jinja2Templates
 except ImportError:  # pragma: no cover - exercised when ui extras missing
@@ -56,6 +56,7 @@ except ImportError:  # pragma: no cover - exercised when ui extras missing
     Request = None  # type: ignore[assignment,misc]
     HTMLResponse = None  # type: ignore[assignment,misc]
     RedirectResponse = None  # type: ignore[assignment,misc]
+    StreamingResponse = None  # type: ignore[assignment,misc]
     StaticFiles = None  # type: ignore[assignment,misc]
     Jinja2Templates = None  # type: ignore[assignment,misc]
 
@@ -135,7 +136,8 @@ def update_piece_levels(
         return piece
     updated = replace(piece, **updates)
     updated = sync_piece_power(updated)
-    store.upsert(updated)
+    overwrite = frozenset(updates.keys()) | {"power"}
+    store.upsert(updated, overwrite=overwrite)
     return updated
 
 
@@ -282,6 +284,9 @@ def create_app(
 
     @app.get("/gear", response_class=HTMLResponse)
     def gear_page(request: Request) -> HTMLResponse:
+        from ks.heroes.ui.power import rarity_power_curves
+        import json as _json
+
         gear_path, store = _require_gear()
         store.reload()
         pieces = store.all_pieces()
@@ -300,6 +305,7 @@ def create_app(
                 "cache_bust": bust,
                 "gear_enabled": True,
                 "heroes_enabled": resolved_heroes is not None,
+                "power_curves_json": _json.dumps(rarity_power_curves()),
             },
         )
         response.headers["Cache-Control"] = "no-store"
@@ -324,48 +330,72 @@ def create_app(
         }
 
     @app.post("/api/gear/rescan")
-    def api_rescan_gear() -> dict[str, Any]:
-        """Replace inventory via ADB OCR (Backpack > Gear must be open)."""
+    def api_rescan_gear() -> StreamingResponse:
+        """Walk Backpack > Gear via ADB OCR; emit SSE events per piece."""
         gear_path, store = _require_gear()
         if not gear_rescan_lock.acquire(blocking=False):
             raise HTTPException(
                 status_code=409,
                 detail="gear rescan already in progress",
             )
-        try:
-            pieces = do_gear_rescan(
-                store,
-                config_path=gear_config_path,
-                serial=serial,
-            )
-            store.reload()
-            pieces = store.all_pieces()
-            icons_path = gear_path / "icons"
-            if icons_path.is_dir():
-                shutil.rmtree(icons_path)
-            icons_path.mkdir(parents=True, exist_ok=True)
-            json_path = gear_path / "gear.json"
-            if json_path.is_file():
-                now = time.time()
-                os.utime(json_path, (now, now))
-        except Exception as exc:  # noqa: BLE001 — surface ADB/OCR failures to UI
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        finally:
-            gear_rescan_lock.release()
-        bust = inventory_revision(gear_path, "gear.json")
-        icon_map = ensure_all_icons(pieces, gear_path)
-        return {
-            "ok": True,
-            "count": len(pieces),
-            "cache_bust": bust,
-            "gear": [
-                {
-                    **p.to_dict(),
-                    "icon_url": with_cache_bust(icon_map.get(p.piece_id), bust),
-                }
-                for p in pieces
-            ],
-        }
+
+        def _generate():
+            import json as _json
+
+            try:
+                events: list[tuple[str, object]] = []
+
+                def _on_progress(event: str, payload: object) -> None:
+                    events.append((event, payload))
+
+                do_gear_rescan(
+                    store,
+                    config_path=gear_config_path,
+                    serial=serial,
+                    on_progress=_on_progress,
+                )
+                # Flush queued events (collect_fn may buffer them).
+                for ev, payload in events:
+                    if ev in {"piece", "kept"}:
+                        piece = payload.get("piece") if isinstance(payload, dict) else None
+                        data = {"piece_id": payload.get("piece_id") if isinstance(payload, dict) else ""}
+                        if piece is not None:
+                            data["name"] = piece.name
+                            data["power"] = piece.power
+                            data["enhancement_level"] = piece.enhancement_level
+                            data["mastery_level"] = piece.mastery_level
+                            data["rarity"] = piece.rarity
+                        yield f"event: {ev}\ndata: {_json.dumps(data)}\n\n"
+                    elif ev == "duplicate":
+                        yield f"event: duplicate\ndata: {_json.dumps(payload if isinstance(payload, dict) else {})}\n\n"
+                store.reload()
+                pieces = store.all_pieces()
+                json_path = gear_path / "gear.json"
+                if json_path.is_file():
+                    now = time.time()
+                    os.utime(json_path, (now, now))
+                bust = inventory_revision(gear_path, "gear.json")
+                yield f"event: done\ndata: {_json.dumps({'count': len(pieces), 'cache_bust': bust})}\n\n"
+            except Exception as exc:  # noqa: BLE001 — surface ADB/OCR failures to UI
+                import json as _json
+                yield f"event: error\ndata: {_json.dumps({'detail': str(exc)})}\n\n"
+            finally:
+                gear_rescan_lock.release()
+
+        return StreamingResponse(
+            _generate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.delete("/api/gear/{piece_id}")
+    def api_delete_gear(piece_id: str) -> dict[str, Any]:
+        """Remove a consumed or stale piece from the inventory."""
+        _, store = _require_gear()
+        deleted = store.delete(piece_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"piece not found: {piece_id}")
+        return {"ok": True, "deleted": piece_id}
 
     @app.patch("/api/gear/{piece_id}")
     async def api_patch_gear(piece_id: str, request: Request) -> dict[str, Any]:
@@ -500,44 +530,52 @@ def create_app(
         }
 
     @app.post("/api/heroes/rescan")
-    def api_rescan_heroes() -> dict[str, Any]:
-        """Upsert roster via ADB OCR (Heroes roster must be open)."""
+    def api_rescan_heroes() -> StreamingResponse:
+        """Upsert roster via ADB OCR (Heroes roster must be open); emits SSE events."""
         heroes_path, store = _require_heroes()
         if not heroes_rescan_lock.acquire(blocking=False):
             raise HTTPException(
                 status_code=409,
                 detail="heroes rescan already in progress",
             )
-        try:
-            do_heroes_rescan(
-                store,
-                config_path=heroes_config_path,
-                serial=serial,
-            )
-            store.reload()
-            heroes = store.all_heroes()
-            json_path = heroes_path / "heroes.json"
-            if json_path.is_file():
-                now = time.time()
-                os.utime(json_path, (now, now))
-        except Exception as exc:  # noqa: BLE001 — surface ADB/OCR failures to UI
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        finally:
-            heroes_rescan_lock.release()
-        bust = inventory_revision(heroes_path, "heroes.json")
-        icon_map = ensure_all_hero_icons(heroes, heroes_path)
-        return {
-            "ok": True,
-            "count": len(heroes),
-            "cache_bust": bust,
-            "heroes": [
-                {
-                    **h.to_dict(),
-                    "icon_url": with_cache_bust(icon_map.get(h.name), bust),
-                }
-                for h in heroes
-            ],
-        }
+
+        def _generate():
+            import json as _json
+
+            try:
+                events: list[tuple[str, object]] = []
+
+                def _on_progress(event: str, payload: object) -> None:
+                    events.append((event, payload))
+
+                do_heroes_rescan(
+                    store,
+                    config_path=heroes_config_path,
+                    serial=serial,
+                    on_progress=_on_progress,
+                )
+                for ev, payload in events:
+                    data = payload if isinstance(payload, dict) else {}
+                    yield f"event: {ev}\ndata: {_json.dumps(data)}\n\n"
+                store.reload()
+                heroes = store.all_heroes()
+                json_path = heroes_path / "heroes.json"
+                if json_path.is_file():
+                    now = time.time()
+                    os.utime(json_path, (now, now))
+                bust = inventory_revision(heroes_path, "heroes.json")
+                yield f"event: done\ndata: {_json.dumps({'count': len(heroes), 'cache_bust': bust})}\n\n"
+            except Exception as exc:  # noqa: BLE001 — surface ADB/OCR failures to UI
+                import json as _json
+                yield f"event: error\ndata: {_json.dumps({'detail': str(exc)})}\n\n"
+            finally:
+                heroes_rescan_lock.release()
+
+        return StreamingResponse(
+            _generate(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     def _optimize_ctx(heroes_path: Path) -> dict[str, Any]:
         return {

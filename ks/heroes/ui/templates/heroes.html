@@ -153,8 +153,25 @@
     }
     #toast.ok { border-color: var(--ok); color: var(--ok); display: block; }
     #toast.err { border-color: var(--err); color: var(--err); display: block; }
-
-    .modal-backdrop {
+    #rescan-log {
+      margin: 0.5rem 1.5rem;
+      padding: 0.65rem 0.9rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel);
+      font-size: 0.8rem;
+      color: var(--muted);
+      max-height: 8rem;
+      overflow-y: auto;
+      display: none;
+    }
+    #rescan-log.active { display: block; }
+    #rescan-log .log-line { margin: 0.15rem 0; }
+    #rescan-log .log-line.hero { color: var(--ok); }
+    #rescan-log .log-line.duplicate { color: var(--muted); }
+    #rescan-log .log-line.rematch { color: var(--accent); }
+    #rescan-log .log-line.stopped { color: #f0c674; }
+    #rescan-log .log-line.error { color: var(--err); }
       position: fixed;
       inset: 0;
       background: rgba(0, 0, 0, 0.55);
@@ -263,6 +280,7 @@
       </button>
     </div>
   </header>
+  <div id="rescan-log" aria-live="polite"></div>
   <main>
     <p class="hint">
       Edit stars/pellets mid-event. Click a hero name for full details. Power scales from the last OCR baseline.
@@ -555,28 +573,85 @@
       });
     });
 
+    const rescanLog = document.getElementById("rescan-log");
+    function logHeroLine(text, cls) {
+      if (!rescanLog) return;
+      const div = document.createElement("div");
+      div.className = "log-line" + (cls ? " " + cls : "");
+      div.textContent = text;
+      rescanLog.appendChild(div);
+      rescanLog.scrollTop = rescanLog.scrollHeight;
+    }
+
     const rescanBtn = document.getElementById("rescan-btn");
     if (rescanBtn) {
-      rescanBtn.addEventListener("click", async () => {
+      rescanBtn.addEventListener("click", () => {
         if (rescanBtn.disabled) return;
         rescanBtn.disabled = true;
         rescanBtn.classList.add("busy");
         rescanBtn.textContent = "Scanning…";
-        showToast("OCR rescan started — leave Heroes roster open", true);
-        try {
-          const res = await fetch("/api/heroes/rescan", { method: "POST" });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            throw new Error(data.detail || res.statusText);
-          }
-          showToast("Rescanned " + data.count + " heroes", true);
-          location.reload();
-        } catch (err) {
-          showToast(String(err.message || err), false);
-          rescanBtn.disabled = false;
-          rescanBtn.classList.remove("busy");
-          rescanBtn.textContent = "Rescan from OCR";
-        }
+        if (rescanLog) { rescanLog.innerHTML = ""; rescanLog.classList.add("active"); }
+        logHeroLine("OCR rescan started — leave Heroes roster open");
+
+        fetch("/api/heroes/rescan", { method: "POST", cache: "no-store" })
+          .then(async (res) => {
+            if (!res.ok || !res.body) {
+              const data = await res.json().catch(() => ({}));
+              throw new Error(data.detail || res.statusText);
+            }
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            let lastEvent = "";
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const parts = buffer.split("\n\n");
+              buffer = parts.pop();
+              for (const block of parts) {
+                let evType = lastEvent;
+                let evData = "";
+                for (const line of block.split("\n")) {
+                  if (line.startsWith("event:")) evType = line.slice(6).trim();
+                  else if (line.startsWith("data:")) evData = line.slice(5).trim();
+                }
+                lastEvent = "";
+                if (evType === "hero") {
+                  const d = JSON.parse(evData || "{}");
+                  logHeroLine(`✓ ${d.name || "?"} pwr=${d.power ?? "?"}`, "hero");
+                } else if (evType === "duplicate") {
+                  const d = JSON.parse(evData || "{}");
+                  logHeroLine(`⟳ dup ${d.name || ""}`, "duplicate");
+                } else if (evType === "rematch") {
+                  const d = JSON.parse(evData || "{}");
+                  logHeroLine(`⟲ rematch ${d.name || ""}`, "rematch");
+                } else if (evType === "stopped") {
+                  logHeroLine("⏹ stopped (consecutive duplicates)", "stopped");
+                } else if (evType === "done") {
+                  const d = JSON.parse(evData || "{}");
+                  logHeroLine(`Done · ${d.count ?? 0} heroes`, "hero");
+                  showToast("Rescanned " + (d.count ?? 0) + " heroes", true);
+                  const bust = d.cache_bust || String(Date.now());
+                  setTimeout(() => window.location.replace(`/heroes?v=${encodeURIComponent(bust)}`), 600);
+                } else if (evType === "error") {
+                  const d = JSON.parse(evData || "{}");
+                  logHeroLine(`Error: ${d.detail || evData}`, "error");
+                  showToast(d.detail || "Rescan failed", false);
+                  rescanBtn.disabled = false;
+                  rescanBtn.classList.remove("busy");
+                  rescanBtn.textContent = "Rescan from OCR";
+                }
+              }
+            }
+          })
+          .catch((err) => {
+            logHeroLine(`Error: ${err.message || err}`, "error");
+            showToast(String(err.message || err), false);
+            rescanBtn.disabled = false;
+            rescanBtn.classList.remove("busy");
+            rescanBtn.textContent = "Rescan from OCR";
+          });
       });
     }
   </script>
