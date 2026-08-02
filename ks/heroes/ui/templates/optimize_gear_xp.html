@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KS Gear XP spend</title>
+  <style>
+    :root {
+      --bg: #1a1d23;
+      --panel: #242830;
+      --text: #e8eaed;
+      --muted: #9aa0a6;
+      --accent: #6cb2ff;
+      --ok: #7dcea0;
+      --err: #f1959b;
+      --border: #3a3f4b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.4;
+    }
+    header {
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, #2a303a, var(--bg));
+    }
+    h1 { margin: 0 0 0.35rem; font-size: 1.35rem; font-weight: 600; }
+    .meta { color: var(--muted); font-size: 0.85rem; }
+    .meta a { color: var(--accent); text-decoration: none; }
+    main { padding: 1rem 1.5rem 2.5rem; max-width: 44rem; }
+    .status {
+      min-height: 1.25rem;
+      margin: 0 0 1rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    .status.err { color: var(--err); }
+    .status.ok { color: var(--ok); }
+    section.block {
+      margin-bottom: 1.25rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.1rem;
+    }
+    section.block h2 {
+      margin: 0 0 0.75rem;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+    label {
+      display: block;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 0.25rem;
+    }
+    .field-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+      gap: 0.65rem 0.75rem;
+      margin-bottom: 0.85rem;
+    }
+    input[type="number"], select {
+      width: 100%;
+      padding: 0.4rem 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.9rem;
+    }
+    button {
+      padding: 0.5rem 1rem;
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      background: transparent;
+      color: var(--accent);
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    button:hover { background: rgba(108, 178, 255, 0.12); }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.4rem 0.35rem;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--muted); font-weight: 550; }
+    .summary-line { margin: 0.25rem 0; font-size: 0.9rem; }
+    .muted { color: var(--muted); }
+    #results[hidden] { display: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-text">
+      <h1>Gear XP spend</h1>
+      <div class="meta">
+        <a href="/optimize">← Optimize hub</a>
+        · Propose enhancement spends that raise event utility
+        {% if heroes_dir %} · {{ heroes_dir }}{% endif %}
+      </div>
+      {% set active = "optimize" %}
+      {% include "_nav_tabs.html" %}
+    </div>
+  </header>
+  <main>
+    <p class="status" id="status">
+      {% if not gear_enabled %}
+      Start the UI with <code>--gear</code> (and <code>--heroes</code>) to run Gear XP spend.
+      {% else %}
+      Enter fodder counts and an event, then run.
+      {% endif %}
+    </p>
+
+    <section class="block">
+      <h2>Inputs</h2>
+      <form id="spend-form">
+        <div class="field-row">
+          <div>
+            <label for="event">Event</label>
+            <select id="event" name="event" {% if not gear_enabled %}disabled{% endif %}>
+              <option value="swordland">Swordland (best mode)</option>
+              <option value="beartrap">Bear Trap (best mode)</option>
+              <option value="arena_attack">Arena attack</option>
+              <option value="arena_defense">Arena defense</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
+          <div>
+            <label for="grey">Grey (10 XP)</label>
+            <input type="number" id="grey" name="grey" min="0" value="0" {% if not gear_enabled %}disabled{% endif %} />
+          </div>
+          <div>
+            <label for="green">Green (30 XP)</label>
+            <input type="number" id="green" name="green" min="0" value="0" {% if not gear_enabled %}disabled{% endif %} />
+          </div>
+          <div>
+            <label for="blue">Blue (60 XP)</label>
+            <input type="number" id="blue" name="blue" min="0" value="0" {% if not gear_enabled %}disabled{% endif %} />
+          </div>
+          <div>
+            <label for="purple">Purple (150 XP)</label>
+            <input type="number" id="purple" name="purple" min="0" value="0" {% if not gear_enabled %}disabled{% endif %} />
+          </div>
+          <div>
+            <label for="part_100">100-pt parts</label>
+            <input type="number" id="part_100" name="part_100" min="0" value="0" {% if not gear_enabled %}disabled{% endif %} />
+          </div>
+        </div>
+        <button type="submit" id="run-btn" {% if not gear_enabled %}disabled{% endif %}>Optimize spend</button>
+      </form>
+    </section>
+
+    <section class="block" id="results" hidden>
+      <h2>Result</h2>
+      <p class="summary-line" id="util-line"></p>
+      <p class="summary-line muted" id="lineup-line"></p>
+      <h2 style="margin-top:1rem">Steps</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Piece</th>
+            <th>Levels</th>
+            <th>XP</th>
+            <th>Fodder</th>
+          </tr>
+        </thead>
+        <tbody id="steps-body"></tbody>
+      </table>
+      <p class="summary-line muted" id="leftover-line" style="margin-top:0.75rem"></p>
+    </section>
+  </main>
+  <script>
+    function esc(s) {
+      return String(s ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function fmtFodder(obj) {
+      if (!obj) return "—";
+      return Object.entries(obj)
+        .filter(([, n]) => n > 0)
+        .map(([k, n]) => `${n}×${k}`)
+        .join(", ") || "—";
+    }
+
+    const form = document.getElementById("spend-form");
+    const statusEl = document.getElementById("status");
+    const results = document.getElementById("results");
+    const runBtn = document.getElementById("run-btn");
+    const gearEnabled = {{ "true" if gear_enabled else "false" }};
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!gearEnabled || runBtn.disabled) return;
+      runBtn.disabled = true;
+      statusEl.className = "status";
+      statusEl.textContent = "Running spend search…";
+      results.hidden = true;
+      const body = {
+        event: document.getElementById("event").value,
+        grey: Number(document.getElementById("grey").value) || 0,
+        green: Number(document.getElementById("green").value) || 0,
+        blue: Number(document.getElementById("blue").value) || 0,
+        purple: Number(document.getElementById("purple").value) || 0,
+        part_100: Number(document.getElementById("part_100").value) || 0,
+      };
+      try {
+        const res = await fetch("/api/optimize/gear-xp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.detail || res.statusText || "request failed");
+        }
+        const delta = data.delta_utility ?? (data.best_utility - data.baseline_utility);
+        document.getElementById("util-line").innerHTML =
+          `Utility <strong>${esc(data.baseline_utility?.toFixed?.(1) ?? data.baseline_utility)}</strong>` +
+          ` → <strong>${esc(data.best_utility?.toFixed?.(1) ?? data.best_utility)}</strong>` +
+          ` (Δ ${esc(typeof delta === "number" ? delta.toFixed(1) : delta)})`;
+        const best = data.best_summary || {};
+        const heroes = best.heroes || best.formation || {};
+        let lineupTxt = "";
+        if (Array.isArray(heroes)) {
+          lineupTxt = "Lineup: " + heroes.join(", ");
+        } else if (heroes && typeof heroes === "object") {
+          lineupTxt = "Formation: " + Object.entries(heroes).map(([k, v]) => `${k}=${v}`).join(", ");
+        }
+        if (best.mode) lineupTxt = `Mode: ${best.mode}. ` + lineupTxt;
+        if (best.side) lineupTxt = `Side: ${best.side}. ` + lineupTxt;
+        document.getElementById("lineup-line").textContent = lineupTxt || "—";
+        const tbody = document.getElementById("steps-body");
+        tbody.innerHTML = "";
+        const steps = data.steps || [];
+        if (!steps.length) {
+          tbody.innerHTML = `<tr><td colspan="4" class="muted">No positive-ΔU spends found (or bag empty).</td></tr>`;
+        } else {
+          for (const s of steps) {
+            const tr = document.createElement("tr");
+            tr.innerHTML =
+              `<td>${esc(s.name || s.piece_id)}</td>` +
+              `<td>${esc(s.from_level)} → ${esc(s.to_level)}</td>` +
+              `<td>${esc(s.xp_spent)}</td>` +
+              `<td>${esc(fmtFodder(s.fodder_spent))}</td>`;
+            tbody.appendChild(tr);
+          }
+        }
+        document.getElementById("leftover-line").textContent =
+          "Leftover: " + fmtFodder(data.leftover);
+        results.hidden = false;
+        statusEl.className = "status ok";
+        statusEl.textContent = `Done · ${steps.length} step(s)`;
+      } catch (err) {
+        statusEl.className = "status err";
+        statusEl.textContent = String(err.message || err);
+      } finally {
+        runBtn.disabled = !gearEnabled;
+      }
+    });
+  </script>
+</body>
+</html>

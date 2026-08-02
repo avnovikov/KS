@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>KS Optimize</title>
+  <title>KS Event lineups</title>
   <style>
     :root {
       --bg: #1a1d23;
@@ -256,9 +256,10 @@
 <body>
   <header>
     <div class="header-text">
-      <h1>Optimize</h1>
+      <h1>Event lineups</h1>
       <div class="meta">
-        Swordland + Bear Trap modes and Arena attack/defense from current roster
+        <a href="/optimize" style="color:var(--accent);text-decoration:none">← Optimize hub</a>
+        · Swordland + Bear Trap + Arena from current roster
         {% if heroes_dir %} · {{ heroes_dir }}{% endif %}
       </div>
       {% set active = "optimize" %}

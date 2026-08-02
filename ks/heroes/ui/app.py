@@ -45,11 +45,12 @@ def with_cache_bust(url: str | None, bust: str) -> str | None:
 
 
 try:
-    from fastapi import FastAPI, HTTPException, Request
+    from fastapi import Body, FastAPI, HTTPException, Request
     from fastapi.responses import HTMLResponse, RedirectResponse
     from fastapi.staticfiles import StaticFiles
     from fastapi.templating import Jinja2Templates
 except ImportError:  # pragma: no cover - exercised when ui extras missing
+    Body = None  # type: ignore[assignment,misc]
     FastAPI = None  # type: ignore[assignment,misc]
     HTTPException = None  # type: ignore[assignment,misc]
     Request = None  # type: ignore[assignment,misc]
@@ -538,17 +539,42 @@ def create_app(
             ],
         }
 
+    def _optimize_ctx(heroes_path: Path) -> dict[str, Any]:
+        return {
+            "heroes_dir": str(heroes_path),
+            "gear_enabled": resolved_gear is not None,
+            "heroes_enabled": True,
+        }
+
     @app.get("/optimize", response_class=HTMLResponse)
-    def optimize_page(request: Request) -> HTMLResponse:
+    def optimize_hub(request: Request) -> HTMLResponse:
         heroes_path, _store = _require_heroes()
         response = templates.TemplateResponse(
             request,
-            "optimize.html",
-            {
-                "heroes_dir": str(heroes_path),
-                "gear_enabled": resolved_gear is not None,
-                "heroes_enabled": True,
-            },
+            "optimize_hub.html",
+            _optimize_ctx(heroes_path),
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.get("/optimize/events", response_class=HTMLResponse)
+    def optimize_events_page(request: Request) -> HTMLResponse:
+        heroes_path, _store = _require_heroes()
+        response = templates.TemplateResponse(
+            request,
+            "optimize_events.html",
+            _optimize_ctx(heroes_path),
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.get("/optimize/gear-xp", response_class=HTMLResponse)
+    def optimize_gear_xp_page(request: Request) -> HTMLResponse:
+        heroes_path, _store = _require_heroes()
+        response = templates.TemplateResponse(
+            request,
+            "optimize_gear_xp.html",
+            _optimize_ctx(heroes_path),
         )
         response.headers["Cache-Control"] = "no-store"
         return response
@@ -590,6 +616,63 @@ def create_app(
         bundle["heroes_dir"] = str(heroes_path)
         return bundle
 
+    @app.post("/api/optimize/gear-xp")
+    def api_optimize_gear_xp(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        """Allocate fodder XP to maximize event utility (propose only)."""
+        heroes_path, hero_store_local = _require_heroes()
+        if gear_store is None or resolved_gear is None:
+            raise HTTPException(
+                status_code=400,
+                detail="gear inventory required; start UI with --gear",
+            )
+        from ks.heroes.optimize.spend_xp import allocate_fodder_xp, build_event_utility
+        from ks.heroes.optimize.xp_ladder import FodderBag
+
+        event = str(body.get("event") or "swordland").strip().lower()
+        mode = body.get("mode")
+        mode_s = str(mode).strip() if mode else None
+
+        def _count(key: str) -> int:
+            raw = body.get(key, 0)
+            try:
+                n = int(raw)
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(
+                    status_code=400, detail=f"invalid fodder count for {key}"
+                ) from exc
+            if n < 0:
+                raise HTTPException(
+                    status_code=400, detail=f"{key} must be non-negative"
+                )
+            return n
+
+        bag = FodderBag(
+            grey=_count("grey"),
+            green=_count("green"),
+            blue=_count("blue"),
+            purple=_count("purple"),
+            part_100=_count("part_100"),
+        )
+        hero_store_local.reload()
+        heroes = hero_store_local.all_heroes()
+        gear_store.reload()
+        gear_pieces = gear_store.all_pieces()
+        if not gear_pieces:
+            raise HTTPException(status_code=400, detail="gear inventory is empty")
+        try:
+            utility_fn = build_event_utility(
+                event, heroes, mode=mode_s
+            )
+            result = allocate_fodder_xp(
+                gear_pieces,
+                bag,
+                utility_fn,
+                event=event,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return result.to_dict()
+
     return app
 
 
@@ -620,7 +703,9 @@ def run_ui(
     )
     if heroes_dir is not None:
         print(f"Heroes UI: http://{host}:{port}/heroes")
-        print(f"Optimize UI: http://{host}:{port}/optimize")
+        print(f"Optimize hub: http://{host}:{port}/optimize")
+        print(f"Event lineups: http://{host}:{port}/optimize/events")
+        print(f"Gear XP spend: http://{host}:{port}/optimize/gear-xp")
         print(f"Heroes: {Path(heroes_dir).expanduser().resolve()}")
     if gear_dir is not None:
         print(f"Gear UI: http://{host}:{port}/gear")

@@ -160,4 +160,8 @@ def test_optimize_page_cache_control(tmp_path: Path) -> None:
     page = client.get("/optimize")
     assert page.status_code == 200
     assert page.headers.get("cache-control") == "no-store"
-    assert b"function esc(" in page.content
+    assert b'href="/optimize/events"' in page.content
+    events = client.get("/optimize/events")
+    assert events.status_code == 200
+    assert events.headers.get("cache-control") == "no-store"
+    assert b"function esc(" in events.content
