@@ -119,6 +119,7 @@ Main accepts phaseCorrelate / mean-delta flicker as “moved”. Capture produce
 
 ## Related docs / artifacts
 
+- **Authority lock:** `docs/superpowers/specs/2026-07-31-cartograph-registration-authority.md`
 - Plan: `docs/superpowers/plans/2026-07-31-exact-object-registration.md`
 - Specs: diamond digital map / object digitization under `docs/superpowers/specs/`
 - Good reference mosaic: `artifacts/cartograph-grid300-5x5-badland-v9/`

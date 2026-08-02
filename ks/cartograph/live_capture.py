@@ -283,7 +283,7 @@ def find_popup_corner_close(img: np.ndarray) -> tuple[int, int] | None:
                 continue
             positive = False
             negative = False
-            for x_start, y_start, x_end, y_end in lines[:, 0]:
+            for x_start, y_start, x_end, y_end in np.asarray(lines).reshape(-1, 4):
                 dx = int(x_end) - int(x_start)
                 dy = int(y_end) - int(y_start)
                 if abs(dx) < 10 or abs(dy) < 10:
@@ -350,6 +350,9 @@ def tile_popup_visible(img: np.ndarray) -> bool:
         "Upgrade",
         "Occupied by",
         "Power",
+        "Visit Island",
+        "Reinforce",
+        "City Reinforcements",
     )
     return any(m in text for m in markers)
 
@@ -361,6 +364,188 @@ def map_overlay_visible(img: np.ndarray) -> bool:
         or march_ui_visible(img)
         or alliance_invite_visible(img)
         or tile_popup_visible(img)
+    )
+
+
+def classify_blocking_overlay(img: np.ndarray) -> str | None:
+    """Return a short label for the active blocking overlay, if any."""
+    if mail_modal_visible(img):
+        return "mail"
+    if march_ui_visible(img):
+        return "march"
+    if alliance_invite_visible(img):
+        return "alliance_invite"
+    if tile_popup_visible(img):
+        return "tile_or_profile"
+    return None
+
+
+def find_panel_close_candidates(img: np.ndarray) -> list[tuple[int, int]]:
+    """Likely top-right close targets on large pale panels (lord / promo cards).
+
+    Used when geometric X detection misses soft beige close buttons.
+    """
+    if img.ndim != 3 or img.shape[0] < 100:
+        return []
+    h, w = img.shape[:2]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    # Beige/white cards are low-saturation high-value; hue is unreliable on gray.
+    pale = cv2.inRange(hsv, (0, 0, 170), (180, 90, 255))
+    contours, _ = cv2.findContours(pale, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    candidates: list[tuple[float, int, int]] = []
+    for contour in contours:
+        area = float(cv2.contourArea(contour))
+        if area < 40_000 or area > 900_000:
+            continue
+        x, y, bw, bh = cv2.boundingRect(contour)
+        if bw < 280 or bh < 160:
+            continue
+        # Prefer mid-screen panels (not bottom chrome).
+        cy = y + bh // 2
+        if cy > int(h * 0.85):
+            continue
+        # Top-right interior of the panel — typical soft X / close affordance.
+        cx = min(w - 20, x + bw - 48)
+        cy_tap = max(40, y + 48)
+        candidates.append((area, cx, cy_tap))
+    candidates.sort(reverse=True)
+    out: list[tuple[int, int]] = []
+    for _, cx, cy in candidates[:4]:
+        if any((cx - a) ** 2 + (cy - b) ** 2 < 30**2 for a, b in out):
+            continue
+        out.append((cx, cy))
+    return out
+
+
+@dataclass(frozen=True)
+class OverlayResolveResult:
+    """Outcome of clearing map-blocking UI before swipe / capture."""
+
+    image: np.ndarray
+    cleared: bool
+    actions: tuple[str, ...]
+    remaining: str | None
+
+
+def resolve_blocking_screens(
+    device: AdbDevice,
+    *,
+    settle_s: float = 0.55,
+    max_rounds: int = 12,
+    require_clear: bool = True,
+) -> OverlayResolveResult:
+    """Close popups / unnecessary screens so map swipes hit the World map.
+
+    Order per round:
+    1. Prefer an explicit close control (invite X, panel X, pale-panel corner).
+    2. Mail / march specific closes.
+    3. Fall back to grass taps outside the card (never Android Back — leaves World).
+
+    Must run before ``swipe_camera``: a city profile card at mid-screen absorbs
+    the fixed drag path and the camera OCR will not change.
+    """
+    if max_rounds < 1:
+        raise ValueError(f"max_rounds must be >= 1; got {max_rounds}")
+    if settle_s <= 0:
+        raise ValueError(f"settle_s must be positive; got {settle_s}")
+
+    img = screencap_bgr(device)
+    actions: list[str] = []
+    for _ in range(max_rounds):
+        kind = classify_blocking_overlay(img)
+        if kind is None:
+            return OverlayResolveResult(
+                image=img,
+                cleared=True,
+                actions=tuple(actions),
+                remaining=None,
+            )
+
+        # --- Prefer X / close controls ---
+        invite_x = find_alliance_invite_close(img)
+        if invite_x is not None:
+            device.tap(*invite_x)
+            actions.append(f"tap_invite_x:{invite_x[0]},{invite_x[1]}")
+            time.sleep(settle_s)
+            img = screencap_bgr(device)
+            continue
+
+        corner_x = find_popup_corner_close(img)
+        if corner_x is not None:
+            device.tap(*corner_x)
+            actions.append(f"tap_corner_x:{corner_x[0]},{corner_x[1]}")
+            time.sleep(settle_s)
+            img = screencap_bgr(device)
+            continue
+
+        panel_closes = find_panel_close_candidates(img)
+        if panel_closes:
+            px, py = panel_closes[0]
+            device.tap(px, py)
+            actions.append(f"tap_panel_close:{px},{py}")
+            time.sleep(settle_s)
+            img = screencap_bgr(device)
+            continue
+
+        if kind == "march":
+            device.tap(*MARCH_BACK_TAP)
+            actions.append(f"tap_march_back:{MARCH_BACK_TAP[0]},{MARCH_BACK_TAP[1]}")
+            time.sleep(settle_s + 0.25)
+            img = screencap_bgr(device)
+            if march_ui_visible(img):
+                device.tap(*SELECT_HEROES_CLOSE_TAP)
+                actions.append(
+                    f"tap_heroes_close:{SELECT_HEROES_CLOSE_TAP[0]},{SELECT_HEROES_CLOSE_TAP[1]}"
+                )
+                time.sleep(settle_s + 0.25)
+                img = screencap_bgr(device)
+            continue
+
+        if kind == "mail":
+            device.tap(*MAIL_CLOSE_TAP)
+            actions.append(f"tap_mail_close:{MAIL_CLOSE_TAP[0]},{MAIL_CLOSE_TAP[1]}")
+            time.sleep(settle_s + 0.25)
+            img = screencap_bgr(device)
+            continue
+
+        # --- Grass fallback (dismiss card by tapping clear map) ---
+        grass = _find_clear_grass_tap(img)
+        grass_taps: list[tuple[int, int]] = []
+        if grass is not None:
+            grass_taps.append(grass)
+        grass_taps.extend(GRASS_DISMISS_TAPS)
+        # Extra mid-side grass away from typical right-hand profile cards.
+        grass_taps.extend(((200, 1200), (160, 900), (240, 1400)))
+
+        progressed = False
+        for gx, gy in grass_taps:
+            device.tap(gx, gy)
+            actions.append(f"tap_grass:{gx},{gy}")
+            time.sleep(settle_s)
+            img = screencap_bgr(device)
+            if mail_modal_visible(img) or march_ui_visible(img):
+                # Accidental chrome hit — handle on next loop via kind-specific closes.
+                progressed = True
+                break
+            if classify_blocking_overlay(img) is None:
+                progressed = True
+                break
+        if progressed:
+            continue
+        break
+
+    remaining = classify_blocking_overlay(img)
+    cleared = remaining is None
+    if require_clear and not cleared:
+        raise RuntimeError(
+            "blocking screen still open after resolve_blocking_screens "
+            f"(remaining={remaining!r}, actions={actions})"
+        )
+    return OverlayResolveResult(
+        image=img,
+        cleared=cleared,
+        actions=tuple(actions),
+        remaining=remaining,
     )
 
 
@@ -414,57 +599,15 @@ def dismiss_tile_popup(
     settle_s: float = 0.55,
     require_clear: bool = False,
 ) -> np.ndarray:
-    """Close mail / march / invite / tile cards until the full map is visible."""
-    img = screencap_bgr(device)
-    for _ in range(10):
-        if not map_overlay_visible(img):
-            return img
-        close = find_alliance_invite_close(img) or find_popup_corner_close(img)
-        if close is not None:
-            device.tap(*close)
-            time.sleep(settle_s)
-            img = screencap_bgr(device)
-            continue
-        if march_ui_visible(img):
-            device.tap(*MARCH_BACK_TAP)
-            time.sleep(settle_s + 0.3)
-            img = screencap_bgr(device)
-            if march_ui_visible(img):
-                device.tap(*SELECT_HEROES_CLOSE_TAP)
-                time.sleep(settle_s + 0.3)
-                img = screencap_bgr(device)
-            continue
-        if mail_modal_visible(img):
-            device.tap(*MAIL_CLOSE_TAP)
-            time.sleep(settle_s + 0.3)
-            img = screencap_bgr(device)
-            continue
-        if tile_popup_visible(img):
-            cleared = False
-            # Grass only — never tap Scout/Attack (opens Deploy).
-            dynamic_tap = _find_clear_grass_tap(img)
-            taps = (
-                ((dynamic_tap,) if dynamic_tap is not None else ())
-                + GRASS_DISMISS_TAPS
-            )
-            for x, y in taps:
-                device.tap(x, y)
-                time.sleep(settle_s)
-                img = screencap_bgr(device)
-                if mail_modal_visible(img) or march_ui_visible(img):
-                    break
-                if not tile_popup_visible(img):
-                    cleared = True
-                    break
-            if cleared:
-                continue
-        break
-    if require_clear and map_overlay_visible(img):
-        raise RuntimeError(
-            "map overlay still visible after dismiss taps; "
-            "refusing to save a frame with an overlay"
-        )
-    return img
+    """Close mail / march / invite / tile cards until the full map is visible.
+
+    Thin wrapper around :func:`resolve_blocking_screens` (X first, then grass).
+    """
+    return resolve_blocking_screens(
+        device,
+        settle_s=settle_s,
+        require_clear=require_clear,
+    ).image
 
 
 def capture_clean_frame_with_popup_coords(
@@ -507,15 +650,16 @@ def capture_clean_frame_with_popup_coords(
 
 
 def swipe_camera(device: AdbDevice, direction: str, distance_px: int = 200) -> None:
-    """Drag anywhere on the map to pan the camera toward ``direction`` (E/N/W/S).
+    """Drag on the open map band to pan the camera toward ``direction`` (E/N/W/S).
 
     Finger starts near mid-screen (open map) and moves opposite the look
-    direction — same as a human click-and-drag.
+    direction — same as a human click-and-drag. Uses a fixed map-band anchor
+    (not grass heuristics) so city/structure hit-tests do not eat the drag.
     """
     d = max(80, int(distance_px))
     image = screencap_bgr(device)
-    clear_grass = _find_clear_grass_tap(image)
-    cx, cy = clear_grass or (540, 1200)
+    # Fixed drag origin in the clear map band (1080×1920 BlueStacks layout).
+    cx, cy = 540, 980
     half = d // 2
     cx = int(np.clip(cx, 120 + half, image.shape[1] - 120 - half))
     cy = int(np.clip(cy, 280 + half, min(1500, image.shape[0] - 300) - half))
@@ -529,7 +673,7 @@ def swipe_camera(device: AdbDevice, direction: str, distance_px: int = 200) -> N
     if direction not in paths:
         raise ValueError(f"direction must be E/N/W/S; got {direction!r}")
     x1, y1, x2, y2 = paths[direction]
-    device.swipe(x1, y1, x2, y2, duration_ms=280)
+    device.swipe(x1, y1, x2, y2, duration_ms=420)
 
 
 def capture_around(

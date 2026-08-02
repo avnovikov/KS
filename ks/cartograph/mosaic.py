@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,7 +10,12 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from ks.cartograph.calibration import AffineCalibration
+from ks.cartograph.calibration import (
+    AffineCalibration,
+    ScaleFromTwoPoints,
+    measure_scale_from_two_points,
+    sample_indices_for_scale_checks,
+)
 from ks.cartograph.landmarks import (
     extract_name_landmarks,
     landmark_pair_offsets,
@@ -21,19 +27,174 @@ from ks.cartograph.lighting import (
 from ks.cartograph.live_capture import (
     CapturedFrame,
     GRASS_DISMISS_TAP,
-    camera_moved,
     capture_clean_frame_with_popup_coords,
     dismiss_map_blockers,
     ensure_world_map,
+    resolve_blocking_screens,
     screencap_bgr,
     swipe_camera,
 )
 from ks.cartograph.mask import MaskConfig, bluestacks_mask_config, mask_and_crop
-from ks.cartograph.project import AffineProjection, Matrix2x2
+from ks.cartograph.project import AffineProjection, DiamondTileSides, Matrix2x2
 from ks.device.adb import AdbDevice
 
 OPPOSITE = {"E": "W", "W": "E", "N": "S", "S": "N"}
 DIRECTIONS = ("E", "N", "W", "S")
+DEFAULT_SCALE_SAMPLE_FRACTION = 0.2
+
+
+def measure_scale_vs_reference_frame(
+    reference: CapturedFrame,
+    other: CapturedFrame,
+    *,
+    mask_cfg: MaskConfig | None = None,
+    seed_px_per_tile: float = 50.0,
+) -> ScaleFromTwoPoints | None:
+    """Two-point scale: OCR worlds on both frames + NCC pixel offset.
+
+    Point A = reference viewport at band origin (0,0).
+    Point B = other viewport at NCC-measured pixel offset from reference band.
+    Returns ``None`` when NCC cannot measure the pixel leg (do not invent scale).
+    """
+    if reference.viewport is None or other.viewport is None:
+        raise ValueError("both frames need OCR viewports for scale check")
+    cfg = mask_cfg or bluestacks_mask_config()
+    fill = np.array(cfg.fill, dtype=np.uint8)
+    band_a = normalize_background_lighting(mask_and_crop(reference.image, cfg))
+    band_b = normalize_background_lighting(mask_and_crop(other.image, cfg))
+    if band_b.shape[:2] != band_a.shape[:2]:
+        band_b = cv2.resize(band_b, (band_a.shape[1], band_a.shape[0]))
+    d_world = (
+        float(other.viewport[0] - reference.viewport[0]),
+        float(other.viewport[1] - reference.viewport[1]),
+    )
+    seed = (d_world[0] * seed_px_per_tile, d_world[1] * seed_px_per_tile)
+    ncc = _ncc_band_offset(band_a, band_b, seed, fill, radius=320, step=10)
+    if ncc is None:
+        return None
+    return measure_scale_from_two_points(
+        label_a=f"{reference.name} {reference.viewport}",
+        world_a=(float(reference.viewport[0]), float(reference.viewport[1])),
+        pixel_a=(0.0, 0.0),
+        label_b=f"{other.name} {other.viewport}",
+        world_b=(float(other.viewport[0]), float(other.viewport[1])),
+        pixel_b=(float(ncc[0]), float(ncc[1])),
+    )
+
+
+def sample_scale_checks(
+    frames: list[CapturedFrame],
+    *,
+    reference: CapturedFrame | None = None,
+    fraction: float = DEFAULT_SCALE_SAMPLE_FRACTION,
+    mask_cfg: MaskConfig | None = None,
+    min_samples: int = 2,
+    max_samples: int = 12,
+) -> list[ScaleFromTwoPoints]:
+    """Run two-point scale checks on ~``fraction`` of frames vs a reference.
+
+    Default samples ~20% (clamped 2..12). Use ``fraction=1.0`` to check every
+    non-reference screenshot. Skips pairs where NCC cannot measure pixels.
+    """
+    usable = [f for f in frames if f.viewport is not None and f.image is not None]
+    if not usable:
+        return []
+    ref = reference
+    if ref is None:
+        ref = next(
+            (f for f in usable if f.name in ("c0_center", "g_0_0")),
+            usable[0],
+        )
+    others = [f for f in usable if f.name != ref.name]
+    if not others:
+        return []
+    # Prefer nearby grid neighbors (NCC needs overlap); fall back to all.
+    def _radius(frame: CapturedFrame) -> int:
+        cell = parse_grid_cell(frame.name)
+        if cell is None:
+            return 99
+        return abs(cell[0]) + abs(cell[1])
+
+    nearby = [f for f in others if _radius(f) <= 2]
+    pool = nearby if len(nearby) >= min_samples else others
+    pool_sorted = sorted(pool, key=lambda f: (_radius(f), f.name))
+    # Oversample candidates so failed NCC still leaves ~fraction of successes.
+    n_try = min(
+        len(pool_sorted),
+        max(
+            min_samples * 3,
+            int(round(len(pool_sorted) * max(fraction, 0.3))),
+            max_samples,
+        ),
+    )
+    idxs = sample_indices_for_scale_checks(
+        len(pool_sorted),
+        fraction=min(1.0, n_try / max(len(pool_sorted), 1)),
+        min_samples=min(min_samples, len(pool_sorted)),
+        max_samples=n_try,
+    )
+    checks: list[ScaleFromTwoPoints] = []
+    for index in idxs:
+        if len(checks) >= max_samples:
+            break
+        try:
+            measured = measure_scale_vs_reference_frame(
+                ref, pool_sorted[index], mask_cfg=mask_cfg
+            )
+        except ValueError:
+            continue
+        if measured is not None:
+            checks.append(measured)
+    return checks
+
+
+def write_scale_checks_yaml(
+    path: Path,
+    checks: list[ScaleFromTwoPoints],
+    *,
+    fraction: float,
+) -> None:
+    """Persist sampled two-point scale checks next to a mosaic."""
+    import yaml
+
+    rows = [
+        {
+            "a": check.label_a,
+            "b": check.label_b,
+            "world_a": list(check.world_a),
+            "world_b": list(check.world_b),
+            "pixel_a": list(check.pixel_a),
+            "pixel_b": list(check.pixel_b),
+            "world_length_tiles": check.world_length_tiles,
+            "pixel_length_px": check.pixel_length_px,
+            "px_per_tile": check.px_per_tile,
+        }
+        for check in checks
+    ]
+    scales = [c.px_per_tile for c in checks]
+    summary = {
+        "sample_fraction": fraction,
+        "n_checks": len(checks),
+        "px_per_tile_median": float(np.median(scales)) if scales else None,
+        "px_per_tile_min": float(min(scales)) if scales else None,
+        "px_per_tile_max": float(max(scales)) if scales else None,
+        "checks": rows,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(summary, sort_keys=False), encoding="utf-8")
+
+
+def _ocr_tile_delta_ok(
+    before: tuple[int, int],
+    after: tuple[int, int],
+    min_tile_delta: int,
+) -> bool:
+    """True when manhattan or hypot tile distance meets ``min_tile_delta``."""
+    if min_tile_delta < 1:
+        raise ValueError(f"min_tile_delta must be >= 1; got {min_tile_delta}")
+    dx = abs(before[0] - after[0])
+    dy = abs(before[1] - after[1])
+    return (dx + dy) >= min_tile_delta or math.hypot(dx, dy) >= min_tile_delta
 
 
 def swipe_camera_verified(
@@ -43,19 +204,50 @@ def swipe_camera_verified(
     distance_px: int,
     settle_s: float,
     attempts: int = 3,
-) -> None:
-    """ADB-swipe until map pixels confirm movement; never accept a duplicate cell."""
-    before = screencap_bgr(device)
-    for _ in range(attempts):
-        swipe_camera(device, direction, distance_px=distance_px)
+    min_tile_delta: int = 2,
+) -> tuple[int, int]:
+    """ADB-swipe until search-bar world coords change; pixel-only motion is not enough.
+
+    Returns the post-swipe viewport ``(x, y)``. Fails closed if OCR cannot confirm
+    a real coordinate change after retries.
+    """
+    from ks.cartograph.viewport import ocr_viewport_from_image
+
+    distances = [
+        max(80, int(distance_px)),
+        max(80, int(distance_px * 1.25)),
+        max(80, int(distance_px * 1.6)),
+    ]
+    last_raw = ""
+    retry_count = max(attempts, len(distances))
+    for attempt in range(retry_count):
+        # City/profile cards absorb mid-screen drags — clear them first.
+        resolve_blocking_screens(device, settle_s=0.45, require_clear=True)
+        if attempt > 0:
+            dismiss_map_blockers(device)
+            time.sleep(0.35)
+        before = screencap_bgr(device)
+        vp_before, raw_before = ocr_viewport_from_image(before)
+        if vp_before is None:
+            raise RuntimeError(
+                f"cannot verify {direction} swipe: pre-swipe viewport OCR failed "
+                f"({raw_before!r})"
+            )
+        last_raw = raw_before
+        dist = distances[min(attempt, len(distances) - 1)]
+        swipe_camera(device, direction, distance_px=dist)
         time.sleep(settle_s)
         after = screencap_bgr(device)
-        if camera_moved(before, after):
-            return
-        before = after
+        vp_after, raw_after = ocr_viewport_from_image(after)
+        last_raw = raw_after
+        if vp_after is None:
+            continue
+        if _ocr_tile_delta_ok(vp_before, vp_after, min_tile_delta):
+            return vp_after
+
     raise RuntimeError(
-        f"camera did not move after {attempts} ADB {direction} swipes "
-        f"of {distance_px}px"
+        f"camera coords did not change after {retry_count} ADB "
+        f"{direction} swipes (base {distance_px}px); last OCR={last_raw!r}"
     )
 
 
@@ -184,6 +376,7 @@ def capture_grid(
     """Capture a filled ``(2*depth+1)²`` screen grid (serpentine walk).
 
     Saves clean full-map frames only; coordinates come from the tile info banner.
+    Existing ``g_*.png`` / ``c0_center.png`` frames are reused (resume-safe).
     """
     cells = grid_cell_order(depth)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -195,7 +388,29 @@ def capture_grid(
 
     frames: list[CapturedFrame] = []
 
-    def _save(name: str) -> CapturedFrame:
+    def _frame_path(name: str) -> Path:
+        return out_dir / f"{name}.png"
+
+    def _load_existing(name: str) -> CapturedFrame | None:
+        path = _frame_path(name)
+        if not path.is_file():
+            return None
+        image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+        if image is None:
+            return None
+        from ks.cartograph.viewport import ocr_viewport_from_image
+
+        vp, raw = ocr_viewport_from_image(image)
+        if vp is None:
+            return None
+        return CapturedFrame(
+            name=name, path=path, viewport=vp, viewport_raw=raw, image=image
+        )
+
+    def _save(name: str, *, prev_vp: tuple[int, int] | None) -> CapturedFrame:
+        existing = _load_existing(name)
+        if existing is not None:
+            return existing
         image, vp, raw = capture_clean_frame_with_popup_coords(
             device, settle_s=settle_s * 0.85
         )
@@ -204,13 +419,40 @@ def capture_grid(
                 f"{name}: World-map coordinate bar is unreadable; "
                 "aborting capture before saving a non-map frame"
             )
-        path = out_dir / f"{name}.png"
+        if prev_vp is not None and vp == prev_vp:
+            raise RuntimeError(
+                f"{name}: viewport stuck at {vp} (same as previous frame); "
+                "refusing to save duplicate coordinates"
+            )
+        path = _frame_path(name)
         cv2.imwrite(str(path), image)
         return CapturedFrame(
             name=name, path=path, viewport=vp, viewport_raw=raw, image=image
         )
 
+    # Prefer starting from the last saved cell so resume does not re-walk completed cells.
     cur = (0, 0)
+    last_done: int | None = None
+    for i, cell in enumerate(cells):
+        name = "c0_center" if cell == (0, 0) else f"g_{cell[0]}_{cell[1]}"
+        if _frame_path(name).is_file():
+            last_done = i
+            cur = cell
+
+    if last_done is not None:
+        for cell in cells[: last_done + 1]:
+            name = "c0_center" if cell == (0, 0) else f"g_{cell[0]}_{cell[1]}"
+            frame = _load_existing(name)
+            if frame is None:
+                raise RuntimeError(f"resume expected existing frame {name}")
+            frames.append(frame)
+            if cell == (0, 0):
+                center_copy = out_dir / "g_0_0.png"
+                if not center_copy.is_file():
+                    cv2.imwrite(str(center_copy), frame.image)
+        cells = cells[last_done + 1 :]
+
+    prev_vp = frames[-1].viewport if frames else None
     for cell in cells:
         swipes = grid_swipe_path(cur, cell)
         for direction in swipes:
@@ -221,9 +463,11 @@ def capture_grid(
                 settle_s=settle_s,
             )
         name = "c0_center" if cell == (0, 0) else f"g_{cell[0]}_{cell[1]}"
-        frames.append(_save(name))
+        frame = _save(name, prev_vp=prev_vp)
+        frames.append(frame)
+        prev_vp = frame.viewport
         if cell == (0, 0):
-            cv2.imwrite(str(out_dir / "g_0_0.png"), frames[-1].image)
+            cv2.imwrite(str(out_dir / "g_0_0.png"), frame.image)
         cur = cell
 
     return frames
@@ -309,6 +553,39 @@ def parse_grid_cell(name: str) -> tuple[int, int] | None:
     return None
 
 
+def _overlap_step_from_tile_delta(
+    dw: float, dh: float, target_len: float
+) -> tuple[float, float] | None:
+    """Scale OCR tile Δ to ``target_len`` pixels, preserving direction.
+
+    Any nonzero median (including isometric e_len ≈ 5.66 < 6) keeps its
+    diagonal direction — never collapse to an axis-aligned default.
+    """
+    length = float(np.hypot(dw, dh))
+    if length <= 0.0:
+        return None
+    scale = target_len / length
+    return (dw * scale, dh * scale)
+
+
+def _south_step_from_tile_delta(
+    sw: float, sh: float, target_len: float
+) -> tuple[float, float] | None:
+    """South pixel step from OCR Δ; flip image-Y only for near-vertical South.
+
+    Isometric South is usually diagonal — keep the measured sign. Force
+    image-down (+Y) only when OCR South is nearly pure vertical (small |ΔX|
+    vs |ΔY|), matching the historical axis-aligned invariant.
+    """
+    step = _overlap_step_from_tile_delta(sw, sh, target_len)
+    if step is None:
+        return None
+    sx, sy = step
+    if abs(sw) < abs(sh) * 0.25 and sy < 0.0:
+        return (sx, -sy)
+    return (sx, sy)
+
+
 def calibrate_grid_pixel_steps(
     frames: list[CapturedFrame],
     band_w: int,
@@ -319,11 +596,10 @@ def calibrate_grid_pixel_steps(
 ) -> tuple[tuple[float, float], tuple[float, float]]:
     """Pixel step for +1 screen East and +1 screen South from controlled neighbors.
 
-    Seed from OCR tile deltas (overlap-scaled), then optionally refine with
-    local NCC around that seed so terrain lines up for nearby merges.
-
-    Small swipes (tile Δ ≈ 1) make OCR scale unstable — fall back to a pure
-    overlap fraction of the band size on that axis.
+    Seed from OCR tile-delta *direction* scaled to ``overlap * band_*`` length
+    (diamond-aware even when tile Δ length < 6), then optionally refine with
+    local NCC around that seed. Axis-aligned defaults apply only when no
+    usable neighbor median exists (length 0 / missing edges).
     """
     if not (0.3 <= overlap <= 0.8):
         raise ValueError(f"overlap must be 0.3..0.8; got {overlap}")
@@ -358,22 +634,14 @@ def calibrate_grid_pixel_steps(
 
     if e_wx:
         ew, eh = float(np.median(e_wx)), float(np.median(e_wy))
-        e_len = float(np.hypot(ew, eh))
-        # Tiny tile steps (small swipe) → keep overlap default; only use OCR
-        # scale when the camera clearly moved several tiles.
-        if e_len >= 6.0:
-            scale = (overlap * band_w) / e_len
-            pe = (ew * scale, eh * scale)
+        seeded = _overlap_step_from_tile_delta(ew, eh, overlap * band_w)
+        if seeded is not None:
+            pe = seeded
     if s_wx:
         sw, sh = float(np.median(s_wx)), float(np.median(s_wy))
-        s_len = float(np.hypot(sw, sh))
-        if s_len >= 6.0:
-            scale = (overlap * band_h) / s_len
-            # Image +Y is down; south screen content is below center.
-            step = (sw * scale, sh * scale)
-            if step[1] < 0:
-                step = (step[0], -step[1])
-            ps = step
+        seeded = _south_step_from_tile_delta(sw, sh, overlap * band_h)
+        if seeded is not None:
+            ps = seeded
 
     if refine:
         pe_r, ps_r = _refine_steps_ncc(by_cell, pe, ps, band_w, band_h)
@@ -433,7 +701,14 @@ def _refine_steps_ncc(
     step: int = 15,
     min_score: float = 0.18,
 ) -> tuple[tuple[float, float] | None, tuple[float, float] | None]:
-    """Refine lattice steps by NCC on masked bands around the OCR seed."""
+    """Refine lattice steps by NCC on masked bands around the OCR seed.
+
+    Radius 220 is a *local* search around the diamond-aware seed from
+    ``calibrate_grid_pixel_steps``. Axis-aligned seeds used to sit ~300px
+    from true isometric offsets and missed the peak; with direction-preserving
+    OCR seeds the true match stays inside this window (keep radius modest so
+    tests stay fast).
+    """
     mask_cfg = bluestacks_mask_config()
     fill = np.array(mask_cfg.fill, dtype=np.uint8)
 
@@ -1093,20 +1368,33 @@ def stitch_grid_lattice(
     mask_cfg: MaskConfig | None = None,
     overlap: float = 0.55,
     debug_dir: Path | None = None,
-    use_landmarks: bool = True,
+    use_landmarks: bool = False,
+    use_ncc_graph: bool = False,
     calibration: AffineCalibration | None = None,
     frame_offsets: dict[str, tuple[float, float]] | None = None,
     world_to_pixel_matrix: Matrix2x2 | None = None,
+    max_viewport_dev: float = 80.0,
+    scale_sample_fraction: float = DEFAULT_SCALE_SAMPLE_FRACTION,
 ) -> MosaicResult:
-    """Stitch by screen-grid placement (landmark graph when available).
+    """Stitch grid frames into a panorama.
 
-    Prefer shared player/alliance name offsets + neighbor NCC over a single
-    global lattice so middle gaps align while leftmost/rightmost columns stay
-    coherent. Falls back to ``ex*pe + ey*ps`` when landmarks are disabled.
+    **Authority (highest first):** exact ``frame_offsets`` + seed
+    ``world_to_pixel_matrix`` from clicked popup / selected-diamond calibration
+    (canonical; see ``pipeline.register_and_digitize_capture``). Then optional
+    landmark / NCC refine. Search-bar viewport OCR diamond fit is a **fallback
+    only** when no click seed exists — it must not define canonical scale.
 
     ``frame_offsets`` is the sole placement authority when provided. Pass the
     seed ``world_to_pixel_matrix`` alongside it so panorama projection stays
     diamond-correct; do not also pass ``calibration``.
+
+    Without offsets/calibration, audits viewports then places with a shared
+    diamond-tile affine (weak prior). Optional ``use_ncc_graph=True`` /
+    ``use_landmarks=True`` for alternate non-canonical paths.
+
+    After stitch, runs two-point scale checks on ~``scale_sample_fraction`` of
+    frames vs center (default 20%, set ``1.0`` for every screenshot) and
+    writes ``scale_checks.yaml`` next to ``out_path``.
     """
     if calibration is not None and frame_offsets is not None:
         raise ValueError(
@@ -1130,6 +1418,27 @@ def stitch_grid_lattice(
         by_cell[cell] = f
     if (0, 0) not in by_cell:
         raise ValueError("stitch_grid_lattice needs c0_center / g_0_0")
+
+    fitted_matrix: Matrix2x2 | None = None
+    pe: tuple[float, float] | None = None
+    ps: tuple[float, float] | None = None
+
+    # Audit OCR viewports before estimating geometry (skip when caller
+    # already supplied exact offsets / calibration observations).
+    if frame_offsets is None and calibration is None:
+        audited = filter_viewport_frames(
+            list(by_cell.values()), max_dev=max_viewport_dev
+        )
+        by_cell = {}
+        for frame in audited:
+            cell = parse_grid_cell(frame.name)
+            if cell is not None:
+                by_cell[cell] = frame
+        if (0, 0) not in by_cell:
+            raise ValueError(
+                "stitch_grid_lattice needs c0_center / g_0_0 after viewport audit"
+            )
+
     center_f = by_cell[(0, 0)]
     band0 = mask_and_crop(center_f.image, mask_cfg)
     bh, bw = band0.shape[:2]
@@ -1162,19 +1471,48 @@ def stitch_grid_lattice(
             )
             for cell, frame in by_cell.items()
         }
-    else:
+    elif use_landmarks:
         pe, ps = calibrate_grid_pixel_steps(
             list(by_cell.values()), bw, bh, overlap=overlap
         )
-        if use_landmarks:
-            cell_pos = place_grid_by_landmarks(
-                by_cell, pe, ps, bw, bh, mask_cfg=mask_cfg
+        cell_pos = place_grid_by_landmarks(
+            by_cell, pe, ps, bw, bh, mask_cfg=mask_cfg
+        )
+    elif use_ncc_graph:
+        if center_f.viewport is None:
+            raise ValueError("NCC graph placement requires a center viewport")
+        cell_pos = place_grid_by_ncc_graph(by_cell, mask_cfg=mask_cfg)
+        fitted_matrix = matrix_from_placed_viewports(by_cell, cell_pos)
+        if fitted_matrix is None:
+            fitted_matrix = fit_world_to_pixel_matrix_from_viewports(
+                list(by_cell.values()),
+                bw,
+                bh,
+                overlap=overlap,
+                mask_cfg=mask_cfg,
             )
-        else:
-            cell_pos = {
-                (ex, ey): (ex * pe[0] + ey * ps[0], ex * pe[1] + ey * ps[1])
-                for (ex, ey) in by_cell
-            }
+    else:
+        if center_f.viewport is None:
+            raise ValueError("diamond affine placement requires a center viewport")
+        if any(frame.viewport is None for frame in by_cell.values()):
+            raise ValueError(
+                "diamond affine placement requires every frame viewport"
+            )
+        # Simple model: one diamond (two sides/angles) for every tile.
+        sides = estimate_diamond_tile_sides(
+            list(by_cell.values()),
+            bw,
+            bh,
+            overlap=overlap,
+            mask_cfg=mask_cfg,
+        )
+        fitted_matrix = sides.matrix()
+        placed = place_frames_by_diamond_affine(
+            list(by_cell.values()),
+            sides,
+            center=(float(center_f.viewport[0]), float(center_f.viewport[1])),
+        )
+        cell_pos = {cell: placed[frame.name] for cell, frame in by_cell.items()}
 
     if debug_dir is not None:
         debug_dir.mkdir(parents=True, exist_ok=True)
@@ -1280,13 +1618,33 @@ def stitch_grid_lattice(
         linear = np.asarray(published_matrix, dtype=float)
         scale_x = float(np.linalg.norm(linear[:, 0]))
         scale_y = float(np.linalg.norm(linear[:, 1]))
+    elif fitted_matrix is not None:
+        published_matrix = fitted_matrix
+        linear = np.asarray(published_matrix, dtype=float)
+        scale_x = float(np.linalg.norm(linear[:, 0]))
+        scale_y = float(np.linalg.norm(linear[:, 1]))
     elif frame_offsets is not None:
         # Placement is exact; scale metadata is unavailable without world matrix.
         scale_x = scale_y = 55.0
     else:
-        # World px/tile ≈ lattice step / median tile step (~11 E, ~14 S).
+        # Landmark / lattice fallback: world px/tile ≈ step / median tile step.
+        assert pe is not None and ps is not None
         scale_x = float(np.hypot(*pe) / 11.0)
         scale_y = float(np.hypot(*ps) / 14.0)
+
+    if scale_sample_fraction > 0:
+        checks = sample_scale_checks(
+            list(by_cell.values()),
+            reference=center_f,
+            fraction=scale_sample_fraction,
+            mask_cfg=mask_cfg,
+        )
+        write_scale_checks_yaml(
+            out_path.with_name("scale_checks.yaml"),
+            checks,
+            fraction=scale_sample_fraction,
+        )
+
     return MosaicResult(
         image=canvas,
         path=out_path,
@@ -1305,11 +1663,23 @@ def filter_viewport_frames(
     frames: list[CapturedFrame],
     *,
     max_dev: float = 80.0,
+    dup_tol: float = 1.0,
+    max_residual: float | None = 25.0,
 ) -> list[CapturedFrame]:
-    """Drop OCR outliers that would explode mosaic extent (e.g. Y:1499, X:16)."""
+    """Drop OCR outliers, high cell residuals, and near-duplicate viewports.
+
+    Keeps one representative when viewports are within ``dup_tol`` Chebyshev
+    tiles (prefer center cell, then closer to origin).
+    """
+    if dup_tol < 0:
+        raise ValueError(f"dup_tol must be >= 0; got {dup_tol}")
+    if max_residual is not None and max_residual <= 0:
+        raise ValueError(f"max_residual must be positive; got {max_residual}")
+
     usable = [f for f in frames if f.viewport is not None]
     if len(usable) < 3:
-        return usable
+        return _dedupe_viewport_frames(usable, dup_tol=dup_tol)
+
     xs = [f.viewport[0] for f in usable]  # type: ignore[index]
     ys = [f.viewport[1] for f in usable]  # type: ignore[index]
     mx = float(np.median(xs))
@@ -1324,7 +1694,450 @@ def filter_viewport_frames(
             f"too few frames after viewport outlier filter "
             f"({len(kept)} kept from {len(usable)}; median=({mx:.0f},{my:.0f}))"
         )
+
+    if max_residual is not None:
+        kept = _drop_linear_residual_outliers(kept, max_residual=max_residual)
+        if len(kept) < 2:
+            raise ValueError(
+                f"too few frames after residual filter "
+                f"({len(kept)} kept; median=({mx:.0f},{my:.0f}))"
+            )
+
+    return _dedupe_viewport_frames(kept, dup_tol=dup_tol)
+
+
+def _frame_cell_rank(frame: CapturedFrame) -> tuple[int, int, str]:
+    cell = parse_grid_cell(frame.name)
+    if cell is None:
+        return (1, 10_000, frame.name)
+    if cell == (0, 0):
+        return (0, 0, frame.name)
+    return (1, abs(cell[0]) + abs(cell[1]), frame.name)
+
+
+def _dedupe_viewport_frames(
+    frames: list[CapturedFrame],
+    *,
+    dup_tol: float,
+) -> list[CapturedFrame]:
+    ordered = sorted(frames, key=_frame_cell_rank)
+    kept: list[CapturedFrame] = []
+    for frame in ordered:
+        assert frame.viewport is not None
+        vx, vy = frame.viewport
+        duplicate = False
+        for prev in kept:
+            assert prev.viewport is not None
+            if max(abs(vx - prev.viewport[0]), abs(vy - prev.viewport[1])) <= dup_tol:
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(frame)
     return kept
+
+
+def _drop_linear_residual_outliers(
+    frames: list[CapturedFrame],
+    *,
+    max_residual: float,
+) -> list[CapturedFrame]:
+    """Drop frames whose viewport disagrees with a cell→world linear fit."""
+    samples: list[tuple[CapturedFrame, tuple[float, float], tuple[float, float]]] = []
+    for frame in frames:
+        cell = parse_grid_cell(frame.name)
+        if cell is None or frame.viewport is None:
+            continue
+        samples.append(
+            (
+                frame,
+                (float(cell[0]), float(cell[1])),
+                (float(frame.viewport[0]), float(frame.viewport[1])),
+            )
+        )
+    if len(samples) < 4:
+        return frames
+
+    design = np.array(
+        [[1.0, cell[0], cell[1]] for _, cell, _ in samples], dtype=float
+    )
+    targets = np.array([vp for _, _, vp in samples], dtype=float)
+
+    def _fit_residuals(mask: np.ndarray) -> np.ndarray | None:
+        if int(mask.sum()) < 4:
+            return None
+        coeffs, _, rank, _ = np.linalg.lstsq(design[mask], targets[mask], rcond=None)
+        if rank < 3:
+            return None
+        predicted = design @ coeffs
+        return np.linalg.norm(predicted - targets, axis=1)
+
+    all_mask = np.ones(len(samples), dtype=bool)
+    residuals = _fit_residuals(all_mask)
+    if residuals is None:
+        return frames
+    inlier_mask = residuals <= max_residual
+    # Refit without gross outliers so one OCR bomb cannot pull inliers over threshold.
+    if int(inlier_mask.sum()) >= 4 and int((~inlier_mask).sum()) > 0:
+        refined = _fit_residuals(inlier_mask)
+        if refined is not None:
+            residuals = refined
+            inlier_mask = residuals <= max_residual
+
+    keep_names = {
+        frame.name
+        for (frame, _, _), keep in zip(samples, inlier_mask, strict=True)
+        if bool(keep)
+    }
+    grid_names = {frame.name for frame, _, _ in samples}
+    return [
+        frame
+        for frame in frames
+        if frame.name not in grid_names or frame.name in keep_names
+    ]
+
+
+def _collect_ncc_world_pixel_edges(
+    by_cell: dict[tuple[int, int], CapturedFrame],
+    *,
+    mask_cfg: MaskConfig,
+    seed_px_per_tile: float = 50.0,
+    max_cell_radius: int = 2,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """OCR world Δ + NCC pixel Δ for adjacent cells (two-point edges)."""
+    fill = np.array(mask_cfg.fill, dtype=np.uint8)
+    bands: dict[tuple[int, int], np.ndarray] = {}
+    for cell, frame in by_cell.items():
+        if frame.viewport is None:
+            continue
+        band = normalize_background_lighting(mask_and_crop(frame.image, mask_cfg))
+        bands[cell] = band
+
+    edges: list[tuple[np.ndarray, np.ndarray]] = []
+    # Cardinal neighbors first (best overlap), then diagonals within radius.
+    neighbor_deltas = ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1))
+    seen: set[tuple[tuple[int, int], tuple[int, int]]] = set()
+    for cell, frame in by_cell.items():
+        if frame.viewport is None or cell not in bands:
+            continue
+        if abs(cell[0]) + abs(cell[1]) > max_cell_radius:
+            continue
+        for dx, dy in neighbor_deltas:
+            other_cell = (cell[0] + dx, cell[1] + dy)
+            other = by_cell.get(other_cell)
+            if other is None or other.viewport is None or other_cell not in bands:
+                continue
+            key = tuple(sorted((cell, other_cell)))
+            if key in seen:
+                continue
+            seen.add(key)
+            band_a = bands[cell]
+            band_b = bands[other_cell]
+            if band_b.shape[:2] != band_a.shape[:2]:
+                band_b = cv2.resize(band_b, (band_a.shape[1], band_a.shape[0]))
+            world_delta = np.asarray(other.viewport, dtype=float) - np.asarray(
+                frame.viewport, dtype=float
+            )
+            w_len = float(np.linalg.norm(world_delta))
+            if w_len < 1.0:
+                continue
+            seed = (
+                float(world_delta[0] * seed_px_per_tile),
+                float(world_delta[1] * seed_px_per_tile),
+            )
+            ncc = _ncc_band_offset(band_a, band_b, seed, fill, radius=320, step=10)
+            if ncc is None:
+                continue
+            edges.append((world_delta, np.asarray(ncc, dtype=float)))
+    return edges
+
+
+def fit_world_to_pixel_matrix_from_viewports(
+    frames: list[CapturedFrame],
+    band_w: int,
+    band_h: int,
+    *,
+    overlap: float = 0.55,
+    mask_cfg: MaskConfig | None = None,
+) -> Matrix2x2:
+    """Fit 2×2 M so pixel ≈ M @ (world − center).
+
+    Primary: least-squares over **measured** two-point edges
+    (OCR world Δ + NCC pixel Δ). Fallback: OCR East/South direction scaled to
+    ``overlap * band`` only when NCC edges are insufficient.
+    """
+    if not (0.3 <= overlap <= 0.8):
+        raise ValueError(f"overlap must be 0.3..0.8; got {overlap}")
+    by_cell: dict[tuple[int, int], CapturedFrame] = {}
+    for frame in frames:
+        cell = parse_grid_cell(frame.name)
+        if cell is None or frame.viewport is None:
+            continue
+        by_cell[cell] = frame
+    if (0, 0) not in by_cell or by_cell[(0, 0)].viewport is None:
+        raise ValueError("world-affine fit requires a center viewport")
+
+    cfg = mask_cfg or bluestacks_mask_config()
+    edges = _collect_ncc_world_pixel_edges(by_cell, mask_cfg=cfg)
+    if len(edges) >= 2:
+        world_mat = np.stack([w for w, _ in edges], axis=0)
+        pixel_mat = np.stack([p for _, p in edges], axis=0)
+        if np.linalg.matrix_rank(world_mat) >= 2:
+            coeffs, _, rank, _ = np.linalg.lstsq(world_mat, pixel_mat, rcond=None)
+            if rank >= 2:
+                predicted = world_mat @ coeffs
+                residuals = np.linalg.norm(predicted - pixel_mat, axis=1)
+                med = float(np.median(residuals))
+                mad = float(np.median(np.abs(residuals - med))) + 1e-6
+                # Keep edges within ~3.5 MAD of median residual (robust).
+                keep = residuals <= max(25.0, med + 3.5 * 1.4826 * mad)
+                if int(keep.sum()) >= 2 and np.linalg.matrix_rank(world_mat[keep]) >= 2:
+                    coeffs, _, rank, _ = np.linalg.lstsq(
+                        world_mat[keep], pixel_mat[keep], rcond=None
+                    )
+                if rank >= 2:
+                    linear = coeffs.T
+                    return AffineProjection(
+                        center=(0.0, 0.0),
+                        pixel_origin=(0.0, 0.0),
+                        matrix=(
+                            (float(linear[0, 0]), float(linear[0, 1])),
+                            (float(linear[1, 0]), float(linear[1, 1])),
+                        ),
+                    ).matrix
+
+    # Fallback: OCR neighbor direction × overlap band length (no NCC).
+    e_deltas: list[np.ndarray] = []
+    s_deltas: list[np.ndarray] = []
+    for (ex, ey), frame in by_cell.items():
+        assert frame.viewport is not None
+        east = by_cell.get((ex + 1, ey))
+        if east is not None and east.viewport is not None:
+            e_deltas.append(
+                np.asarray(east.viewport, dtype=float)
+                - np.asarray(frame.viewport, dtype=float)
+            )
+        south = by_cell.get((ex, ey + 1))
+        if south is not None and south.viewport is not None:
+            s_deltas.append(
+                np.asarray(south.viewport, dtype=float)
+                - np.asarray(frame.viewport, dtype=float)
+            )
+
+    if not e_deltas or not s_deltas:
+        sx, sy = _estimate_scale(list(by_cell.values()), band_w, band_h)
+        return AffineProjection(
+            center=(0.0, 0.0),
+            pixel_origin=(0.0, 0.0),
+            matrix=((sx, 0.0), (0.0, sy)),
+        ).matrix
+
+    e_world = np.median(np.stack(e_deltas, axis=0), axis=0)
+    s_world = np.median(np.stack(s_deltas, axis=0), axis=0)
+    e_len = float(np.linalg.norm(e_world))
+    s_len = float(np.linalg.norm(s_world))
+    if e_len < 1e-6 or s_len < 1e-6:
+        raise ValueError("world-affine fit needs nonzero E and S viewport steps")
+
+    pe = e_world * ((overlap * band_w) / e_len)
+    ps = s_world * ((overlap * band_h) / s_len)
+    world_basis = np.column_stack([e_world, s_world])
+    if abs(float(np.linalg.det(world_basis))) < 1e-6:
+        raise ValueError("world-affine fit needs independent E and S world axes")
+    pixel_basis = np.column_stack([pe, ps])
+    linear = pixel_basis @ np.linalg.inv(world_basis)
+    return AffineProjection(
+        center=(0.0, 0.0),
+        pixel_origin=(0.0, 0.0),
+        matrix=(
+            (float(linear[0, 0]), float(linear[0, 1])),
+            (float(linear[1, 0]), float(linear[1, 1])),
+        ),
+    ).matrix
+
+
+def place_grid_by_ncc_graph(
+    by_cell: dict[tuple[int, int], CapturedFrame],
+    *,
+    mask_cfg: MaskConfig,
+    seed_px_per_tile: float = 50.0,
+) -> dict[tuple[int, int], tuple[float, float]]:
+    """Place cells by BFS using measured NCC offsets between neighbors.
+
+    Image matching defines relative paste positions; OCR is not used for
+    placement here (only later to publish M from positions ↔ viewports).
+    """
+    if (0, 0) not in by_cell:
+        raise ValueError("NCC graph placement requires center cell (0,0)")
+    fill = np.array(mask_cfg.fill, dtype=np.uint8)
+    bands: dict[tuple[int, int], np.ndarray] = {}
+    for cell, frame in by_cell.items():
+        band = normalize_background_lighting(mask_and_crop(frame.image, mask_cfg))
+        bands[cell] = band
+
+    # Undirected edge → offset of b relative to a (a→b).
+    edges: dict[tuple[tuple[int, int], tuple[int, int]], tuple[float, float]] = {}
+    neighbor_deltas = ((1, 0), (-1, 0), (0, 1), (0, -1))
+    for cell, frame in by_cell.items():
+        if frame.viewport is None:
+            continue
+        for dx, dy in neighbor_deltas:
+            other_cell = (cell[0] + dx, cell[1] + dy)
+            other = by_cell.get(other_cell)
+            if other is None or other.viewport is None:
+                continue
+            a, b = cell, other_cell
+            if (a, b) in edges or (b, a) in edges:
+                continue
+            band_a = bands[a]
+            band_b = bands[b]
+            if band_b.shape[:2] != band_a.shape[:2]:
+                band_b = cv2.resize(band_b, (band_a.shape[1], band_a.shape[0]))
+            world_delta = np.asarray(other.viewport, dtype=float) - np.asarray(
+                frame.viewport, dtype=float
+            )
+            seed = (
+                float(world_delta[0] * seed_px_per_tile),
+                float(world_delta[1] * seed_px_per_tile),
+            )
+            ncc = _ncc_band_offset(band_a, band_b, seed, fill, radius=320, step=10)
+            if ncc is None:
+                continue
+            edges[(a, b)] = (float(ncc[0]), float(ncc[1]))
+            edges[(b, a)] = (-float(ncc[0]), -float(ncc[1]))
+
+    pos: dict[tuple[int, int], tuple[float, float]] = {(0, 0): (0.0, 0.0)}
+    queue = [(0, 0)]
+    while queue:
+        cur = queue.pop(0)
+        ox, oy = pos[cur]
+        for (a, b), (dx, dy) in edges.items():
+            if a != cur or b in pos:
+                continue
+            pos[b] = (ox + dx, oy + dy)
+            queue.append(b)
+
+    # Fill any disconnected cells with world-affine fallback from NCC-fit M.
+    missing = [c for c in by_cell if c not in pos]
+    if missing:
+        fitted = fit_world_to_pixel_matrix_from_viewports(
+            list(by_cell.values()),
+            bands[(0, 0)].shape[1],
+            bands[(0, 0)].shape[0],
+            mask_cfg=mask_cfg,
+        )
+        center_f = by_cell[(0, 0)]
+        assert center_f.viewport is not None
+        placed = place_frames_by_world_affine(
+            list(by_cell.values()),
+            fitted,
+            center=(float(center_f.viewport[0]), float(center_f.viewport[1])),
+        )
+        for cell in missing:
+            pos[cell] = placed[by_cell[cell].name]
+    return pos
+
+
+def matrix_from_placed_viewports(
+    by_cell: dict[tuple[int, int], CapturedFrame],
+    cell_pos: dict[tuple[int, int], tuple[float, float]],
+) -> Matrix2x2 | None:
+    """Regress pixel positions vs OCR viewports → published world_to_pixel M."""
+    center = by_cell.get((0, 0))
+    if center is None or center.viewport is None or (0, 0) not in cell_pos:
+        return None
+    world_rows: list[np.ndarray] = []
+    pixel_rows: list[np.ndarray] = []
+    cwx, cwy = float(center.viewport[0]), float(center.viewport[1])
+    for cell, frame in by_cell.items():
+        if frame.viewport is None or cell not in cell_pos:
+            continue
+        world_rows.append(
+            np.array(
+                [float(frame.viewport[0]) - cwx, float(frame.viewport[1]) - cwy],
+                dtype=float,
+            )
+        )
+        pixel_rows.append(np.asarray(cell_pos[cell], dtype=float))
+    if len(world_rows) < 3:
+        return None
+    world_mat = np.stack(world_rows, axis=0)
+    pixel_mat = np.stack(pixel_rows, axis=0)
+    if np.linalg.matrix_rank(world_mat) < 2:
+        return None
+    coeffs, _, rank, _ = np.linalg.lstsq(world_mat, pixel_mat, rcond=None)
+    if rank < 2:
+        return None
+    linear = coeffs.T
+    return AffineProjection(
+        center=(0.0, 0.0),
+        pixel_origin=(0.0, 0.0),
+        matrix=(
+            (float(linear[0, 0]), float(linear[0, 1])),
+            (float(linear[1, 0]), float(linear[1, 1])),
+        ),
+    ).matrix
+
+
+def estimate_diamond_tile_sides(
+    frames: list[CapturedFrame],
+    band_w: int,
+    band_h: int,
+    *,
+    overlap: float = 0.55,
+    mask_cfg: MaskConfig | None = None,
+) -> DiamondTileSides:
+    """Estimate shared diamond sides (angles/lengths) for every world tile.
+
+    Uses measured OCR+NCC two-point edges when available; otherwise OCR
+    East/South direction scaled to ``overlap * band``.
+    """
+    matrix = fit_world_to_pixel_matrix_from_viewports(
+        frames,
+        band_w,
+        band_h,
+        overlap=overlap,
+        mask_cfg=mask_cfg,
+    )
+    return DiamondTileSides(
+        side_x=(matrix[0][0], matrix[1][0]),
+        side_y=(matrix[0][1], matrix[1][1]),
+    )
+
+
+def place_frames_by_diamond_affine(
+    frames: list[CapturedFrame],
+    sides: DiamondTileSides,
+    center: tuple[float, float],
+) -> dict[str, tuple[float, float]]:
+    """Place each frame with the shared diamond-side affine (same for every tile)."""
+    return place_frames_by_world_affine(frames, sides.matrix(), center)
+
+
+def place_frames_by_world_affine(
+    frames: list[CapturedFrame],
+    matrix: Matrix2x2,
+    center: tuple[float, float],
+) -> dict[str, tuple[float, float]]:
+    """Place each frame band at ``M @ (viewport − center)`` in mosaic pixels."""
+    linear = np.asarray(
+        AffineProjection(
+            center=(0.0, 0.0),
+            pixel_origin=(0.0, 0.0),
+            matrix=matrix,
+        ).matrix,
+        dtype=float,
+    )
+    center_arr = np.asarray(center, dtype=float)
+    if center_arr.shape != (2,):
+        raise ValueError(f"center must be length-2; got {center!r}")
+    placed: dict[str, tuple[float, float]] = {}
+    for frame in frames:
+        if frame.viewport is None:
+            raise ValueError(f"frame {frame.name!r} missing viewport for world place")
+        delta = np.asarray(frame.viewport, dtype=float) - center_arr
+        pixel = linear @ delta
+        placed[frame.name] = (float(pixel[0]), float(pixel[1]))
+    return placed
 
 
 def stitch_viewport_mosaic(
@@ -1339,7 +2152,11 @@ def stitch_viewport_mosaic(
     gridish = [f for f in frames if parse_grid_cell(f.name) is not None]
     if len(gridish) >= 3:
         return stitch_grid_lattice(
-            frames, out_path, mask_cfg=mask_cfg, debug_dir=debug_dir
+            frames,
+            out_path,
+            mask_cfg=mask_cfg,
+            debug_dir=debug_dir,
+            max_viewport_dev=max_viewport_dev,
         )
 
     mask_cfg = mask_cfg or bluestacks_mask_config()
@@ -1354,6 +2171,7 @@ def stitch_viewport_mosaic(
     band0 = mask_and_crop(center_f.image, mask_cfg)
     bh, bw = band0.shape[:2]
     sx, sy = _estimate_scale(usable, bw, bh)
+    published_matrix: Matrix2x2 = ((sx, 0.0), (0.0, sy))
 
     pads = []
     for f in usable:
@@ -1434,6 +2252,7 @@ def stitch_viewport_mosaic(
         origin_y=origin_y,
         band_w=bw,
         band_h=bh,
+        world_to_pixel_matrix=published_matrix,
     )
 
 

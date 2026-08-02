@@ -59,6 +59,68 @@ def _optional_tap(raw: Any, *, label: str) -> TapPoint | None:
     return _tap(raw, label=label)
 
 
+def _parse_gear_delays(raw: dict[str, Any]) -> DelaysConfig:
+    delays_raw = raw.get("delays_ms") or {}
+    if not isinstance(delays_raw, dict):
+        raise ValueError("delays_ms must be a mapping")
+    return DelaysConfig(
+        after_tap_ms=int(delays_raw.get("after_tap", 700)),
+        after_open_ms=int(delays_raw.get("after_open", 1100)),
+        after_tab_ms=int(delays_raw.get("after_tab", 900)),
+        after_skill_ms=int(delays_raw.get("after_skill", 700)),
+    )
+
+
+def _parse_gear_grid(raw: dict[str, Any]) -> GearGridConfig:
+    grid_raw = raw.get("grid") or {}
+    if not isinstance(grid_raw, dict):
+        raise ValueError("grid must be a mapping")
+    cells_raw = grid_raw.get("cells")
+    if not isinstance(cells_raw, list) or not cells_raw:
+        raise ValueError("grid.cells must be a non-empty list")
+    cells = tuple(_tap(c, label=f"grid.cells[{i}]") for i, c in enumerate(cells_raw))
+
+    swipe_raw = grid_raw.get("page_swipe") or {}
+    if not isinstance(swipe_raw, dict):
+        raise ValueError("grid.page_swipe must be a mapping")
+    page_swipe = PageSwipe(
+        x1=int(swipe_raw["x1"]),
+        y1=int(swipe_raw["y1"]),
+        x2=int(swipe_raw["x2"]),
+        y2=int(swipe_raw["y2"]),
+        duration_ms=int(swipe_raw.get("duration_ms", 400)),
+    )
+    return GearGridConfig(
+        cells=cells,
+        page_swipe=page_swipe,
+        max_pages=int(grid_raw.get("max_pages", 20)),
+    )
+
+
+def _parse_gear_nav(raw: dict[str, Any]) -> GearNavConfig:
+    nav_raw = raw.get("nav") or {}
+    if not isinstance(nav_raw, dict):
+        raise ValueError("nav must be a mapping")
+    return GearNavConfig(
+        close_detail=_tap(nav_raw.get("close_detail"), label="nav.close_detail"),
+        back=_optional_tap(nav_raw.get("back"), label="nav.back"),
+    )
+
+
+def _parse_gear_ocr_regions(raw: dict[str, Any]) -> GearOcrRegions:
+    ocr_raw = raw.get("ocr") or {}
+    if not isinstance(ocr_raw, dict):
+        raise ValueError("ocr must be a mapping")
+    return GearOcrRegions(
+        detail_panel=_box(ocr_raw.get("detail_panel"), label="ocr.detail_panel"),
+        enhancement=_optional_box(ocr_raw.get("enhancement"), label="ocr.enhancement"),
+        mastery=_optional_box(ocr_raw.get("mastery"), label="ocr.mastery"),
+        name=_optional_box(ocr_raw.get("name"), label="ocr.name"),
+        rarity=_optional_box(ocr_raw.get("rarity"), label="ocr.rarity"),
+        power=_optional_box(ocr_raw.get("power"), label="ocr.power"),
+    )
+
+
 def load_gear_config(path: Path | None = None) -> GearConfig:
     config_path = path if path is not None else DEFAULT_GEAR_CONFIG
     if not config_path.is_file():
@@ -71,64 +133,11 @@ def load_gear_config(path: Path | None = None) -> GearConfig:
     adb = raw.get("adb") or {}
     serial = adb.get("serial") if isinstance(adb, dict) else None
 
-    delays_raw = raw.get("delays_ms") or {}
-    if not isinstance(delays_raw, dict):
-        raise ValueError("delays_ms must be a mapping")
-    delays = DelaysConfig(
-        after_tap_ms=int(delays_raw.get("after_tap", 700)),
-        after_open_ms=int(delays_raw.get("after_open", 1100)),
-        after_tab_ms=int(delays_raw.get("after_tab", 900)),
-        after_skill_ms=int(delays_raw.get("after_skill", 700)),
-    )
-
-    grid_raw = raw.get("grid") or {}
-    if not isinstance(grid_raw, dict):
-        raise ValueError("grid must be a mapping")
-    cells_raw = grid_raw.get("cells")
-    if not isinstance(cells_raw, list) or not cells_raw:
-        raise ValueError("grid.cells must be a non-empty list")
-    cells = tuple(_tap(c, label=f"grid.cells[{i}]") for i, c in enumerate(cells_raw))
-    swipe_raw = grid_raw.get("page_swipe") or {}
-    if not isinstance(swipe_raw, dict):
-        raise ValueError("grid.page_swipe must be a mapping")
-    page_swipe = PageSwipe(
-        x1=int(swipe_raw["x1"]),
-        y1=int(swipe_raw["y1"]),
-        x2=int(swipe_raw["x2"]),
-        y2=int(swipe_raw["y2"]),
-        duration_ms=int(swipe_raw.get("duration_ms", 400)),
-    )
-    grid = GearGridConfig(
-        cells=cells,
-        page_swipe=page_swipe,
-        max_pages=int(grid_raw.get("max_pages", 20)),
-    )
-
-    nav_raw = raw.get("nav") or {}
-    if not isinstance(nav_raw, dict):
-        raise ValueError("nav must be a mapping")
-    nav = GearNavConfig(
-        close_detail=_tap(nav_raw.get("close_detail"), label="nav.close_detail"),
-        back=_optional_tap(nav_raw.get("back"), label="nav.back"),
-    )
-
-    ocr_raw = raw.get("ocr") or {}
-    if not isinstance(ocr_raw, dict):
-        raise ValueError("ocr must be a mapping")
-    ocr = GearOcrRegions(
-        detail_panel=_box(ocr_raw.get("detail_panel"), label="ocr.detail_panel"),
-        enhancement=_optional_box(ocr_raw.get("enhancement"), label="ocr.enhancement"),
-        mastery=_optional_box(ocr_raw.get("mastery"), label="ocr.mastery"),
-        name=_optional_box(ocr_raw.get("name"), label="ocr.name"),
-        rarity=_optional_box(ocr_raw.get("rarity"), label="ocr.rarity"),
-        power=_optional_box(ocr_raw.get("power"), label="ocr.power"),
-    )
-
     return GearConfig(
         adb_serial=str(serial) if serial else None,
-        delays=delays,
-        grid=grid,
-        nav=nav,
-        ocr=ocr,
+        delays=_parse_gear_delays(raw),
+        grid=_parse_gear_grid(raw),
+        nav=_parse_gear_nav(raw),
+        ocr=_parse_gear_ocr_regions(raw),
         save_screenshots=bool(raw.get("save_screenshots", True)),
     )

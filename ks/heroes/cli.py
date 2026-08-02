@@ -278,6 +278,65 @@ def build_parser() -> argparse.ArgumentParser:
         default=ROOT / "artifacts" / "heroes" / "recommend_result.json",
         help="Write recommendation JSON here.",
     )
+    recommend.add_argument(
+        "--beartrap-buffs",
+        type=Path,
+        default=ROOT / "config" / "beartrap_buffs.yaml",
+        help="Trap level / skillmod knobs for Bear damage scoring.",
+    )
+
+    bear_damage = sub.add_parser(
+        "bear-damage",
+        help="What-if Bear Trap damage score for a formation / skillmod.",
+    )
+    bear_damage.add_argument(
+        "--troops",
+        type=Path,
+        default=ROOT / "config" / "troops.yaml",
+        help="Troop inventory YAML.",
+    )
+    bear_damage.add_argument(
+        "--troop-stats",
+        type=Path,
+        default=ROOT / "config" / "troop_stats.yaml",
+        help="Battle base stats YAML.",
+    )
+    bear_damage.add_argument(
+        "--buffs",
+        type=Path,
+        default=ROOT / "config" / "beartrap_buffs.yaml",
+        help="Trap / skillmod knobs.",
+    )
+    bear_damage.add_argument(
+        "--capacity",
+        type=int,
+        default=None,
+        help="March size (default: troops.yaml march_capacity).",
+    )
+    bear_damage.add_argument(
+        "--ratio",
+        type=str,
+        default="greedy",
+        help="Formation: greedy | balanced | archers (10-10-80) | I:C:A e.g. 32:32:36.",
+    )
+    bear_damage.add_argument(
+        "--skillmod",
+        type=float,
+        default=None,
+        help="Override effective skillmod (default: from buffs.yaml).",
+    )
+    bear_damage.add_argument(
+        "--truegold",
+        type=int,
+        default=None,
+        help="Truegold level for troop stats.",
+    )
+    bear_damage.add_argument(
+        "--observed",
+        type=int,
+        default=None,
+        help="If set, print delta vs this observed single-rally score.",
+    )
 
     arena = sub.add_parser(
         "arena",
@@ -412,6 +471,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to heroes.yaml for heroes OCR rescan (default: config/heroes.yaml).",
     )
     ui.add_argument(
+        "--troops",
+        type=Path,
+        default=None,
+        help="Path to troops.yaml (default: config/troops.yaml).",
+    )
+    ui.add_argument(
         "--serial",
         type=str,
         default=None,
@@ -464,7 +529,12 @@ def _cmd_collect(args: argparse.Namespace) -> int:
         print("heroes collect dry-run")
         print(f"  config: {args.config}")
         print(f"  roster cells: {len(cfg.roster.cells)}")
-        print(f"  skill slots: {len(cfg.skill_slots)}")
+        by = cfg.skill_slots_by_rarity
+        print(
+            "  skill slots: "
+            f"rare={len(by['rare'])} epic={len(by['epic'])} "
+            f"legendary={len(by['legendary'])}"
+        )
         print(f"  max_pages: {cfg.roster.max_pages}")
         print(f"  adb serial: {args.serial or cfg.adb_serial or '(default device)'}")
         return 0
@@ -686,7 +756,72 @@ def _cmd_train_names(args: argparse.Namespace) -> int:
     return 0 if report["total"] else 1
 
 
+def _ensure_pro_cache(pro_path: Path) -> None:
+    if pro_path.exists():
+        return
+    # Empty pro cache — YAML-only catalog still works.
+    pro_path.parent.mkdir(parents=True, exist_ok=True)
+    pro_path.write_text('{"heroes": []}\n', encoding="utf-8")
+
+
+def _resolve_truegold(args: argparse.Namespace, troop_stats: object | None) -> int:
+    raw_troops = __import__("yaml").safe_load(
+        args.troops.read_text(encoding="utf-8")
+    ) or {}
+    if args.truegold is not None:
+        return int(args.truegold)
+    default = getattr(troop_stats, "default_truegold", 0) if troop_stats else 0
+    return int(raw_troops.get("truegold", default))
+
+
+def _print_recommend_result(result: object, out: Path) -> None:
+    print(f"recommended_mode: {result.recommended_mode}")  # type: ignore[attr-defined]
+    breakdown = getattr(result, "breakdown", None) or {}
+    label = (
+        "predicted_bear_damage"
+        if "bear_damage" in breakdown
+        else "expected_personal_points"
+    )
+    print(f"{label}: {result.expected_personal_points:.1f}")  # type: ignore[attr-defined]
+    print(f"heroes: {', '.join(h['name'] for h in result.heroes)}")  # type: ignore[attr-defined]
+    print(
+        "troops: "
+        f"I={result.troops['infantry']} "  # type: ignore[attr-defined]
+        f"C={result.troops['cavalry']} "
+        f"A={result.troops['archers']}"
+    )
+    if breakdown:
+        interesting = (
+            "skillmod",
+            "trap_attack_bonus",
+            "round_damage",
+            "hero_strength",
+            "archers_round_damage",
+            "cavalry_round_damage",
+            "infantry_round_damage",
+        )
+        bits = [
+            f"{k}={breakdown[k]:.4g}" for k in interesting if k in breakdown
+        ]
+        if bits:
+            print(f"breakdown: {', '.join(bits)}")
+    if result.gear_assignment:  # type: ignore[attr-defined]
+        print("gear:")
+        for name, rows in result.gear_assignment.items():  # type: ignore[attr-defined]
+            if not rows:
+                print(f"  {name}: (no pieces for class)")
+                continue
+            bits = [
+                f"{r['slot']}={r.get('name') or r['piece_id']}"
+                f"+{r.get('enhancement_level') or 0}"
+                for r in rows
+            ]
+            print(f"  {name}: {', '.join(bits)}")
+    print(f"wrote: {out}")
+
+
 def _cmd_recommend(args: argparse.Namespace) -> int:
+    from ks.heroes.optimize.bear_damage import load_beartrap_buffs
     from ks.heroes.optimize.catalog import load_catalog
     from ks.heroes.optimize.events import load_event_profile
     from ks.heroes.optimize.recommend import recommend
@@ -700,25 +835,22 @@ def _cmd_recommend(args: argparse.Namespace) -> int:
         scenarios = load_scenarios(args.scenarios)
         event = load_event_profile(args.event) if args.event else None
         troop_stats = load_troop_stats(args.troop_stats) if args.troop_stats else None
-        # truegold: CLI > troops.yaml > stats default
-        raw_troops = __import__("yaml").safe_load(args.troops.read_text(encoding="utf-8")) or {}
-        tg = args.truegold
-        if tg is None:
-            tg = int(raw_troops.get("truegold", troop_stats.default_truegold if troop_stats else 0))
+        tg = _resolve_truegold(args, troop_stats)
         force_mode = args.force_mode
         if force_mode == "starter":
             force_mode = "rally_lead"
-        pro_path = args.pro_cache
-        if not pro_path.exists():
-            # Empty pro cache — YAML-only catalog still works.
-            pro_path.parent.mkdir(parents=True, exist_ok=True)
-            pro_path.write_text('{"heroes": []}\n', encoding="utf-8")
-        catalog = load_catalog(pro_path, args.catalog)
+        _ensure_pro_cache(args.pro_cache)
+        catalog = load_catalog(args.pro_cache, args.catalog)
         gear_pieces = None
         if args.gear is not None:
             from ks.heroes.optimize.gear_assign import load_gear_pieces
 
             gear_pieces = load_gear_pieces(args.gear)
+        buffs = None
+        if event is not None and event.name == "beartrap":
+            buffs_path = getattr(args, "beartrap_buffs", None)
+            if buffs_path and Path(buffs_path).exists():
+                buffs = load_beartrap_buffs(buffs_path)
         result = recommend(
             heroes,
             catalog,
@@ -730,6 +862,7 @@ def _cmd_recommend(args: argparse.Namespace) -> int:
             truegold=tg,
             gear=gear_pieces,
             gear_profile=args.gear_profile,
+            beartrap_buffs=buffs,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"Error: {exc}", file=sys.stderr)
@@ -737,28 +870,108 @@ def _cmd_recommend(args: argparse.Namespace) -> int:
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result.to_dict(), indent=2) + "\n", encoding="utf-8")
-    print(f"recommended_mode: {result.recommended_mode}")
-    print(f"expected_personal_points: {result.expected_personal_points:.1f}")
-    print(f"heroes: {', '.join(h['name'] for h in result.heroes)}")
+    _print_recommend_result(result, args.out)
+    return 0
+
+
+def _cmd_bear_damage(args: argparse.Namespace) -> int:
+    from ks.heroes.optimize.bear_damage import (
+        fill_ratio_march,
+        greedy_fill_march,
+        load_beartrap_buffs,
+        simulate_from_units,
+    )
+    from ks.heroes.optimize.troop_stats import load_troop_stats
+    from ks.heroes.optimize.troops import load_troops_config
+
+    try:
+        troops = load_troops_config(args.troops)
+        table = load_troop_stats(args.troop_stats)
+        buffs = load_beartrap_buffs(args.buffs)
+        raw = __import__("yaml").safe_load(args.troops.read_text(encoding="utf-8")) or {}
+        tg = args.truegold
+        if tg is None:
+            tg = int(raw.get("truegold", table.default_truegold))
+        capacity = int(args.capacity) if args.capacity is not None else troops.march_capacity
+        capacity = min(capacity, troops.infantry + troops.cavalry + troops.archers)
+        inventory = {
+            "infantry": troops.levels("infantry") or ({6: troops.infantry} if troops.infantry else {}),
+            "cavalry": troops.levels("cavalry") or ({6: troops.cavalry} if troops.cavalry else {}),
+            "archers": troops.levels("archers") or ({6: troops.archers} if troops.archers else {}),
+        }
+        skillmod = (
+            float(args.skillmod)
+            if args.skillmod is not None
+            else buffs.effective_skillmod(0.0)
+        )
+        ratio = str(args.ratio).strip().lower()
+        if ratio == "greedy":
+            counts, _levels, result = greedy_fill_march(
+                inventory,
+                capacity=capacity,
+                table=table,
+                truegold=tg,
+                skillmod=skillmod,
+                trap_attack_bonus=buffs.trap_attack_bonus,
+                host_attack_pct=buffs.host_attack_pct,
+            )
+        else:
+            if ratio in {"balanced", "33-33-33", "1:1:1"}:
+                ratios = {"infantry": 1.0, "cavalry": 1.0, "archers": 1.0}
+            elif ratio in {"archers", "10-10-80", "archer"}:
+                ratios = {"infantry": 10.0, "cavalry": 10.0, "archers": 80.0}
+            elif ":" in ratio:
+                parts = [float(p) for p in ratio.split(":")]
+                if len(parts) != 3:
+                    raise ValueError(f"ratio must be I:C:A; got {args.ratio!r}")
+                ratios = {
+                    "infantry": parts[0],
+                    "cavalry": parts[1],
+                    "archers": parts[2],
+                }
+            else:
+                raise ValueError(
+                    f"unknown --ratio {args.ratio!r}; use greedy|balanced|archers|I:C:A"
+                )
+            counts, _levels, units = fill_ratio_march(
+                inventory,
+                capacity=capacity,
+                ratios=ratios,
+                table=table,
+                truegold=tg,
+            )
+            result = simulate_from_units(
+                units,
+                counts,
+                skillmod=skillmod,
+                trap_attack_bonus=buffs.trap_attack_bonus,
+                host_attack_pct=buffs.host_attack_pct,
+            )
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"score: {result.score}")
     print(
         "troops: "
-        f"I={result.troops['infantry']} "
-        f"C={result.troops['cavalry']} "
-        f"A={result.troops['archers']}"
+        f"I={counts['infantry']} C={counts['cavalry']} A={counts['archers']} "
+        f"(cap={capacity})"
     )
-    if result.gear_assignment:
-        print("gear:")
-        for name, rows in result.gear_assignment.items():
-            if not rows:
-                print(f"  {name}: (no pieces for class)")
-                continue
-            bits = [
-                f"{r['slot']}={r.get('name') or r['piece_id']}"
-                f"+{r.get('enhancement_level') or 0}"
-                for r in rows
-            ]
-            print(f"  {name}: {', '.join(bits)}")
-    print(f"wrote: {args.out}")
+    print(
+        f"skillmod={result.skillmod:.4g} "
+        f"trap_attack_bonus={result.trap_attack_bonus:.4g} "
+        f"round_damage={result.round_damage_total:.4g}"
+    )
+    for typ in ("infantry", "cavalry", "archers"):
+        row = result.by_type[typ]
+        print(
+            f"  {typ}: n={row.count} army={row.army:.1f} "
+            f"atk/troop={row.attack_per_troop:.4g} round={row.round_damage:.4g}"
+        )
+    if args.observed is not None:
+        delta = result.score - int(args.observed)
+        pct = 100.0 * delta / int(args.observed) if args.observed else 0.0
+        print(f"delta_vs_observed: {delta:+d} ({pct:+.2f}%)")
     return 0
 
 
@@ -877,6 +1090,28 @@ def _cmd_conquest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _validate_inventory_path(
+    path: Path, *, kind: str, json_name: str, collect_hint: str
+) -> int | None:
+    """Return an error exit code, or None when the inventory path is usable."""
+    if not path.exists():
+        print(
+            f"error: {kind} path not found: {path}\n"
+            f"Re-run {collect_hint} or pass --{kind} <dir>.",
+            file=sys.stderr,
+        )
+        return 1
+    json_path = path if path.is_file() else path / json_name
+    if path.is_dir() and not json_path.is_file():
+        print(
+            f"error: missing {json_path}\n"
+            f"Re-run {collect_hint} or pass --{kind} <dir-with-{json_name}>.",
+            file=sys.stderr,
+        )
+        return 1
+    return None
+
+
 def _cmd_ui(args: argparse.Namespace) -> int:
     from ks.heroes.ui import run_ui
 
@@ -887,42 +1122,23 @@ def _cmd_ui(args: argparse.Namespace) -> int:
         gear = ROOT / "artifacts" / "gear" / "full-run"
 
     if gear is not None:
-        if not gear.exists():
-            print(
-                f"error: gear path not found: {gear}\n"
-                "Re-run collect-gear or pass --gear <dir>.",
-                file=sys.stderr,
-            )
-            return 1
-        gear_json = gear if gear.is_file() else gear / "gear.json"
-        if gear.is_dir() and not gear_json.is_file():
-            print(
-                f"error: missing {gear_json}\n"
-                "Re-run collect-gear or pass --gear <dir-with-gear.json>.",
-                file=sys.stderr,
-            )
-            return 1
+        err = _validate_inventory_path(
+            gear, kind="gear", json_name="gear.json", collect_hint="collect-gear"
+        )
+        if err is not None:
+            return err
 
     if heroes is not None:
-        if not heroes.exists():
-            print(
-                f"error: heroes path not found: {heroes}\n"
-                "Re-run collect or pass --heroes <dir>.",
-                file=sys.stderr,
-            )
-            return 1
-        heroes_json = heroes if heroes.is_file() else heroes / "heroes.json"
-        if heroes.is_dir() and not heroes_json.is_file():
-            print(
-                f"error: missing {heroes_json}\n"
-                "Re-run collect or pass --heroes <dir-with-heroes.json>.",
-                file=sys.stderr,
-            )
-            return 1
+        err = _validate_inventory_path(
+            heroes, kind="heroes", json_name="heroes.json", collect_hint="collect"
+        )
+        if err is not None:
+            return err
 
     run_ui(
         gear,
         heroes_dir=heroes,
+        troops_path=Path(args.troops) if args.troops is not None else None,
         host=str(args.host),
         port=int(args.port),
         gear_config=Path(args.config),
@@ -951,6 +1167,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_train_names(args)
     if args.command == "recommend":
         return _cmd_recommend(args)
+    if args.command == "bear-damage":
+        return _cmd_bear_damage(args)
     if args.command == "arena":
         return _cmd_arena(args)
     if args.command == "conquest":

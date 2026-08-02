@@ -9,6 +9,10 @@ from __future__ import annotations
 # demastered_power ≈ intercept + slope * enhancement
 # final_power = round(demastered * (1 + 0.1 * mastery))
 _RARITY_LINEAR: dict[str, tuple[float, float]] = {
+    "grey": (4500.0, 168.0),
+    "gray": (4500.0, 168.0),
+    "common": (4500.0, 168.0),
+    "white": (4500.0, 168.0),
     "green": (9112.25, 340.625),
     "uncommon": (9112.25, 340.625),
     "blue": (14750.0, 516.0),
@@ -104,3 +108,23 @@ def estimate_enhancement_from_power(
         if best is None or err < best[0]:
             best = (err, nearest)
     return None if best is None else best[1]
+
+
+# Canonical rarity names (one per colour) for power-curve lookup and UI legend.
+_CANONICAL_RARITY = ["grey", "green", "blue", "epic", "mythic", "red"]
+
+
+def rarity_power_curves(max_enhancement: int = 80) -> dict[str, list[float]]:
+    """Return {rarity: [power_at_enh_0, power_at_enh_1, ..., power_at_enh_max]}.
+
+    Only includes canonical rarities (grey/green/blue/epic/mythic).
+    Values are mastery-0 powers for each enhancement level 0..max_enhancement.
+    """
+    curves: dict[str, list[float]] = {}
+    for rarity in _CANONICAL_RARITY:
+        intercept, slope = _RARITY_LINEAR[rarity]
+        curves[rarity] = [
+            int(round(intercept + slope * enh))
+            for enh in range(max_enhancement + 1)
+        ]
+    return curves

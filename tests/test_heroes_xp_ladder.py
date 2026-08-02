@@ -21,7 +21,9 @@ def test_fodder_xp_values_match_config() -> None:
 
 
 def test_cap_for_rarity() -> None:
-    assert cap_for_rarity("blue") == 80  # epic_max used for non-mythic below mythic
+    assert cap_for_rarity("grey") == 20
+    assert cap_for_rarity("green") == 40
+    assert cap_for_rarity("blue") == 60
     assert cap_for_rarity("epic") == 80
     assert cap_for_rarity("mythic") == 100
     assert cap_for_rarity("red") == 200

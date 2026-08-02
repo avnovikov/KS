@@ -10,6 +10,7 @@ import yaml
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.gear_store import GearStore
 from ks.heroes.models import HeroRecord
+from ks.heroes.optimize.gear_stats import expedition_stat_fraction
 from ks.heroes.optimize.scoring import normalize_troop
 from ks.heroes.optimize.types import CatalogEntry
 
@@ -94,34 +95,31 @@ def piece_score(
     profile: str = "early_game_growth",
     weights: dict[str, float] | None = None,
 ) -> float:
+    """Score a piece from formula expedition % (rarity+level+mastery).
+
+    OCR ``stats`` are not used for scoring — only rarity, enhancement, mastery,
+    troop, and slot. Power is a last-resort fallback when no formula exists
+    (e.g. grey/green) or troop/slot cannot be inferred.
+    """
     troop = normalize_troop(piece.troop_type)
     slot = infer_slot(piece)
     wmap = weights or load_profile_weights(profile)
     if troop is None or slot is None:
         return float(piece.power or 0) / 100_000.0
 
-    kind, weight_key = _SLOT_STAT[(troop, slot)]
+    _kind, weight_key = _SLOT_STAT[(troop, slot)]
     weight = float(wmap.get(weight_key, 1.0))
-    stats = piece.stats
-    pct = 0.0
-    if stats is not None:
-        if kind == "lethality" and stats.lethality is not None:
-            pct = float(stats.lethality)
-        elif kind == "health" and stats.health is not None:
-            pct = float(stats.health)
-        else:
-            # Prefer matching expedition label if present.
-            for label, value in (stats.expedition or {}).items():
-                low = label.lower()
-                if kind == "lethality" and "lethal" in low:
-                    pct = float(value)
-                    break
-                if kind == "health" and "health" in low:
-                    pct = float(value)
-                    break
-    if pct <= 0 and piece.power:
+    frac = expedition_stat_fraction(
+        piece.rarity,
+        piece.enhancement_level,
+        piece.mastery_level,
+    )
+    if frac is not None and frac > 0:
+        # Formula returns fraction; historical scores used percent points.
+        return weight * (frac * 100.0)
+    if piece.power:
         return weight * (float(piece.power) / 100_000.0)
-    return weight * pct
+    return 0.0
 
 
 def best_sets_by_troop(
@@ -191,6 +189,63 @@ def assign_best_sets(
     return out
 
 
+def _ordered_priority_names(
+    selected: list[str], priority: list[str] | None
+) -> list[str]:
+    """Selected heroes in claim order, deduplicated with ``selected`` as fallback."""
+    order = list(priority) if priority else list(selected)
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for name in order + list(selected):
+        if name in selected and name not in seen:
+            ordered.append(name)
+            seen.add(name)
+    return ordered
+
+
+def _score_pool_by_troop_slot(
+    pieces: list[GearRecord],
+    profile: str,
+    weights: dict[str, float],
+) -> dict[tuple[str, str], list[tuple[float, GearRecord]]]:
+    """Group pieces by (troop, slot), best-scoring piece first."""
+    pool: dict[tuple[str, str], list[tuple[float, GearRecord]]] = {}
+    for piece in pieces:
+        troop = normalize_troop(piece.troop_type)
+        slot = infer_slot(piece)
+        if troop is None or slot is None:
+            continue
+        score = piece_score(piece, profile=profile, weights=weights)
+        pool.setdefault((troop, slot), []).append((score, piece))
+    for key in pool:
+        pool[key].sort(key=lambda row: row[0], reverse=True)
+    return pool
+
+
+def _claim_exclusive_gear(
+    ordered: list[str],
+    by_name: dict[str, HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    pool: dict[tuple[str, str], list[tuple[float, GearRecord]]],
+) -> dict[str, dict[str, GearRecord]]:
+    """Let heroes claim their best still-unclaimed piece per slot, in priority order."""
+    used: set[str] = set()
+    out: dict[str, dict[str, GearRecord]] = {name: {} for name in ordered}
+    for name in ordered:
+        troop = _hero_troop(name, by_name.get(name), catalog)
+        if troop is None:
+            continue
+        for slot in SLOTS:
+            candidates = pool.get((troop, slot)) or []
+            for _score, piece in candidates:
+                if piece.piece_id in used:
+                    continue
+                out[name][slot] = piece
+                used.add(piece.piece_id)
+                break
+    return out
+
+
 def assign_exclusive_sets(
     heroes: list[HeroRecord],
     catalog: dict[str, CatalogEntry],
@@ -209,41 +264,9 @@ def assign_exclusive_sets(
         return {}
     weights = load_profile_weights(profile)
     by_name = {h.name: h for h in heroes}
-    order = list(priority) if priority else list(selected)
-    # Keep every selected hero exactly once; append any missing at the end.
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for name in order + list(selected):
-        if name in selected and name not in seen:
-            ordered.append(name)
-            seen.add(name)
-
-    pool: dict[tuple[str, str], list[tuple[float, GearRecord]]] = {}
-    for piece in pieces:
-        troop = normalize_troop(piece.troop_type)
-        slot = infer_slot(piece)
-        if troop is None or slot is None:
-            continue
-        score = piece_score(piece, profile=profile, weights=weights)
-        pool.setdefault((troop, slot), []).append((score, piece))
-    for key in pool:
-        pool[key].sort(key=lambda row: row[0], reverse=True)
-
-    used: set[str] = set()
-    out: dict[str, dict[str, GearRecord]] = {name: {} for name in ordered}
-    for name in ordered:
-        troop = _hero_troop(name, by_name.get(name), catalog)
-        if troop is None:
-            continue
-        for slot in SLOTS:
-            candidates = pool.get((troop, slot)) or []
-            for _score, piece in candidates:
-                if piece.piece_id in used:
-                    continue
-                out[name][slot] = piece
-                used.add(piece.piece_id)
-                break
-    return out
+    ordered = _ordered_priority_names(selected, priority)
+    pool = _score_pool_by_troop_slot(pieces, profile, weights)
+    return _claim_exclusive_gear(ordered, by_name, catalog, pool)
 
 
 def _hero_troop(

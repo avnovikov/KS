@@ -222,6 +222,80 @@ def build_event_utility(
     return _event
 
 
+@dataclass(frozen=True)
+class _UpgradeCandidate:
+    """A single +1 level upgrade under consideration, with its ΔU and cost."""
+
+    delta: float
+    piece_id: str
+    from_level: int
+    to_level: int
+    fodder_plan: dict[str, int]
+
+
+def _best_upgrade_candidate(
+    by_id: dict[str, GearRecord],
+    levels: dict[str, int],
+    xp_ladder: dict[str, Any],
+    values: dict[str, int],
+    bag: FodderBag,
+    gear: list[GearRecord],
+    utility_fn: UtilityFn,
+    current_u: float,
+) -> _UpgradeCandidate | None:
+    """Scan every piece for the affordable +1 level upgrade with the best ΔU."""
+    best: _UpgradeCandidate | None = None
+    for piece_id, piece in by_id.items():
+        cur_lv = int(levels.get(piece_id, piece.enhancement_level or 0))
+        cap = cap_for_rarity(piece.rarity, ladder=xp_ladder)
+        if cur_lv >= cap:
+            continue
+        cost = xp_cost_next_level(xp_ladder, cur_lv)
+        if cost is None or cost <= 0:
+            continue
+        plan = bag.plan_cover(cost, values=values)
+        if plan is None:
+            continue
+        trial_levels = dict(levels)
+        trial_levels[piece_id] = cur_lv + 1
+        trial_gear = apply_levels(gear, trial_levels)
+        trial_u, _summary = utility_fn(trial_gear)
+        if trial_u == float("-inf"):
+            continue
+        delta = trial_u - current_u
+        if best is None or delta > best.delta:
+            best = _UpgradeCandidate(delta, piece_id, cur_lv, cur_lv + 1, plan)
+    return best
+
+
+def _apply_upgrade_step(
+    candidate: _UpgradeCandidate,
+    *,
+    gear: list[GearRecord],
+    levels: dict[str, int],
+    bag: FodderBag,
+    xp_ladder: dict[str, Any],
+    by_id: dict[str, GearRecord],
+    utility_fn: UtilityFn,
+) -> tuple[FodderBag, float, dict[str, Any], SpendStep]:
+    """Consume fodder for ``candidate``, bump its level, and re-score utility."""
+    cost = xp_cost_next_level(xp_ladder, candidate.from_level) or 0
+    new_bag = bag.consume(candidate.fodder_plan)
+    levels[candidate.piece_id] = candidate.to_level
+    trial_gear = apply_levels(gear, levels)
+    new_u, new_summary = utility_fn(trial_gear)
+    piece = by_id[candidate.piece_id]
+    step = SpendStep(
+        piece_id=candidate.piece_id,
+        name=piece.name,
+        from_level=candidate.from_level,
+        to_level=candidate.to_level,
+        xp_spent=int(cost),
+        fodder_spent=dict(candidate.fodder_plan),
+    )
+    return new_bag, new_u, new_summary, step
+
+
 def allocate_fodder_xp(
     gear: list[GearRecord],
     bag: FodderBag,
@@ -250,49 +324,21 @@ def allocate_fodder_xp(
     current_summary = baseline_summary
 
     for _ in range(max_steps):
-        best: tuple[float, str, int, int, dict[str, int]] | None = None
-        # delta, piece_id, from_lv, to_lv, fodder_spend
-        for piece_id, piece in by_id.items():
-            cur_lv = int(levels.get(piece_id, piece.enhancement_level or 0))
-            cap = cap_for_rarity(piece.rarity, ladder=xp_ladder)
-            if cur_lv >= cap:
-                continue
-            cost = xp_cost_next_level(xp_ladder, cur_lv)
-            if cost is None or cost <= 0:
-                continue
-            plan = current_bag.plan_cover(cost, values=values)
-            if plan is None:
-                continue
-            trial_levels = dict(levels)
-            trial_levels[piece_id] = cur_lv + 1
-            trial_gear = apply_levels(gear, trial_levels)
-            trial_u, _summary = utility_fn(trial_gear)
-            if trial_u == float("-inf"):
-                continue
-            delta = trial_u - current_u
-            if best is None or delta > best[0]:
-                best = (delta, piece_id, cur_lv, cur_lv + 1, plan)
-
-        if best is None or best[0] <= 0:
-            break
-
-        delta, piece_id, from_lv, to_lv, plan = best
-        cost = xp_cost_next_level(xp_ladder, from_lv) or 0
-        current_bag = current_bag.consume(plan)
-        levels[piece_id] = to_lv
-        trial_gear = apply_levels(gear, levels)
-        current_u, current_summary = utility_fn(trial_gear)
-        piece = by_id[piece_id]
-        steps.append(
-            SpendStep(
-                piece_id=piece_id,
-                name=piece.name,
-                from_level=from_lv,
-                to_level=to_lv,
-                xp_spent=int(cost),
-                fodder_spent=dict(plan),
-            )
+        candidate = _best_upgrade_candidate(
+            by_id, levels, xp_ladder, values, current_bag, gear, utility_fn, current_u
         )
+        if candidate is None or candidate.delta <= 0:
+            break
+        current_bag, current_u, current_summary, step = _apply_upgrade_step(
+            candidate,
+            gear=gear,
+            levels=levels,
+            bag=current_bag,
+            xp_ladder=xp_ladder,
+            by_id=by_id,
+            utility_fn=utility_fn,
+        )
+        steps.append(step)
 
     return SpendResult(
         event=event,

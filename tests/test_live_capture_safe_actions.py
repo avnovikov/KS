@@ -60,6 +60,64 @@ def test_never_plans_android_back():
         assert action.kind != "back", text
 
 
+def test_find_panel_close_candidates_targets_pale_card_top_right():
+    import numpy as np
+    import cv2
+    from ks.cartograph.live_capture import find_panel_close_candidates
+
+    img = np.full((1920, 1080, 3), (40, 90, 50), dtype=np.uint8)
+    # Pale lord/profile-style panel on the right-middle.
+    cv2.rectangle(img, (420, 520), (980, 1280), (230, 230, 225), -1)
+    hits = find_panel_close_candidates(img)
+    assert hits, "expected at least one close candidate on pale panel"
+    cx, cy = hits[0]
+    assert cx > 850, f"close should be near panel top-right; got {cx}"
+    assert 520 <= cy <= 650, f"close should be near panel top; got {cy}"
+
+
+def test_resolve_blocking_screens_taps_panel_close_then_clears(monkeypatch):
+    """Resolver prefers pale-panel close; never Android Back."""
+    from types import SimpleNamespace
+
+    import numpy as np
+    import cv2
+    from ks.cartograph import live_capture as lc
+
+    blocked = np.full((1920, 1080, 3), (40, 90, 50), dtype=np.uint8)
+    cv2.rectangle(blocked, (420, 520), (980, 1280), (230, 230, 225), -1)
+    clear = np.full((1920, 1080, 3), (40, 90, 50), dtype=np.uint8)
+    frames = [blocked, clear]
+    taps: list[tuple[int, int]] = []
+
+    class FakeDevice:
+        def tap(self, x, y):
+            taps.append((int(x), int(y)))
+
+    monkeypatch.setattr(lc, "screencap_bgr", lambda _d: frames.pop(0))
+    monkeypatch.setattr(lc, "time", SimpleNamespace(sleep=lambda _s: None))
+    monkeypatch.setattr(lc, "mail_modal_visible", lambda _img: False)
+    monkeypatch.setattr(lc, "march_ui_visible", lambda _img: False)
+    monkeypatch.setattr(lc, "alliance_invite_visible", lambda _img: False)
+    monkeypatch.setattr(lc, "find_alliance_invite_close", lambda _img: None)
+    monkeypatch.setattr(lc, "find_popup_corner_close", lambda _img: None)
+    monkeypatch.setattr(
+        lc,
+        "tile_popup_visible",
+        lambda img: float(np.mean(img[700:900, 600:800, 0])) > 200,
+    )
+    monkeypatch.setattr(
+        lc,
+        "find_panel_close_candidates",
+        lambda img: [(930, 560)] if lc.tile_popup_visible(img) else [],
+    )
+
+    result = lc.resolve_blocking_screens(FakeDevice(), settle_s=0.01, require_clear=True)
+    assert result.cleared is True
+    assert result.remaining is None
+    assert taps == [(930, 560)]
+    assert any(a.startswith("tap_panel_close:") for a in result.actions)
+
+
 def test_tile_popup_coords_preferred_from_mid_banner():
     """Badland-style mid-screen X:Y must parse (not only bottom search bar)."""
     import numpy as np
@@ -132,7 +190,8 @@ def test_find_clear_grass_tap_avoids_popup_and_structures():
     assert tuple(image[y, x]) == (45, 120, 55)
 
 
-def test_swipe_camera_starts_and_ends_on_clear_grass(monkeypatch):
+def test_swipe_camera_uses_fixed_map_band_anchor(monkeypatch):
+    """Swipes must drag from a fixed map-band point, not grass heuristics."""
     import numpy as np
     import ks.cartograph.live_capture as live_capture
 
@@ -150,9 +209,115 @@ def test_swipe_camera_starts_and_ends_on_clear_grass(monkeypatch):
 
     live_capture.swipe_camera(device, "E", distance_px=120)
 
-    x1, y1, x2, y2, _duration = device.swipe_call
-    assert tuple(image[y1, x1]) == (45, 120, 55)
-    assert tuple(image[y2, x2]) == (45, 120, 55)
+    x1, y1, x2, y2, duration = device.swipe_call
+    assert duration == 420
+    assert abs(x1 - 600) <= 2  # 540 + 60
+    assert abs(x2 - 480) <= 2  # 540 - 60
+    assert abs(y1 - 980) <= 2
+    assert abs(y2 - 980) <= 2
+
+
+def test_swipe_camera_verified_rejects_pixel_only_flicker(monkeypatch):
+    """Pixel shift without OCR tile delta must fail closed."""
+    import numpy as np
+    import pytest
+    import ks.cartograph.mosaic as mosaic
+
+    before = np.full((1920, 1080, 3), (45, 120, 55), dtype=np.uint8)
+    before[600:900, 350:650] = (180, 40, 30)
+    after = np.roll(before, 90, axis=1)
+    shots = iter([before, after, after, after, after, after, after, after])
+
+    class FakeDevice:
+        def swipe(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(mosaic, "screencap_bgr", lambda _d: next(shots))
+    monkeypatch.setattr(mosaic, "swipe_camera", lambda *a, **k: None)
+    monkeypatch.setattr(mosaic, "dismiss_map_blockers", lambda _d: None)
+    monkeypatch.setattr(
+        mosaic,
+        "resolve_blocking_screens",
+        lambda *_a, **_k: type("R", (), {"image": before, "cleared": True, "actions": (), "remaining": None})(),
+    )
+    monkeypatch.setattr(mosaic.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(
+        "ks.cartograph.viewport.ocr_viewport_from_image",
+        lambda _img: ((1000, 100), "X:1000 Y:100"),
+    )
+
+    with pytest.raises(RuntimeError, match="coords did not change"):
+        mosaic.swipe_camera_verified(
+            FakeDevice(), "E", distance_px=200, settle_s=0.01, attempts=3
+        )
+
+
+def test_swipe_camera_verified_requires_ocr_tile_delta(monkeypatch):
+    """OCR manhattan/hypot delta ≥ min_tile_delta returns post-swipe viewport."""
+    import numpy as np
+    import ks.cartograph.mosaic as mosaic
+
+    frame = np.full((64, 64, 3), 40, dtype=np.uint8)
+    ocr_seq = iter(
+        [
+            ((1000, 100), "X:1000 Y:100"),
+            ((1002, 100), "X:1002 Y:100"),
+        ]
+    )
+
+    class FakeDevice:
+        def swipe(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(mosaic, "screencap_bgr", lambda _d: frame)
+    monkeypatch.setattr(mosaic, "swipe_camera", lambda *a, **k: None)
+    monkeypatch.setattr(
+        mosaic,
+        "resolve_blocking_screens",
+        lambda *_a, **_k: type(
+            "R", (), {"image": frame, "cleared": True, "actions": (), "remaining": None}
+        )(),
+    )
+    monkeypatch.setattr(mosaic.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(
+        "ks.cartograph.viewport.ocr_viewport_from_image",
+        lambda _img: next(ocr_seq),
+    )
+
+    vp = mosaic.swipe_camera_verified(
+        FakeDevice(), "E", distance_px=200, settle_s=0.01, attempts=2, min_tile_delta=2
+    )
+    assert vp == (1002, 100)
+
+
+def test_capture_grid_refuses_duplicate_viewport(monkeypatch, tmp_path):
+    """Saving a frame with the same OCR viewport as the previous must abort."""
+    import numpy as np
+    import pytest
+    import ks.cartograph.mosaic as mosaic
+
+    image = np.full((64, 64, 3), 50, dtype=np.uint8)
+    same_vp = (1040, 110)
+
+    class FakeDevice:
+        def tap(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(mosaic, "ensure_world_map", lambda *a, **k: None)
+    monkeypatch.setattr(mosaic, "dismiss_map_blockers", lambda *a, **k: None)
+    monkeypatch.setattr(
+        mosaic,
+        "swipe_camera_verified",
+        lambda *a, **k: (same_vp[0] + 2, same_vp[1]),
+    )
+    monkeypatch.setattr(
+        mosaic,
+        "capture_clean_frame_with_popup_coords",
+        lambda *a, **k: (image, same_vp, f"X:{same_vp[0]} Y:{same_vp[1]}"),
+    )
+
+    with pytest.raises(RuntimeError, match="viewport stuck|duplicate"):
+        mosaic.capture_grid(FakeDevice(), tmp_path, depth=1, open_world=False)
 
 
 def test_find_popup_corner_close_detects_right_x():

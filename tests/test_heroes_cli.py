@@ -23,5 +23,5 @@ def test_cli_collect_gear_dry_run(capsys):
     assert code == 0
     out = capsys.readouterr().out
     assert "gear collect dry-run" in out
-    assert "grid cells: 20" in out
+    assert "grid cells: 24" in out
     assert "Backpack > Gear" in out

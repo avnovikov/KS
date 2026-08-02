@@ -54,7 +54,17 @@ DEFAULT_MAT = np.array(
 )
 
 DEFAULT_SEED_CALIBRATION_NAME = "exact-coordinate-calibration-v3.yaml"
+SEED_CALIBRATION_GLOB = "exact-coordinate-calibration*.yaml"
 REFERENCE_FRAME = "c0_center"
+
+# Canonical registration authority (highest → lowest). Viewport/search-bar OCR
+# must not define diamond scale when a clicked seed exists.
+REGISTRATION_AUTHORITY_ORDER: tuple[str, ...] = (
+    "popup_click_selected_diamond",  # exact world + pixel from clicked object
+    "unique_name_landmarks",  # same city/structure label across frames
+    "static_sift",  # buildings/rocks/trees; refine translations only
+    "viewport_search_bar_ocr",  # weak prior / fallback only
+)
 
 
 @dataclass(frozen=True)
@@ -121,6 +131,21 @@ def load_viewports_yaml(path: Path) -> dict[str, tuple[int, int]]:
                 raise ValueError(f"viewport {name!r} must be [x, y]; got {val!r}")
             out[name] = (int(val[0]), int(val[1]))
     return out
+
+
+def find_seed_calibration_path(capture_dir: Path) -> Path | None:
+    """Return the preferred exact-click seed YAML in ``capture_dir``, if any.
+
+    Prefers :data:`DEFAULT_SEED_CALIBRATION_NAME`, else the lexicographically
+    last ``exact-coordinate-calibration*.yaml`` match.
+    """
+    if not capture_dir.is_dir():
+        return None
+    preferred = capture_dir / DEFAULT_SEED_CALIBRATION_NAME
+    if preferred.is_file():
+        return preferred
+    matches = sorted(capture_dir.glob(SEED_CALIBRATION_GLOB))
+    return matches[-1] if matches else None
 
 
 def load_seed_calibration(path: Path) -> SeedCalibration:
@@ -373,16 +398,20 @@ def register_and_digitize_capture(
 
     Exact clicked seed offsets define world authority. Image matching may refine
     translations only. Canonical outputs fail closed when registration thresholds
-    fail.
+    fail. Authority order: :data:`REGISTRATION_AUTHORITY_ORDER`.
     """
     if not capture_dir.is_dir():
         raise FileNotFoundError(f"capture_dir not found: {capture_dir}")
     destination = out_dir or capture_dir
     destination.mkdir(parents=True, exist_ok=True)
 
-    seed_path = seed_calibration_path or (
-        capture_dir / DEFAULT_SEED_CALIBRATION_NAME
-    )
+    seed_path = seed_calibration_path or find_seed_calibration_path(capture_dir)
+    if seed_path is None:
+        raise FileNotFoundError(
+            f"exact-click seed calibration missing under {capture_dir}; "
+            f"expected {DEFAULT_SEED_CALIBRATION_NAME} (or "
+            f"{SEED_CALIBRATION_GLOB}). Viewport OCR alone is not canonical."
+        )
     seed = load_seed_calibration(seed_path)
     mask = mask_cfg or _mask_for_capture(capture_dir)
     center = _resolve_capture_center(capture_dir, seed)
@@ -481,6 +510,46 @@ def register_and_digitize_capture(
         catalog=catalog,
         entities=entities,
         out_dir=destination,
+    )
+
+
+@dataclass(frozen=True)
+class CaptureStitchRoute:
+    """Which stitch path a capture folder should take."""
+
+    mode: str  # "register" | "viewport_fallback"
+    seed_path: Path | None
+    detail: str
+
+
+def resolve_capture_stitch_route(capture_dir: Path) -> CaptureStitchRoute:
+    """Choose canonical registration vs weak viewport-OCR fallback.
+
+    Canonical captures include an exact-click seed YAML. Without it, folder
+    restitch may still use search-bar OCR, but that path is explicitly a
+    fallback — not the preferred scale authority.
+    """
+    if not capture_dir.is_dir():
+        raise FileNotFoundError(f"capture_dir not found: {capture_dir}")
+    seed = find_seed_calibration_path(capture_dir)
+    if seed is not None:
+        return CaptureStitchRoute(
+            mode="register",
+            seed_path=seed,
+            detail=(
+                "exact-click seed found; using register_and_digitize_capture "
+                f"({seed.name})"
+            ),
+        )
+    return CaptureStitchRoute(
+        mode="viewport_fallback",
+        seed_path=None,
+        detail=(
+            "no exact-click seed "
+            f"({DEFAULT_SEED_CALIBRATION_NAME}); falling back to viewport "
+            "OCR diamond stitch — weak prior only; live click calibration "
+            "required for canonical scale"
+        ),
     )
 
 

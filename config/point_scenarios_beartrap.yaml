@@ -1,5 +1,7 @@
 # Bear Trap / Bear Hunt scenarios — only starter (rally_lead) vs joiner.
-# "Points" here are a damage-contribution proxy for ranking modes, not Relic Points.
+# rally_lead expected points = 10-round Bear damage score (see bear_damage.py +
+# beartrap_buffs.yaml) when --event config/events/beartrap.yaml is used with
+# troop_stats. joiner still uses the linear proxy below.
 #
 # Usage:
 #   ks-heroes recommend \

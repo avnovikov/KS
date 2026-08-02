@@ -33,6 +33,229 @@ class FrameOffsetCalibration:
     residual_rms_px: float
 
 
+@dataclass(frozen=True)
+class ScaleFromTwoPoints:
+    """Scale along the chord between two measured (world, pixel) points.
+
+    Use this to validate screenshot scale from time to time: pick two known
+    world anchors visible in pixel space, measure their separation, divide.
+    One chord gives px/tile along that direction; for diamond geometry you
+    need two independent chords (e.g. mostly-X and mostly-Y).
+    """
+
+    label_a: str
+    label_b: str
+    world_a: tuple[float, float]
+    world_b: tuple[float, float]
+    pixel_a: tuple[float, float]
+    pixel_b: tuple[float, float]
+    world_delta: tuple[float, float]
+    pixel_delta: tuple[float, float]
+    world_length_tiles: float
+    pixel_length_px: float
+    px_per_tile: float
+
+
+@dataclass(frozen=True)
+class ScaleValidation:
+    """Two independent two-point chords used as the scale check."""
+
+    chord_a: ScaleFromTwoPoints
+    chord_b: ScaleFromTwoPoints
+    ok: bool
+    detail: str
+
+
+def sample_indices_for_scale_checks(
+    n: int,
+    *,
+    fraction: float = 0.2,
+    min_samples: int = 2,
+    max_samples: int = 12,
+) -> list[int]:
+    """Pick a spread of indices for periodic scale checks (default ~20%).
+
+    Always aims for at least ``min_samples`` and at most ``max_samples``
+    (besides a fixed reference, which the caller holds separately).
+    """
+    if n < 0:
+        raise ValueError(f"n must be non-negative; got {n}")
+    if not (0.0 < fraction <= 1.0):
+        raise ValueError(f"fraction must be in (0, 1]; got {fraction}")
+    if min_samples < 1:
+        raise ValueError(f"min_samples must be >= 1; got {min_samples}")
+    if max_samples < min_samples:
+        raise ValueError("max_samples must be >= min_samples")
+    if n == 0:
+        return []
+    target = int(round(n * fraction))
+    target = max(min_samples, min(max_samples, max(target, min_samples)))
+    target = min(target, n)
+    if target == n:
+        return list(range(n))
+    if target == 1:
+        return [n // 2]
+    # Evenly spaced through the list so 10–30% still covers the grid.
+    return sorted({int(round(i * (n - 1) / (target - 1))) for i in range(target)})
+
+
+def measure_scale_from_observations_on_frame(
+    observations: Sequence[CalibrationObservation],
+) -> ScaleFromTwoPoints:
+    """Two-point scale from two known anchors on the *same* screenshot."""
+    if len(observations) < 2:
+        raise ValueError("need at least two observations on one screenshot")
+    frames = {item.frame for item in observations}
+    if len(frames) != 1:
+        raise ValueError(
+            "same-screenshot scale check requires one frame; "
+            f"got {sorted(frames)}"
+        )
+    # Farthest pair in world space → most stable px/tile.
+    best: ScaleFromTwoPoints | None = None
+    for a, b in combinations(observations, 2):
+        seg = measure_scale_from_two_points(
+            label_a=f"{a.frame}:{a.world_x:g},{a.world_y:g}",
+            world_a=(a.world_x, a.world_y),
+            pixel_a=(a.pixel_x, a.pixel_y),
+            label_b=f"{b.frame}:{b.world_x:g},{b.world_y:g}",
+            world_b=(b.world_x, b.world_y),
+            pixel_b=(b.pixel_x, b.pixel_y),
+        )
+        if best is None or seg.world_length_tiles > best.world_length_tiles:
+            best = seg
+    assert best is not None
+    return best
+
+
+def measure_scale_from_two_points(
+    *,
+    label_a: str,
+    world_a: tuple[float, float],
+    pixel_a: tuple[float, float],
+    label_b: str,
+    world_b: tuple[float, float],
+    pixel_b: tuple[float, float],
+) -> ScaleFromTwoPoints:
+    """Measure px/tile from exactly two known points (one baseline)."""
+    wa = np.asarray(world_a, dtype=float)
+    wb = np.asarray(world_b, dtype=float)
+    pa = np.asarray(pixel_a, dtype=float)
+    pb = np.asarray(pixel_b, dtype=float)
+    if wa.shape != (2,) or wb.shape != (2,) or pa.shape != (2,) or pb.shape != (2,):
+        raise ValueError("world/pixel points must be length-2")
+    world_delta = wb - wa
+    pixel_delta = pb - pa
+    world_len = float(np.linalg.norm(world_delta))
+    pixel_len = float(np.linalg.norm(pixel_delta))
+    if world_len < 1e-6:
+        raise ValueError(
+            f"two-point scale needs distinct world coords; got {world_a} and {world_b}"
+        )
+    if pixel_len < 1e-6:
+        raise ValueError(
+            f"two-point scale needs distinct pixel coords; got {pixel_a} and {pixel_b}"
+        )
+    return ScaleFromTwoPoints(
+        label_a=label_a,
+        label_b=label_b,
+        world_a=(float(wa[0]), float(wa[1])),
+        world_b=(float(wb[0]), float(wb[1])),
+        pixel_a=(float(pa[0]), float(pa[1])),
+        pixel_b=(float(pb[0]), float(pb[1])),
+        world_delta=(float(world_delta[0]), float(world_delta[1])),
+        pixel_delta=(float(pixel_delta[0]), float(pixel_delta[1])),
+        world_length_tiles=world_len,
+        pixel_length_px=pixel_len,
+        px_per_tile=pixel_len / world_len,
+    )
+
+
+def validate_scale_from_two_chords(
+    chord_a: ScaleFromTwoPoints,
+    chord_b: ScaleFromTwoPoints,
+    *,
+    min_world_separation: float = 2.0,
+    max_relative_disagreement: float = 0.35,
+) -> ScaleValidation:
+    """Validate screenshot scale with two independent two-point measurements.
+
+    Call this from time to time (capture / restitch): each chord is two known
+    world points with independently measured pixel positions. Checks that both
+    chords are long enough, not parallel in world space, and that their
+    px/tile estimates agree within ``max_relative_disagreement``.
+    """
+    if min_world_separation <= 0:
+        raise ValueError(
+            f"min_world_separation must be positive; got {min_world_separation}"
+        )
+    if not (0.0 < max_relative_disagreement < 1.0):
+        raise ValueError(
+            "max_relative_disagreement must be in (0, 1); "
+            f"got {max_relative_disagreement}"
+        )
+    if chord_a.world_length_tiles < min_world_separation:
+        return ScaleValidation(
+            chord_a=chord_a,
+            chord_b=chord_b,
+            ok=False,
+            detail=(
+                f"chord A world length {chord_a.world_length_tiles:.2f} "
+                f"< {min_world_separation}"
+            ),
+        )
+    if chord_b.world_length_tiles < min_world_separation:
+        return ScaleValidation(
+            chord_a=chord_a,
+            chord_b=chord_b,
+            ok=False,
+            detail=(
+                f"chord B world length {chord_b.world_length_tiles:.2f} "
+                f"< {min_world_separation}"
+            ),
+        )
+    # Chords should not be nearly parallel in world space (need 2 axes).
+    wa = np.asarray(chord_a.world_delta, dtype=float)
+    wb = np.asarray(chord_b.world_delta, dtype=float)
+    cross = abs(float(wa[0] * wb[1] - wa[1] * wb[0]))
+    if cross < 1e-3 * (chord_a.world_length_tiles * chord_b.world_length_tiles):
+        return ScaleValidation(
+            chord_a=chord_a,
+            chord_b=chord_b,
+            ok=False,
+            detail="two scale chords are nearly parallel; need independent axes",
+        )
+    mean_scale = 0.5 * (chord_a.px_per_tile + chord_b.px_per_tile)
+    if mean_scale <= 0:
+        return ScaleValidation(
+            chord_a=chord_a,
+            chord_b=chord_b,
+            ok=False,
+            detail="non-positive mean px/tile",
+        )
+    rel = abs(chord_a.px_per_tile - chord_b.px_per_tile) / mean_scale
+    if rel > max_relative_disagreement:
+        return ScaleValidation(
+            chord_a=chord_a,
+            chord_b=chord_b,
+            ok=False,
+            detail=(
+                f"px/tile disagreement {rel:.0%} exceeds "
+                f"{max_relative_disagreement:.0%} "
+                f"({chord_a.px_per_tile:.1f} vs {chord_b.px_per_tile:.1f})"
+            ),
+        )
+    return ScaleValidation(
+        chord_a=chord_a,
+        chord_b=chord_b,
+        ok=True,
+        detail=(
+            f"ok: {chord_a.px_per_tile:.1f} and {chord_b.px_per_tile:.1f} px/tile "
+            f"(relΔ={rel:.0%})"
+        ),
+    )
+
+
 def _design_matrix(
     observations: Sequence[CalibrationObservation],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

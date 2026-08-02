@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable, TypeVar
 
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.scoring import hero_strength, normalize_troop
@@ -15,6 +15,8 @@ from ks.heroes.optimize.types import (
     Scenario,
     TroopsConfig,
 )
+
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True)
@@ -172,6 +174,29 @@ def fits_because_event(
     return bits
 
 
+def _leave_one_out_map(
+    names: list[str],
+    heroes: list[HeroRecord],
+    *,
+    resolve_alt: Callable[[list[HeroRecord]], Any],
+    on_optimal: Callable[[str, Any], _T],
+    on_infeasible: Callable[[str, Any], _T],
+    on_other: Callable[[str, Any], _T],
+) -> dict[str, _T]:
+    """Re-solve without each name; dispatch by alternate status."""
+    out: dict[str, _T] = {}
+    for name in names:
+        reduced = [h for h in heroes if h.name != name]
+        alt = resolve_alt(reduced)
+        if alt.status == "Optimal":
+            out[name] = on_optimal(name, alt)
+        elif alt.status == "Infeasible":
+            out[name] = on_infeasible(name, alt)
+        else:
+            out[name] = on_other(name, alt)
+    return out
+
+
 def leave_one_out_mode(
     heroes: list[HeroRecord],
     catalog: dict[str, CatalogEntry],
@@ -187,11 +212,10 @@ def leave_one_out_mode(
     """Re-solve mode without each selected hero; report point drop."""
     from ks.heroes.optimize.model import solve_mode
 
-    out: dict[str, LeaveOneOutPoints] = {}
     baseline_pts = float(baseline.expected_personal_points)
-    for name in baseline.hero_names:
-        reduced = [h for h in heroes if h.name != name]
-        alt = solve_mode(
+
+    def resolve_alt(reduced: list[HeroRecord]) -> Any:
+        return solve_mode(
             reduced,
             catalog,
             troops,
@@ -201,36 +225,47 @@ def leave_one_out_mode(
             truegold=truegold,
             gear_bonus_by_troop=gear_bonus_by_troop,
         )
-        if alt.status == "Optimal":
-            without = float(alt.expected_personal_points)
-            out[name] = LeaveOneOutPoints(
-                baseline_points=baseline_pts,
-                points_without=without,
-                marginal_points=baseline_pts - without,
-                critical=False,
-                alternate_lineup=tuple(alt.hero_names),
-                status="Optimal",
-            )
-        elif alt.status == "Infeasible":
-            out[name] = LeaveOneOutPoints(
-                baseline_points=baseline_pts,
-                points_without=None,
-                marginal_points=None,
-                critical=True,
-                alternate_lineup=(),
-                status=alt.status,
-            )
-        else:
-            out[name] = LeaveOneOutPoints(
-                baseline_points=baseline_pts,
-                points_without=None,
-                marginal_points=None,
-                critical=False,
-                alternate_lineup=(),
-                status=alt.status,
-                inconclusive=True,
-            )
-    return out
+
+    def on_optimal(_name: str, alt: Any) -> LeaveOneOutPoints:
+        without = float(alt.expected_personal_points)
+        return LeaveOneOutPoints(
+            baseline_points=baseline_pts,
+            points_without=without,
+            marginal_points=baseline_pts - without,
+            critical=False,
+            alternate_lineup=tuple(alt.hero_names),
+            status="Optimal",
+        )
+
+    def on_infeasible(_name: str, alt: Any) -> LeaveOneOutPoints:
+        return LeaveOneOutPoints(
+            baseline_points=baseline_pts,
+            points_without=None,
+            marginal_points=None,
+            critical=True,
+            alternate_lineup=(),
+            status=alt.status,
+        )
+
+    def on_other(_name: str, alt: Any) -> LeaveOneOutPoints:
+        return LeaveOneOutPoints(
+            baseline_points=baseline_pts,
+            points_without=None,
+            marginal_points=None,
+            critical=False,
+            alternate_lineup=(),
+            status=alt.status,
+            inconclusive=True,
+        )
+
+    return _leave_one_out_map(
+        list(baseline.hero_names),
+        heroes,
+        resolve_alt=resolve_alt,
+        on_optimal=on_optimal,
+        on_infeasible=on_infeasible,
+        on_other=on_other,
+    )
 
 
 def explain_selected_heroes(
@@ -302,6 +337,41 @@ def explain_selected_heroes(
     return tuple(rows)
 
 
+def _arena_placement_bits(
+    slot: str,
+    family: str,
+    role: str,
+    troop: str,
+    base_score: float,
+    tags: list[str],
+) -> list[str]:
+    bits = [
+        f"Placed {slot} ({family}) as {role.replace('_', ' ')}",
+        f"troop={troop}",
+        f"arena base score={base_score:.1f}",
+    ]
+    if tags:
+        bits.append("tags=" + "+".join(tags))
+    return bits
+
+
+def _arena_side_bias_bits(
+    side: str, tags: list[str], family: str, slot: str, carry_slot: str
+) -> list[str]:
+    """Extra why-card bits from tag/slot synergy with attack vs. defense side."""
+    bits: list[str] = []
+    if side == "defense":
+        if "tank" in tags and family == "front":
+            bits.append("Defense bias: tanks preferred on front")
+        if "heal" in tags:
+            bits.append("Defense bias: heal valued for offline sustain")
+        if "team_def" in tags:
+            bits.append("Defense bias: team defense tag boosted")
+    elif ("dps" in tags or "aoe" in tags) and slot == carry_slot:
+        bits.append(f"Attack carry slot ({carry_slot}) favors DPS/AoE")
+    return bits
+
+
 def fits_because_arena(
     name: str,
     slot: str,
@@ -318,22 +388,9 @@ def fits_because_arena(
     troop = normalize_troop(entry.troop if entry else None) or "unknown"
     family = "front" if slot.startswith("F") else "back"
     carry_slot = str(roles.get("slots", {}).get("carry_slot") or "B2")
-    bits = [
-        f"Placed {slot} ({family}) as {role.replace('_', ' ')}",
-        f"troop={troop}",
-        f"arena base score={base_score:.1f}",
-    ]
-    if tags:
-        bits.append("tags=" + "+".join(tags))
-    if side == "defense":
-        if "tank" in tags and family == "front":
-            bits.append("Defense bias: tanks preferred on front")
-        if "heal" in tags:
-            bits.append("Defense bias: heal valued for offline sustain")
-        if "team_def" in tags:
-            bits.append("Defense bias: team defense tag boosted")
-    elif ("dps" in tags or "aoe" in tags) and slot == carry_slot:
-        bits.append(f"Attack carry slot ({carry_slot}) favors DPS/AoE")
+
+    bits = _arena_placement_bits(slot, family, role, troop, base_score, tags)
+    bits.extend(_arena_side_bias_bits(side, tags, family, slot, carry_slot))
     if entry and entry.rarity:
         bits.append(f"rarity={entry.rarity}")
     return role, bits
@@ -353,11 +410,8 @@ def leave_one_out_arena(
     """Re-solve arena without each selected hero; report score drop."""
     from ks.heroes.optimize.arena import optimize_arena
 
-    out: dict[str, LeaveOneOutScore] = {}
-    selected = list(baseline_formation.values())
-    for name in selected:
-        reduced = [h for h in heroes if h.name != name]
-        alt = optimize_arena(
+    def resolve_alt(reduced: list[HeroRecord]) -> Any:
+        return optimize_arena(
             side,
             reduced,
             catalog,
@@ -366,39 +420,50 @@ def leave_one_out_arena(
             gear_profile=gear_profile,
             with_explanations=False,
         )
-        if alt.status == "Optimal":
-            without = float(alt.score)
-            out[name] = LeaveOneOutScore(
-                baseline_score=baseline_score,
-                score_without=without,
-                marginal_score=baseline_score - without,
-                critical=False,
-                alternate_lineup=tuple(alt.heroes),
-                replacement_formation=dict(alt.formation),
-                status="Optimal",
-            )
-        elif alt.status == "Infeasible":
-            out[name] = LeaveOneOutScore(
-                baseline_score=baseline_score,
-                score_without=None,
-                marginal_score=None,
-                critical=True,
-                alternate_lineup=(),
-                replacement_formation={},
-                status=alt.status,
-            )
-        else:
-            out[name] = LeaveOneOutScore(
-                baseline_score=baseline_score,
-                score_without=None,
-                marginal_score=None,
-                critical=False,
-                alternate_lineup=(),
-                replacement_formation={},
-                status=alt.status,
-                inconclusive=True,
-            )
-    return out
+
+    def on_optimal(_name: str, alt: Any) -> LeaveOneOutScore:
+        without = float(alt.score)
+        return LeaveOneOutScore(
+            baseline_score=baseline_score,
+            score_without=without,
+            marginal_score=baseline_score - without,
+            critical=False,
+            alternate_lineup=tuple(alt.heroes),
+            replacement_formation=dict(alt.formation),
+            status="Optimal",
+        )
+
+    def on_infeasible(_name: str, alt: Any) -> LeaveOneOutScore:
+        return LeaveOneOutScore(
+            baseline_score=baseline_score,
+            score_without=None,
+            marginal_score=None,
+            critical=True,
+            alternate_lineup=(),
+            replacement_formation={},
+            status=alt.status,
+        )
+
+    def on_other(_name: str, alt: Any) -> LeaveOneOutScore:
+        return LeaveOneOutScore(
+            baseline_score=baseline_score,
+            score_without=None,
+            marginal_score=None,
+            critical=False,
+            alternate_lineup=(),
+            replacement_formation={},
+            status=alt.status,
+            inconclusive=True,
+        )
+
+    return _leave_one_out_map(
+        list(baseline_formation.values()),
+        heroes,
+        resolve_alt=resolve_alt,
+        on_optimal=on_optimal,
+        on_infeasible=on_infeasible,
+        on_other=on_other,
+    )
 
 
 def explain_arena_formation(

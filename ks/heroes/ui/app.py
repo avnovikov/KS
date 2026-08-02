@@ -40,6 +40,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 _STARS_RANGE = range(0, 6)
 _PELLETS_RANGE = range(0, 6)
+_HERO_LEVEL_RANGE = range(1, 81)
+_POWER_MIN = 0
+_POWER_MAX = 99_999_999
 
 #: What a hand-edited tuning YAML can throw on the way into a *page*.
 #: Deliberately wider than the parse error: a document that loads as a list
@@ -165,14 +168,72 @@ def sync_piece_power(piece: GearRecord) -> GearRecord:
     return replace(piece, power=power)
 
 
+_CANONICAL_RARITIES = frozenset(
+    {"grey", "green", "blue", "epic", "mythic", "red"}
+)
+_RARITY_ALIASES = {
+    "gray": "grey",
+    "common": "grey",
+    "white": "grey",
+    "uncommon": "green",
+    "rare": "blue",
+    "purple": "epic",
+    "gold": "mythic",
+}
+_CANONICAL_SLOTS = frozenset({"helmet", "chest", "gloves", "boots"})
+_SLOT_ALIASES = {
+    "helm": "helmet",
+    "hat": "helmet",
+    "head": "helmet",
+    "armor": "chest",
+    "shroud": "chest",
+    "gauntlet": "gloves",
+    "gauntlets": "gloves",
+    "bracers": "gloves",
+    "greaves": "boots",
+}
+
+
+def normalize_ui_rarity(rarity: str | None) -> str | None:
+    """Map UI/OCR rarity labels to a canonical store value."""
+    if rarity is None:
+        return None
+    key = str(rarity).strip().lower()
+    if not key:
+        return None
+    key = _RARITY_ALIASES.get(key, key)
+    if key not in _CANONICAL_RARITIES:
+        raise ValueError(
+            f"rarity must be one of {sorted(_CANONICAL_RARITIES)}; got {rarity!r}"
+        )
+    return key
+
+
+def normalize_ui_slot(slot: str | None) -> str | None:
+    """Map UI/OCR slot labels to a canonical store value."""
+    if slot is None:
+        return None
+    key = str(slot).strip().lower()
+    if not key:
+        return None
+    key = _SLOT_ALIASES.get(key, key)
+    if key not in _CANONICAL_SLOTS:
+        raise ValueError(
+            f"slot must be one of {sorted(_CANONICAL_SLOTS)}; got {slot!r}"
+        )
+    return key
+
+
 def update_piece_levels(
     store: GearStore,
     piece_id: str,
     *,
     enhancement_level: int | None | object = ...,
     mastery_level: int | None | object = ...,
+    rarity: str | None | object = ...,
+    slot: str | None | object = ...,
 ) -> GearRecord:
-    """Update enhancement and/or mastery; recompute power; persist JSON + DB."""
+    """Update enhancement/mastery/rarity/slot; recompute power; persist JSON + DB."""
     pieces = {p.piece_id: p for p in store.all_pieces()}
     piece = pieces.get(piece_id)
     if piece is None:
@@ -197,13 +258,20 @@ def update_piece_levels(
             updates["mastery_level"] = level
         else:
             updates["mastery_level"] = None
+    if rarity is not ...:
+        updates["rarity"] = normalize_ui_rarity(
+            None if rarity is None else str(rarity)
+        )
+    if slot is not ...:
+        updates["slot"] = normalize_ui_slot(
+            None if slot is None else str(slot)
+        )
 
     if not updates:
         return piece
-    updated = replace(piece, **updates)
-    updated = sync_piece_power(updated)
-    store.upsert(updated)
-    return updated
+    updated = sync_piece_power(replace(piece, **updates))
+    overwrite = frozenset(updates.keys()) | {"power"}
+    return store.upsert(updated, overwrite=overwrite)
 
 
 def sync_all_powers(store: GearStore) -> int:
@@ -223,8 +291,15 @@ def update_hero_stars(
     *,
     stars: int | None | object = ...,
     pellets: int | None | object = ...,
+    power: int | None | object = ...,
+    level: int | None | object = ...,
 ) -> HeroRecord:
-    """Update stars/pellets; rescale naked power via star_progress_factor."""
+    """Update stars/pellets/power/level.
+
+    When stars/pellets change and ``power`` is omitted, rescale power via
+    ``star_progress_factor``. Explicit ``power`` always wins (OCR fixes).
+    Level is stored only — no invented level→power formula.
+    """
     heroes = {h.name: h for h in store.all_heroes()}
     hero = heroes.get(name)
     if hero is None:
@@ -232,37 +307,82 @@ def update_hero_stars(
 
     new_stars = hero.stars
     new_pellets = hero.pellets
+    new_power = hero.power
+    new_level = hero.level
+    power_explicit = False
+
     if stars is not ...:
         if stars is not None:
-            level = int(stars)
-            if level not in _STARS_RANGE:
-                raise ValueError(f"stars must be 0..5; got {level}")
-            new_stars = level
+            value = int(stars)
+            if value not in _STARS_RANGE:
+                raise ValueError(f"stars must be 0..5; got {value}")
+            new_stars = value
         else:
             new_stars = None
     if pellets is not ...:
         if pellets is not None:
-            level = int(pellets)
-            if level not in _PELLETS_RANGE:
-                raise ValueError(f"pellets must be 0..5; got {level}")
-            new_pellets = level
+            value = int(pellets)
+            if value not in _PELLETS_RANGE:
+                raise ValueError(f"pellets must be 0..5; got {value}")
+            new_pellets = value
         else:
             new_pellets = None
+    if level is not ...:
+        if level is not None:
+            value = int(level)
+            if value not in _HERO_LEVEL_RANGE:
+                raise ValueError(f"level must be 1..80; got {value}")
+            new_level = value
+        else:
+            new_level = None
+    if power is not ...:
+        power_explicit = True
+        if power is not None:
+            value = int(power)
+            if value < _POWER_MIN or value > _POWER_MAX:
+                raise ValueError(
+                    f"power must be {_POWER_MIN}..{_POWER_MAX}; got {value}"
+                )
+            new_power = value
+        else:
+            new_power = None
 
-    if new_stars == hero.stars and new_pellets == hero.pellets:
+    stars_changed = new_stars != hero.stars or new_pellets != hero.pellets
+    if stars_changed and not power_explicit:
+        new_power = scale_power_for_star_change(
+            hero.power,
+            hero.stars,
+            hero.pellets,
+            new_stars,
+            new_pellets,
+        )
+
+    if (
+        new_stars == hero.stars
+        and new_pellets == hero.pellets
+        and new_power == hero.power
+        and new_level == hero.level
+    ):
         return hero
 
-    new_power = scale_power_for_star_change(
-        hero.power,
-        hero.stars,
-        hero.pellets,
-        new_stars,
-        new_pellets,
-    )
     updated = replace(
-        hero, stars=new_stars, pellets=new_pellets, power=new_power
+        hero,
+        stars=new_stars,
+        pellets=new_pellets,
+        power=new_power,
+        level=new_level,
     )
-    store.upsert(updated)
+    overwrite = frozenset(
+        field
+        for field, before, after in (
+            ("stars", hero.stars, new_stars),
+            ("pellets", hero.pellets, new_pellets),
+            ("power", hero.power, new_power),
+            ("level", hero.level, new_level),
+        )
+        if before != after
+    )
+    store.upsert(updated, overwrite=overwrite)
     return updated
 
 
@@ -270,6 +390,7 @@ def create_app(
     gear_dir: Path | None = None,
     *,
     heroes_dir: Path | None = None,
+    troops_path: Path | None = None,
     gear_config: Path | None = None,
     heroes_config: Path | None = None,
     serial: str | None = None,
@@ -296,10 +417,13 @@ def create_app(
     # is what the optimisers actually consume troops for — else alongside
     # gear. One of the two is always set (checked above), so this is never
     # None; /inventory/troops and /api/troops stay ungated for the same
-    # reason.
+    # reason. `troops_path` (CLI `--troops`) overrides the location outright,
+    # which is how a caller points the UI at an existing troops document.
     troops_dir = resolved_heroes if resolved_heroes is not None else resolved_gear
     troop_store = TroopStore(
-        troops_dir / "troops.yaml",
+        troops_path.expanduser().resolve()
+        if troops_path is not None
+        else troops_dir / "troops.yaml",
         seed_from=REPO_ROOT / "config" / "troops.yaml",
     )
     troop_store.ensure_exists()
@@ -640,6 +764,15 @@ def create_app(
             ],
         }
 
+    @app.delete("/api/gear/{piece_id}")
+    def api_delete_gear(piece_id: str) -> dict[str, Any]:
+        """Remove a consumed or stale piece from the inventory."""
+        _, store = _require_gear()
+        deleted = store.delete(piece_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail=f"piece not found: {piece_id}")
+        return {"ok": True, "deleted": piece_id}
+
     @app.patch("/api/gear/{piece_id}")
     async def api_patch_gear(piece_id: str, request: Request) -> dict[str, Any]:
         gear_path, store = _require_gear()
@@ -652,6 +785,8 @@ def create_app(
 
         enh_arg: Any = ...
         mast_arg: Any = ...
+        rarity_arg: Any = ...
+        slot_arg: Any = ...
         if raw.get("clear_enhancement"):
             enh_arg = None
         elif "enhancement_level" in raw:
@@ -660,6 +795,14 @@ def create_app(
             mast_arg = None
         elif "mastery_level" in raw:
             mast_arg = raw.get("mastery_level")
+        if raw.get("clear_rarity"):
+            rarity_arg = None
+        elif "rarity" in raw:
+            rarity_arg = raw.get("rarity")
+        if raw.get("clear_slot"):
+            slot_arg = None
+        elif "slot" in raw:
+            slot_arg = raw.get("slot")
 
         try:
             updated = update_piece_levels(
@@ -667,6 +810,8 @@ def create_app(
                 piece_id,
                 enhancement_level=enh_arg,
                 mastery_level=mast_arg,
+                rarity=rarity_arg,
+                slot=slot_arg,
             )
         except KeyError as exc:
             raise HTTPException(
@@ -723,10 +868,16 @@ def create_app(
 
         stars_arg: Any = ...
         pellets_arg: Any = ...
+        power_arg: Any = ...
+        level_arg: Any = ...
         if "stars" in raw:
             stars_arg = raw.get("stars")
         if "pellets" in raw:
             pellets_arg = raw.get("pellets")
+        if "power" in raw:
+            power_arg = raw.get("power")
+        if "level" in raw:
+            level_arg = raw.get("level")
 
         try:
             updated = update_hero_stars(
@@ -734,6 +885,8 @@ def create_app(
                 name,
                 stars=stars_arg,
                 pellets=pellets_arg,
+                power=power_arg,
+                level=level_arg,
             )
         except KeyError as exc:
             raise HTTPException(
@@ -938,6 +1091,7 @@ def run_ui(
     gear_dir: Path | None = None,
     *,
     heroes_dir: Path | None = None,
+    troops_path: Path | None = None,
     host: str = "127.0.0.1",
     port: int = 8765,
     gear_config: Path | None = None,
@@ -955,6 +1109,7 @@ def run_ui(
     app = create_app(
         gear_dir,
         heroes_dir=heroes_dir,
+        troops_path=troops_path,
         gear_config=gear_config,
         heroes_config=heroes_config,
         serial=serial,
@@ -967,4 +1122,5 @@ def run_ui(
         print(f"Heroes: {Path(heroes_dir).expanduser().resolve()}")
     if gear_dir is not None:
         print(f"Gear: {Path(gear_dir).expanduser().resolve()}")
+    print(f"Troops: {app.state.troops_path}")
     uvicorn.run(app, host=host, port=port, log_level="info")

@@ -1,0 +1,31 @@
+# HotspotTriage per-project configuration.
+#
+# Goal: composite score excluding churn (and excluding broken MI inversion).
+# Default inverse_piecewise for maintainability treats high MI as high risk,
+# so maintainability_burden is zeroed until upstream is fixed.
+
+# Current development only (heroes/gear/optimize). Cartograph + UI out of scope.
+filter:
+  - ks/heroes/**
+  - "!ks/heroes/ui/**"
+
+score_metrics:
+  - cyclomatic
+  - halstead
+  - smell_count
+
+format: table
+sort: score
+granularity: block
+
+ignore_directories: []
+respect_gitignore: true
+
+score_aggregation:
+  enabled: true
+  final_weights:
+    complexity_burden: 0.70
+    churn_burden: 0.0
+    maintainability_burden: 0.0
+    smell_burden: 0.20
+    similarity_burden: 0.10

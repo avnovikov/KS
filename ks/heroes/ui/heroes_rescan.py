@@ -18,10 +18,15 @@ def rescan_heroes_from_ocr(
     load_config_fn: Callable[[Path | None], HeroesConfig] | None = None,
     connect_fn: Callable[[str | None], object] | None = None,
     collect_fn: Callable[..., list[HeroRecord]] | None = None,
+    on_progress: Callable[[str, object], None] | None = None,
 ) -> list[HeroRecord]:
     """Walk Heroes roster via ADB OCR and upsert into store (no full wipe).
 
     Requires the game already on the Heroes roster screen.
+
+    Also captures Power-i force components into
+    ``{store.out_dir}/power_history/`` when buckets/covariates change
+    (lifetime observation log for later game-curve fitting).
     """
     load_cfg = load_config_fn or load_heroes_config
     cfg = load_cfg(
@@ -39,4 +44,7 @@ def rescan_heroes_from_ocr(
 
     device_serial = serial if serial is not None else cfg.adb_serial
     device = connect_fn(device_serial)
-    return list(collect_fn(device, cfg, store))
+    kwargs: dict = {}
+    if on_progress is not None:
+        kwargs["on_progress"] = on_progress
+    return list(collect_fn(device, cfg, store, **kwargs))
