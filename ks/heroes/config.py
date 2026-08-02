@@ -105,6 +105,113 @@ def _optional_box(raw: Any, *, label: str) -> OcrBox | None:
     return _box(raw, label=label)
 
 
+def _parse_delays(raw: dict[str, Any]) -> DelaysConfig:
+    delays_raw = raw.get("delays_ms") or {}
+    if not isinstance(delays_raw, dict):
+        raise ValueError("delays_ms must be a mapping")
+    return DelaysConfig(
+        after_tap_ms=int(delays_raw.get("after_tap", 400)),
+        after_open_ms=int(delays_raw.get("after_open", 800)),
+        after_tab_ms=int(delays_raw.get("after_tab", 600)),
+        after_skill_ms=int(delays_raw.get("after_skill", 500)),
+    )
+
+
+def _parse_page_swipe(swipe_raw: Any) -> PageSwipe:
+    if not isinstance(swipe_raw, dict):
+        raise ValueError("roster.page_swipe must be a mapping")
+    for key in ("x1", "y1", "x2", "y2"):
+        if key not in swipe_raw:
+            raise ValueError(f"roster.page_swipe missing {key}")
+    return PageSwipe(
+        x1=int(swipe_raw["x1"]),
+        y1=int(swipe_raw["y1"]),
+        x2=int(swipe_raw["x2"]),
+        y2=int(swipe_raw["y2"]),
+        duration_ms=int(swipe_raw.get("duration_ms", 300)),
+    )
+
+
+def _parse_roster(raw: dict[str, Any]) -> RosterConfig:
+    roster_raw = raw.get("roster")
+    if not isinstance(roster_raw, dict):
+        raise ValueError("roster must be a mapping")
+    cells_raw = roster_raw.get("cells") or []
+    if not isinstance(cells_raw, list) or len(cells_raw) != 16:
+        got = (
+            len(cells_raw)
+            if isinstance(cells_raw, list)
+            else type(cells_raw).__name__
+        )
+        raise ValueError(f"roster.cells must contain exactly 16 taps; got {got}")
+    cells = tuple(
+        _tap(c, label=f"roster.cells[{i}]") for i, c in enumerate(cells_raw)
+    )
+    max_pages = int(roster_raw.get("max_pages", 20))
+    if max_pages < 1:
+        raise ValueError(f"roster.max_pages must be >= 1; got {max_pages}")
+    return RosterConfig(
+        cells=cells,
+        page_swipe=_parse_page_swipe(roster_raw.get("page_swipe")),
+        max_pages=max_pages,
+    )
+
+
+def _parse_nav(raw: dict[str, Any]) -> NavConfig:
+    nav_raw = raw.get("nav")
+    if not isinstance(nav_raw, dict):
+        raise ValueError("nav must be a mapping")
+    return NavConfig(
+        back=_tap(nav_raw.get("back"), label="nav.back"),
+        stats_tab=_tap(nav_raw.get("stats_tab"), label="nav.stats_tab"),
+        skills_tab=_tap(nav_raw.get("skills_tab"), label="nav.skills_tab"),
+        stats_list_button=_tap(
+            nav_raw.get("stats_list_button"), label="nav.stats_list_button"
+        ),
+    )
+
+
+def _parse_skill_slots(raw: dict[str, Any]) -> tuple[TapPoint, ...]:
+    skills_raw = raw.get("skills") or {}
+    if not isinstance(skills_raw, dict):
+        raise ValueError("skills must be a mapping")
+    slots_raw = skills_raw.get("slots") or []
+    if not isinstance(slots_raw, list) or len(slots_raw) < 1:
+        raise ValueError("skills.slots must be a non-empty list")
+    return tuple(
+        _tap(s, label=f"skills.slots[{i}]") for i, s in enumerate(slots_raw)
+    )
+
+
+def _parse_ocr_regions(raw: dict[str, Any]) -> OcrRegions:
+    ocr_raw = raw.get("ocr")
+    if not isinstance(ocr_raw, dict):
+        raise ValueError("ocr must be a mapping")
+    required = (
+        "name",
+        "power",
+        "rarity",
+        "escorts",
+        "stats_panel",
+        "skill_panel",
+    )
+    for key in required:
+        if key not in ocr_raw:
+            raise ValueError(f"ocr.{key} is required")
+    return OcrRegions(
+        name=_box(ocr_raw["name"], label="ocr.name"),
+        power=_box(ocr_raw["power"], label="ocr.power"),
+        rarity=_box(ocr_raw["rarity"], label="ocr.rarity"),
+        escorts=_box(ocr_raw["escorts"], label="ocr.escorts"),
+        stats_panel=_box(ocr_raw["stats_panel"], label="ocr.stats_panel"),
+        skill_panel=_box(ocr_raw["skill_panel"], label="ocr.skill_panel"),
+        troop_type=_optional_box(
+            ocr_raw.get("troop_type"), label="ocr.troop_type"
+        ),
+        stars=_optional_box(ocr_raw.get("stars"), label="ocr.stars"),
+    )
+
+
 def load_heroes_config(path: Path | None = None) -> HeroesConfig:
     config_path = path if path is not None else DEFAULT_HEROES_CONFIG
     if not config_path.is_file():
@@ -116,92 +223,13 @@ def load_heroes_config(path: Path | None = None) -> HeroesConfig:
 
     adb = raw.get("adb") or {}
     serial = adb.get("serial") if isinstance(adb, dict) else None
-
-    delays_raw = raw.get("delays_ms") or {}
-    if not isinstance(delays_raw, dict):
-        raise ValueError("delays_ms must be a mapping")
-    delays = DelaysConfig(
-        after_tap_ms=int(delays_raw.get("after_tap", 400)),
-        after_open_ms=int(delays_raw.get("after_open", 800)),
-        after_tab_ms=int(delays_raw.get("after_tab", 600)),
-        after_skill_ms=int(delays_raw.get("after_skill", 500)),
-    )
-
-    roster_raw = raw.get("roster")
-    if not isinstance(roster_raw, dict):
-        raise ValueError("roster must be a mapping")
-    cells_raw = roster_raw.get("cells") or []
-    if not isinstance(cells_raw, list) or len(cells_raw) != 16:
-        raise ValueError(
-            f"roster.cells must contain exactly 16 taps; got {len(cells_raw) if isinstance(cells_raw, list) else type(cells_raw).__name__}"
-        )
-    cells = tuple(_tap(c, label=f"roster.cells[{i}]") for i, c in enumerate(cells_raw))
-
-    swipe_raw = roster_raw.get("page_swipe")
-    if not isinstance(swipe_raw, dict):
-        raise ValueError("roster.page_swipe must be a mapping")
-    for key in ("x1", "y1", "x2", "y2"):
-        if key not in swipe_raw:
-            raise ValueError(f"roster.page_swipe missing {key}")
-    page_swipe = PageSwipe(
-        x1=int(swipe_raw["x1"]),
-        y1=int(swipe_raw["y1"]),
-        x2=int(swipe_raw["x2"]),
-        y2=int(swipe_raw["y2"]),
-        duration_ms=int(swipe_raw.get("duration_ms", 300)),
-    )
-    max_pages = int(roster_raw.get("max_pages", 20))
-    if max_pages < 1:
-        raise ValueError(f"roster.max_pages must be >= 1; got {max_pages}")
-    roster = RosterConfig(cells=cells, page_swipe=page_swipe, max_pages=max_pages)
-
-    nav_raw = raw.get("nav")
-    if not isinstance(nav_raw, dict):
-        raise ValueError("nav must be a mapping")
-    nav = NavConfig(
-        back=_tap(nav_raw.get("back"), label="nav.back"),
-        stats_tab=_tap(nav_raw.get("stats_tab"), label="nav.stats_tab"),
-        skills_tab=_tap(nav_raw.get("skills_tab"), label="nav.skills_tab"),
-        stats_list_button=_tap(
-            nav_raw.get("stats_list_button"), label="nav.stats_list_button"
-        ),
-    )
-
-    skills_raw = raw.get("skills") or {}
-    if not isinstance(skills_raw, dict):
-        raise ValueError("skills must be a mapping")
-    slots_raw = skills_raw.get("slots") or []
-    if not isinstance(slots_raw, list) or len(slots_raw) < 1:
-        raise ValueError("skills.slots must be a non-empty list")
-    skill_slots = tuple(
-        _tap(s, label=f"skills.slots[{i}]") for i, s in enumerate(slots_raw)
-    )
-
-    ocr_raw = raw.get("ocr")
-    if not isinstance(ocr_raw, dict):
-        raise ValueError("ocr must be a mapping")
-    required = ("name", "power", "rarity", "escorts", "stats_panel", "skill_panel")
-    for key in required:
-        if key not in ocr_raw:
-            raise ValueError(f"ocr.{key} is required")
-    ocr = OcrRegions(
-        name=_box(ocr_raw["name"], label="ocr.name"),
-        power=_box(ocr_raw["power"], label="ocr.power"),
-        rarity=_box(ocr_raw["rarity"], label="ocr.rarity"),
-        escorts=_box(ocr_raw["escorts"], label="ocr.escorts"),
-        stats_panel=_box(ocr_raw["stats_panel"], label="ocr.stats_panel"),
-        skill_panel=_box(ocr_raw["skill_panel"], label="ocr.skill_panel"),
-        troop_type=_optional_box(ocr_raw.get("troop_type"), label="ocr.troop_type"),
-        stars=_optional_box(ocr_raw.get("stars"), label="ocr.stars"),
-    )
-
     return HeroesConfig(
         adb_serial=str(serial) if serial else None,
-        delays=delays,
-        roster=roster,
-        nav=nav,
-        skill_slots=skill_slots,
-        ocr=ocr,
+        delays=_parse_delays(raw),
+        roster=_parse_roster(raw),
+        nav=_parse_nav(raw),
+        skill_slots=_parse_skill_slots(raw),
+        ocr=_parse_ocr_regions(raw),
     )
 
 

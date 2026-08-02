@@ -201,6 +201,172 @@ def _provisional_gear_bonus(
     return gear_bonus_by_hero
 
 
+def _arena_error_result(side: str, status: str) -> ArenaResult:
+    """Build the shared "no formation" result shape for early-exit failures."""
+    return ArenaResult(
+        side=side,
+        formation={},
+        heroes=(),
+        score=float("-inf"),
+        gear_assignment=None,
+        reasons={},
+        status=status,
+    )
+
+
+def _build_troop_lookup(
+    usable: list[HeroRecord], catalog: dict[str, CatalogEntry]
+) -> dict[str, str]:
+    return {
+        h.name: normalize_troop(catalog[h.name].troop)
+        or normalize_troop(h.troop_type)
+        or "infantry"
+        for h in usable
+    }
+
+
+def _compute_base_scores(
+    usable: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    roles: dict[str, Any],
+    gear_bonus_by_hero: dict[str, float],
+    *,
+    side: str,
+) -> dict[str, float]:
+    return {
+        h.name: _hero_base_score(
+            h,
+            catalog.get(h.name),
+            roles,
+            effective_power=h.power,
+            gear_bonus=float(gear_bonus_by_hero.get(h.name, 0.0)),
+            side=side,
+        )
+        for h in usable
+    }
+
+
+def _build_ilp_problem(
+    side: str,
+    usable: list[HeroRecord],
+    roles: dict[str, Any],
+    troop_of: dict[str, str],
+    base: dict[str, float],
+) -> tuple[pulp.LpProblem, dict[tuple[str, str], Any]]:
+    """Assemble the "one hero per slot" assignment ILP and its objective."""
+    prob = pulp.LpProblem(f"arena_{side}", pulp.LpMaximize)
+    x = pulp.LpVariable.dicts(
+        "place",
+        ((h.name, s) for h in usable for s in ALL_SLOTS),
+        cat="Binary",
+    )
+
+    for s in ALL_SLOTS:
+        prob += pulp.lpSum(x[h.name, s] for h in usable) == 1
+    for h in usable:
+        prob += pulp.lpSum(x[h.name, s] for s in ALL_SLOTS) <= 1
+
+    obj = [
+        base[h.name]
+        * _placement_mult(troop_of[h.name], s, h.name, roles, side=side)
+        * x[h.name, s]
+        for h in usable
+        for s in ALL_SLOTS
+    ]
+    prob += pulp.lpSum(obj)
+    return prob, x
+
+
+def _extract_formation(
+    usable: list[HeroRecord], x: dict[tuple[str, str], Any]
+) -> dict[str, str]:
+    formation: dict[str, str] = {}
+    for h in usable:
+        for s in ALL_SLOTS:
+            value = pulp.value(x[h.name, s])
+            if value and value > 0.5:
+                formation[s] = h.name
+    return formation
+
+
+def _build_reasons(
+    ordered: tuple[str, ...],
+    catalog: dict[str, CatalogEntry],
+    roles: dict[str, Any],
+    troop_of: dict[str, str],
+    base: dict[str, float],
+) -> dict[str, str]:
+    return {
+        name: _reason(name, catalog, roles, troop_of[name], base[name])
+        for name in ordered
+    }
+
+
+def _assign_gear_for_formation(
+    formation: dict[str, str],
+    usable: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    gear: list[GearRecord] | None,
+    gear_profile: str,
+    gear_slot_order: tuple[str, ...],
+    ordered: tuple[str, ...],
+) -> dict[str, list[dict[str, Any]]] | None:
+    if not gear:
+        return None
+    # Slot claim order (defense: fronts first, heal/B1 last).
+    priority_names = [
+        name for name in (formation.get(slot) for slot in gear_slot_order) if name
+    ]
+    assigned = assign_exclusive_sets(
+        usable,
+        catalog,
+        gear,
+        selected=list(ordered),
+        priority=priority_names,
+        profile=gear_profile,
+    )
+    return assignment_to_dict(assigned)
+
+
+def _attach_explanations(
+    side: str,
+    heroes: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    roles: dict[str, Any],
+    formation: dict[str, str],
+    base: dict[str, float],
+    score: float,
+    gear: list[GearRecord] | None,
+    gear_profile: str,
+    reasons: dict[str, str],
+) -> dict[str, dict[str, Any]] | None:
+    """Compute leave-one-out explanations, folding summaries into ``reasons``.
+
+    ``reasons`` is mutated in place so the caller's dict reflects the
+    per-hero summaries (or a warning) regardless of success/failure.
+    """
+    from ks.heroes.optimize.explain import explain_arena_formation
+
+    try:
+        explanations = explain_arena_formation(
+            side,
+            heroes,
+            catalog,
+            roles,
+            formation,
+            base,
+            score,
+            gear=gear,
+            gear_profile=gear_profile,
+        )
+    except Exception as exc:  # noqa: BLE001 — keep Optimal solve if LOO fails
+        reasons["_explain_warning"] = f"explainability unavailable: {exc}"
+        return None
+    for name, exp in explanations.items():
+        reasons[name] = exp.get("summary") or reasons.get(name, "")
+    return explanations
+
+
 def _solve_arena(
     side: str,
     heroes: list[HeroRecord],
@@ -214,141 +380,39 @@ def _solve_arena(
 ) -> ArenaResult:
     usable = [h for h in heroes if h.name in catalog]
     if len(usable) < 5:
-        return ArenaResult(
-            side=side,
-            formation={},
-            heroes=(),
-            score=float("-inf"),
-            gear_assignment=None,
-            reasons={},
-            status="Infeasible",
-        )
+        return _arena_error_result(side, "Infeasible")
 
-    troop_of = {
-        h.name: normalize_troop(catalog[h.name].troop)
-        or normalize_troop(h.troop_type)
-        or "infantry"
-        for h in usable
-    }
-    gear_bonus_by_hero = _provisional_gear_bonus(
-        usable, catalog, gear, gear_profile
-    )
+    troop_of = _build_troop_lookup(usable, catalog)
+    gear_bonus_by_hero = _provisional_gear_bonus(usable, catalog, gear, gear_profile)
+    base = _compute_base_scores(usable, catalog, roles, gear_bonus_by_hero, side=side)
 
-    base: dict[str, float] = {}
-    for h in usable:
-        base[h.name] = _hero_base_score(
-            h,
-            catalog.get(h.name),
-            roles,
-            effective_power=h.power,
-            gear_bonus=float(gear_bonus_by_hero.get(h.name, 0.0)),
-            side=side,
-        )
-
-    prob = pulp.LpProblem(f"arena_{side}", pulp.LpMaximize)
-    x = pulp.LpVariable.dicts(
-        "place",
-        ((h.name, s) for h in usable for s in ALL_SLOTS),
-        cat="Binary",
-    )
-
-    for s in ALL_SLOTS:
-        prob += pulp.lpSum(x[h.name, s] for h in usable) == 1
-    for h in usable:
-        prob += pulp.lpSum(x[h.name, s] for s in ALL_SLOTS) <= 1
-
-    obj = []
-    for h in usable:
-        for s in ALL_SLOTS:
-            mult = _placement_mult(
-                troop_of[h.name], s, h.name, roles, side=side
-            )
-            obj.append(base[h.name] * mult * x[h.name, s])
-    prob += pulp.lpSum(obj)
-
+    prob, x = _build_ilp_problem(side, usable, roles, troop_of, base)
     status = prob.solve(pulp.PULP_CBC_CMD(msg=False))
     status_name = pulp.LpStatus.get(status, str(status))
     if status_name != "Optimal":
-        return ArenaResult(
-            side=side,
-            formation={},
-            heroes=(),
-            score=float("-inf"),
-            gear_assignment=None,
-            reasons={},
-            status=status_name,
-        )
+        return _arena_error_result(side, status_name)
 
-    formation: dict[str, str] = {}
-    for h in usable:
-        for s in ALL_SLOTS:
-            if pulp.value(x[h.name, s]) and pulp.value(x[h.name, s]) > 0.5:
-                formation[s] = h.name
-
+    formation = _extract_formation(usable, x)
     if set(formation) != set(ALL_SLOTS):
-        return ArenaResult(
-            side=side,
-            formation={},
-            heroes=(),
-            score=float("-inf"),
-            gear_assignment=None,
-            reasons={},
-            status="Error",
-        )
+        return _arena_error_result(side, "Error")
 
     ordered = tuple(formation[s] for s in ALL_SLOTS)
-    reasons = {
-        name: _reason(name, catalog, roles, troop_of[name], base[name])
-        for name in ordered
-    }
-    gear_assignment = None
-    if gear:
-        # Slot claim order (defense: fronts first, heal/B1 last).
-        priority = [formation.get(slot) for slot in gear_slot_order]
-        priority_names = [n for n in priority if n]
-        assigned = assign_exclusive_sets(
-            usable,
-            catalog,
-            gear,
-            selected=list(ordered),
-            priority=priority_names,
-            profile=gear_profile,
-        )
-        gear_assignment = assignment_to_dict(assigned)
+    reasons = _build_reasons(ordered, catalog, roles, troop_of, base)
+    gear_assignment = _assign_gear_for_formation(
+        formation, usable, catalog, gear, gear_profile, gear_slot_order, ordered
+    )
 
     objective = pulp.value(prob.objective)
     if objective is None:
-        return ArenaResult(
-            side=side,
-            formation={},
-            heroes=(),
-            score=float("-inf"),
-            gear_assignment=None,
-            reasons={},
-            status="Error",
-        )
+        return _arena_error_result(side, "Error")
     score = float(objective)
+
     explanations = None
     if with_explanations:
-        from ks.heroes.optimize.explain import explain_arena_formation
+        explanations = _attach_explanations(
+            side, heroes, catalog, roles, formation, base, score, gear, gear_profile, reasons
+        )
 
-        try:
-            explanations = explain_arena_formation(
-                side,
-                heroes,
-                catalog,
-                roles,
-                formation,
-                base,
-                score,
-                gear=gear,
-                gear_profile=gear_profile,
-            )
-            for name, exp in explanations.items():
-                reasons[name] = exp.get("summary") or reasons.get(name, "")
-        except Exception as exc:  # noqa: BLE001 — keep Optimal solve if LOO fails
-            explanations = None
-            reasons["_explain_warning"] = f"explainability unavailable: {exc}"
     return ArenaResult(
         side=side,
         formation=formation,

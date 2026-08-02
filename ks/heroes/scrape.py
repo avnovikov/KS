@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Callable, NamedTuple, Protocol
 
 import cv2
 import numpy as np
@@ -112,47 +112,50 @@ def _sleep_ms(ms: int, *, sleep_fn: Callable[[float], None]) -> None:
         sleep_fn(ms / 1000.0)
 
 
-def scrape_hero(
+def _detail_screen_image_or_none(
     device: DeviceProtocol,
     cfg: HeroesConfig,
-    *,
-    page: int,
-    index: int,
-    ocr_fn: OcrFn | None = None,
-    sleep_fn: Callable[[float], None] | None = None,
-    now_fn: Callable[[], datetime] | None = None,
-    names_dir: Path | None = None,
-    keep_name: str | None = None,
-) -> HeroRecord | None:
-    """Scrape the currently open hero detail screen.
+    ocr_fn: OcrFn | None,
+    sleep: Callable[[float], None],
+):
+    """Decode the current screencap; classify it unless ``ocr_fn`` is injected.
 
-    Caller owns roster open and back navigation.
-
-    Returns None when the detail screen is not open (live path) or when an
-    injected ``ocr_fn`` yields no name/power. When the live path confirms a
-    detail screen but name and power both fail, raises ``DetailOpenError`` so
-    the collector still taps Back.
-
-    When ``keep_name`` is set (manual fix), that name wins over OCR and is used
-    for the top-center name screenshot filename. Otherwise a name OCR miss with
-    power present yields a placeholder ``Hero_p{page}_i{index}``.
+    Tests inject ``ocr_fn`` and skip live screen classification entirely.
+    Returns the decoded image, or None when the live classifier determines
+    this is not an open hero detail screen.
     """
-    if page < 0:
-        raise ValueError(f"page must be >= 0; got {page}")
-    if index < 0:
-        raise ValueError(f"index must be >= 0; got {index}")
-
-    ocr = ocr_fn or _default_ocr
-    sleep = sleep_fn or time.sleep
-    now = now_fn or (lambda: datetime.now(timezone.utc))
-
     img = _decode_screencap(device.screencap())
-    # Injected ocr_fn (tests) skips live screen classification.
     if ocr_fn is None:
         img = dismiss_blocking_overlays(device, cfg, sleep_fn=sleep)
         if not is_hero_detail_screen(img):
             return None
+    return img
 
+
+class _HeroIdentity(NamedTuple):
+    name: str
+    power: int | None
+    name_screenshot: str | None
+    rarity_ui: str | None
+
+
+def _resolve_hero_identity(
+    img,
+    cfg: HeroesConfig,
+    *,
+    ocr_fn: OcrFn | None,
+    names_dir: Path | None,
+    keep_name: str | None,
+    page: int,
+    index: int,
+) -> _HeroIdentity | None:
+    """Resolve name + power for the open detail screen; saves the name screenshot.
+
+    Returns None when both name and power OCR come back empty on an injected
+    ``ocr_fn`` (test) path. On the live path (``ocr_fn`` is None) that same
+    condition instead raises ``DetailOpenError``, since the detail screen is
+    already confirmed open and the collector still needs to tap Back.
+    """
     name_fn = ocr_fn or None
     rarity_ui: str | None = None
     color: str | None = None
@@ -191,35 +194,77 @@ def scrape_hero(
     if names_dir is not None:
         name_screenshot = save_name_screenshot(img, cfg.ocr.name, names_dir, name)
 
-    rarity = rarity_ui or parse_rarity(_ocr_box(img, cfg.ocr.rarity, ocr))
-    escorts = parse_int(_ocr_box(img, cfg.ocr.escorts, ocr))
+    return _HeroIdentity(name=name, power=power, name_screenshot=name_screenshot, rarity_ui=rarity_ui)
+
+
+class _SecondaryAttributes(NamedTuple):
+    rarity: str | None
+    escorts: int | None
+    troop_type: str | None
+    stars: int | None
+    pellets: int | None
+
+
+def _resolve_troop_type(
+    img, cfg: HeroesConfig, ocr: OcrFn, name: str, *, used_catalog_name_resolution: bool
+) -> str | None:
+    """OCR the troop-type box, then prefer the name catalog's troop if known."""
     troop_type = None
     if cfg.ocr.troop_type is not None:
         troop_raw = _ocr_box(img, cfg.ocr.troop_type, ocr).strip()
         troop_type = troop_raw or None
-    # Prefer catalog troop when name resolved from catalog.
-    if name_fn is None and name and not name.startswith("Hero_p"):
+    if used_catalog_name_resolution and name and not name.startswith("Hero_p"):
         from ks.heroes.name_ocr import load_name_catalog
 
         entry = load_name_catalog().get(name)
         if entry and entry.troop:
             troop_type = entry.troop
+    return troop_type
+
+
+def _scrape_secondary_attributes(
+    img,
+    cfg: HeroesConfig,
+    ocr: OcrFn,
+    ocr_fn: OcrFn | None,
+    name: str,
+    rarity_ui: str | None,
+) -> _SecondaryAttributes:
+    """OCR rarity, escorts, troop type, and star/pellet progress."""
+    rarity = rarity_ui or parse_rarity(_ocr_box(img, cfg.ocr.rarity, ocr))
+    escorts = parse_int(_ocr_box(img, cfg.ocr.escorts, ocr))
+    # Prefer catalog troop when name resolved from catalog (live path only).
+    troop_type = _resolve_troop_type(
+        img, cfg, ocr, name, used_catalog_name_resolution=ocr_fn is None
+    )
     stars = None
     pellets = None
     if cfg.ocr.stars is not None:
         progress = count_stars_pellets(img, cfg.ocr.stars)
         stars = progress.stars
         pellets = progress.pellets
+    return _SecondaryAttributes(
+        rarity=rarity, escorts=escorts, troop_type=troop_type, stars=stars, pellets=pellets
+    )
 
-    # Stats popup: open → OCR → close
+
+def _capture_stats_panel(
+    device: DeviceProtocol, cfg: HeroesConfig, ocr: OcrFn, sleep: Callable[[float], None]
+):
+    """Open the Stats popup, OCR it, and close it again."""
     device.tap(cfg.nav.stats_list_button.x, cfg.nav.stats_list_button.y)
     _sleep_ms(cfg.delays.after_tap_ms, sleep_fn=sleep)
     stats_img = _decode_screencap(device.screencap())
     stats = parse_stats_panel(_ocr_box(stats_img, cfg.ocr.stats_panel, ocr))
     device.tap(cfg.nav.stats_list_button.x, cfg.nav.stats_list_button.y)
     _sleep_ms(cfg.delays.after_tap_ms, sleep_fn=sleep)
+    return stats
 
-    # Skills tab
+
+def _capture_skills(
+    device: DeviceProtocol, cfg: HeroesConfig, ocr: OcrFn, sleep: Callable[[float], None]
+) -> list[SkillRecord]:
+    """Open the Skills tab and OCR each configured skill slot."""
     device.tap(cfg.nav.skills_tab.x, cfg.nav.skills_tab.y)
     _sleep_ms(cfg.delays.after_tab_ms, sleep_fn=sleep)
 
@@ -239,20 +284,70 @@ def scrape_hero(
         skills.append(
             parse_skill_panel(panel_text, slot=slot, current_bonus=current_bonus)
         )
+    return skills
+
+
+def scrape_hero(
+    device: DeviceProtocol,
+    cfg: HeroesConfig,
+    *,
+    page: int,
+    index: int,
+    ocr_fn: OcrFn | None = None,
+    sleep_fn: Callable[[float], None] | None = None,
+    now_fn: Callable[[], datetime] | None = None,
+    names_dir: Path | None = None,
+    keep_name: str | None = None,
+) -> HeroRecord | None:
+    """Scrape the currently open hero detail screen.
+
+    Caller owns roster open and back navigation.
+
+    Returns None when the detail screen is not open (live path) or when an
+    injected ``ocr_fn`` yields no name/power. When the live path confirms a
+    detail screen but name and power both fail, raises ``DetailOpenError`` so
+    the collector still taps Back.
+
+    When ``keep_name`` is set (manual fix), that name wins over OCR and is used
+    for the top-center name screenshot filename. Otherwise a name OCR miss with
+    power present yields a placeholder ``Hero_p{page}_i{index}``.
+    """
+    if page < 0:
+        raise ValueError(f"page must be >= 0; got {page}")
+    if index < 0:
+        raise ValueError(f"index must be >= 0; got {index}")
+
+    ocr = ocr_fn or _default_ocr
+    sleep = sleep_fn or time.sleep
+    now = now_fn or (lambda: datetime.now(timezone.utc))
+
+    img = _detail_screen_image_or_none(device, cfg, ocr_fn, sleep)
+    if img is None:
+        return None
+
+    identity = _resolve_hero_identity(
+        img, cfg, ocr_fn=ocr_fn, names_dir=names_dir, keep_name=keep_name, page=page, index=index
+    )
+    if identity is None:
+        return None
+
+    attrs = _scrape_secondary_attributes(img, cfg, ocr, ocr_fn, identity.name, identity.rarity_ui)
+    stats = _capture_stats_panel(device, cfg, ocr, sleep)
+    skills = _capture_skills(device, cfg, ocr, sleep)
 
     scraped_at = now().isoformat().replace("+00:00", "Z")
     return HeroRecord(
-        name=name,
-        power=power,
-        rarity=rarity,
-        troop_type=troop_type,
-        escorts=escorts,
-        stars=stars,
-        pellets=pellets,
+        name=identity.name,
+        power=identity.power,
+        rarity=attrs.rarity,
+        troop_type=attrs.troop_type,
+        escorts=attrs.escorts,
+        stars=attrs.stars,
+        pellets=attrs.pellets,
         stats=stats,
         skills=tuple(skills),
         roster_page=page,
         roster_index=index,
         scraped_at=scraped_at,
-        name_screenshot=name_screenshot,
+        name_screenshot=identity.name_screenshot,
     )
