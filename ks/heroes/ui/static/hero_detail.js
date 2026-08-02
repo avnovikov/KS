@@ -17,16 +17,13 @@
   var bodyEl = document.getElementById("hero-detail-body");
   var closeBtn = document.getElementById("hero-detail-close");
 
+  // The shared escaper from app.js, which _layout.html loads first. This
+  // file used to carry its own four-character copy; the event lineups board
+  // carried a five-character one. See app.js for why there is now one.
+  var esc = window.escapeHtml;
+
   function fmt(value) {
     return value === null || value === undefined || value === "" ? "—" : String(value);
-  }
-
-  function esc(value) {
-    return String(value)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
   }
 
   function rarityClass(rarity) {
@@ -161,13 +158,9 @@
     modal.setAttribute("aria-hidden", "true");
   }
 
-  if (closeBtn) closeBtn.addEventListener("click", closeHeroModal);
-  modal.addEventListener("click", function (ev) {
-    if (ev.target === modal) closeHeroModal();
-  });
-  document.addEventListener("keydown", function (ev) {
-    if (ev.key === "Escape" && modal.classList.contains("open")) closeHeroModal();
-  });
+  // Close button + backdrop click + Escape, from app.js. closeHeroModal is
+  // idempotent, so the old `contains("open")` guard on Escape is not needed.
+  window.bindDialogDismiss(modal, closeBtn, closeHeroModal);
 
   Array.prototype.slice
     .call(document.querySelectorAll(".hero-open"))

@@ -6,20 +6,17 @@ formation board, the hero sheet, the escaping, and every partial-failure
 path. A page-render test can only see the empty shell, and a source grep
 cannot tell whether any of it works.
 
-So this drives the script for real, exactly the way
+So this drives the files for real, exactly the way
 `tests/test_heroes_inventory_js.py` drives the inventory table:
 `tests/js/optimiser_events_harness.js` stands up a fake DOM and a recordable
-`fetch`, the board's source is injected into it verbatim, and the whole thing
-runs under whichever JS engine the host happens to have. There is no JS
+`fetch`, the two static files are injected into it verbatim, and the whole
+thing runs under whichever JS engine the host happens to have. There is no JS
 toolchain in this repo and none is added: if no engine is found the module
 skips with a reason.
 
-Why the source is lifted out of the template rather than read from
-`ks/heroes/ui/static/`: the board's `esc()` helper has to be *in the rendered
-page* (tests/test_heroes_optimize_hardening.py::
-test_optimiser_events_page_has_esc_helper, a Task-1 assertion restored here),
-which a `<script src>` cannot satisfy. `test_the_page_ships_exactly_the_script
-_this_harness_runs` pins the two ends together so "inline" costs no coverage.
+`app.js` is injected alongside the board because the board depends on it:
+`window.escapeHtml` and `window.bindDialogDismiss` live there now, one copy
+for this page and `hero_detail.js` both.
 """
 
 from __future__ import annotations
@@ -32,7 +29,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TEMPLATE = REPO_ROOT / "ks" / "heroes" / "ui" / "templates" / "optimiser_events.html"
+STATIC_DIR = REPO_ROOT / "ks" / "heroes" / "ui" / "static"
 HARNESS = Path(__file__).resolve().parent / "js" / "optimiser_events_harness.js"
 
 #: Engines that run `<engine> [args] file.js` and drain the microtask queue
@@ -51,7 +48,6 @@ _JSC_MACOS = Path(
 )
 
 _RESULT_MARKER = "@@RESULTS@@"
-_MARKER = "// @@OPTIMISER_EVENTS_JS@@"
 
 
 def _find_engine() -> list[str] | None:
@@ -64,30 +60,22 @@ def _find_engine() -> list[str] | None:
     return None
 
 
-def board_script() -> str:
-    """The contents of optimiser_events.html's single `<script>` block.
-
-    Also asserted by the page-level tests, so a second block (or a Jinja
-    expression sneaking into this one) is caught rather than silently
-    changing what the harness executes versus what the browser gets.
-    """
-    text = TEMPLATE.read_text(encoding="utf-8")
-    assert text.count("<script>") == 1, "the template grew a second inline script"
-    start = text.index("<script>") + len("<script>")
-    end = text.index("</script>", start)
-    return text[start:end]
-
-
 def _build_script(tmp_path: Path) -> Path:
-    """Splice the real board source into the harness, verbatim.
+    """Splice the two real static files into the harness, verbatim.
 
-    Injection beats `eval` of a read-in string: the source runs as ordinary
-    code, so a syntax error is reported at a real line rather than swallowed,
-    and nothing about it has to be JS-escaped.
+    Injection beats `eval` of a read-in string: the sources run as ordinary
+    code, so a syntax error in either file is reported at a real line rather
+    than swallowed, and nothing about the files has to be JS-escaped.
     """
     harness = HARNESS.read_text(encoding="utf-8")
-    assert _MARKER in harness, "harness lost its board-script injection point"
-    harness = harness.replace(_MARKER, board_script())
+    injections = (
+        ("// @@APP_JS@@", "app.js"),
+        ("// @@OPTIMISER_EVENTS_JS@@", "optimiser_events.js"),
+    )
+    for marker, name in injections:
+        assert marker in harness, f"harness lost its {name} injection point"
+        source = (STATIC_DIR / name).read_text(encoding="utf-8")
+        harness = harness.replace(marker, source)
     script = tmp_path / "optimiser_events_harness.run.js"
     script.write_text(harness, encoding="utf-8")
     return script
@@ -142,10 +130,11 @@ def _assert_ran(js_run: dict, names: list[str]) -> None:
 # --- wiring ------------------------------------------------------------------
 
 
-def test_the_page_ships_exactly_the_script_this_harness_runs(tmp_path: Path) -> None:
-    """The harness runs the template's `<script>` body; the browser runs the
-    rendered page's. This is what stops those two from drifting — and what
-    makes the extraction above safe, by proving Jinja does not touch it."""
+def test_board_script_is_served_and_is_the_file_on_disk(tmp_path: Path) -> None:
+    """Same wiring check inventory.js and troops.js get: the page's
+    `<script src>` resolves, the mount serves it as JavaScript, and the bytes
+    on the wire are the same file the JS harness executes — so the two can
+    never drift."""
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
 
@@ -153,27 +142,53 @@ def test_the_page_ships_exactly_the_script_this_harness_runs(tmp_path: Path) -> 
     from ks.heroes.store import HeroStore
     from ks.heroes.ui.app import create_app
 
-    source = board_script()
-    assert "{{" not in source and "{%" not in source, (
-        "the board script grew a Jinja expression — the harness runs the "
-        "template's bytes, so anything Jinja rewrites would be untested"
-    )
-    assert "function esc(" in source
-
     HeroStore(tmp_path).upsert(
         HeroRecord(name="Helga", stars=2, power=1000, scraped_at="t")
     )
     client = TestClient(create_app(heroes_dir=tmp_path))
+
     page = client.get("/optimiser/events").text
-    assert source in page, "the rendered page is not shipping the script tested here"
+    assert 'src="/static/optimiser_events.js"' in page
+    # app.js comes from _layout.html and has to load first: the board reads
+    # window.escapeHtml off it at IIFE-evaluation time.
+    assert page.index('src="/static/app.js"') < page.index(
+        'src="/static/optimiser_events.js"'
+    )
+
+    res = client.get("/static/optimiser_events.js")
+    assert res.status_code == 200
+    assert "javascript" in res.headers["content-type"]
+    assert res.text == (STATIC_DIR / "optimiser_events.js").read_text(encoding="utf-8")
 
 
-def test_the_board_declares_no_second_showtoast() -> None:
-    """Task 5 spent a fix wave deleting two local copies of showToast; this
-    page calls the shared one in app.js and adds no third."""
-    source = board_script()
-    assert "function showToast" not in source
-    assert "window.showToast" in source
+def test_the_board_declares_no_second_showtoast_or_escaper(tmp_path: Path) -> None:
+    """Task 5 spent a fix wave deleting two local copies of `showToast`, and
+    fix wave 1 here deleted two *divergent* copies of `esc` — hero_detail.js
+    escaped four characters, this board escaped five. Both helpers now have
+    exactly one definition, in app.js, and this pins that no page grows a
+    third."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.ui.app import create_app
+
+    client = TestClient(create_app(gear_dir=None, heroes_dir=tmp_path))
+    app_js = client.get("/static/app.js").text
+    board = client.get("/static/optimiser_events.js").text
+    hero_detail = client.get("/static/hero_detail.js").text
+
+    assert app_js.count("function esc(") == 1
+    for name, source in (("board", board), ("hero_detail", hero_detail)):
+        assert "function esc(" not in source, f"{name} redefined esc"
+        assert "function showToast" not in source, f"{name} redefined showToast"
+        assert "window.escapeHtml" in source, f"{name} does not use the shared esc"
+
+    # The dismiss wiring was the other copy: close button, backdrop-target
+    # click and Escape, spelled out identically in both files.
+    assert app_js.count("function bindDialogDismiss(") == 1
+    for source in (board, hero_detail):
+        assert "window.bindDialogDismiss(" in source
+        assert 'ev.key === "Escape"' not in source
 
 
 # --- behaviour ---------------------------------------------------------------
@@ -181,7 +196,7 @@ def test_the_board_declares_no_second_showtoast() -> None:
 
 def test_board_js_runs_under_a_real_engine(js_run: dict) -> None:
     """Sanity floor: the source parsed and every suite reached its end."""
-    assert len(js_run["checks"]) >= 70, len(js_run["checks"])
+    assert len(js_run["checks"]) >= 130, len(js_run["checks"])
     assert not _failures(js_run, ["harness ran to completion"])
 
 
@@ -224,6 +239,11 @@ def test_mode_chips_carry_their_points_and_drive_the_board(js_run: dict) -> None
             "and moves the selection with it",
             "the chip that lost it says so too",
             "and the board shows that mode's heroes",
+            "tapping Bear Trap switches event",
+            "the event segment is marked selected",
+            "and the one it left is not",
+            "its own modes replace the chips",
+            "going back restores the mode that was picked, not the first one",
         ],
     )
     assert "pts" in js_run["data"]["first_chip_html"]
@@ -236,6 +256,7 @@ def test_the_board_keeps_troops_and_points_on_it(js_run: dict) -> None:
         [
             "the board meta carries the points",
             "and the troops line the brief asks for",
+            "and the points breakdown behind them",
         ],
     )
     meta = js_run["data"]["sword_board_meta"]
@@ -321,6 +342,25 @@ def test_tapping_a_hero_opens_the_why_and_gear_sheet(js_run: dict) -> None:
     )
 
 
+def test_the_other_two_leave_one_out_verdicts_are_rendered(js_run: dict) -> None:
+    """`explain.py` can answer a leave-one-out three ways: a marginal cost, a
+    `critical` hero the lineup cannot do without, or `inconclusive` when the
+    re-solve did not settle. Only the first was reachable from any fixture,
+    so two of `renderWhy`'s three branches went unexecuted — and "critical"
+    is the one a user must not miss."""
+    _assert_ran(
+        js_run,
+        [
+            "a hero the lineup cannot do without is called out by name",
+            "in the critical style, not the ordinary cost line",
+            "and without inventing a cost the solver never computed",
+            "an inconclusive leave-one-out says so rather than reading as free",
+            "carrying the solver's status, escaped like everything else it returns",
+            "a formation slot is shown even when the solver named no role",
+        ],
+    )
+
+
 def test_everything_from_the_api_is_escaped_before_it_becomes_markup(
     js_run: dict,
 ) -> None:
@@ -343,7 +383,12 @@ def test_everything_from_the_api_is_escaped_before_it_becomes_markup(
             "and escapes a hostile gear name",
             "a javascript: icon URL is dropped rather than rendered",
             "the hero's own name in the sheet title is text, not markup",
+            "a hostile solver status cannot break out of the chip either",
             "a protocol-relative icon URL is refused",
+            "so is its backslash spelling, which a browser parses the same way",
+            "and an absolute off-site URL, since every icon the app makes is a path",
+            "a same-origin path that would close the src attribute is escaped, not waved through",
+            "so no onerror handler ever reaches the markup",
         ],
     )
     # Spelled out here as well, so the escaping cannot regress to "the string
@@ -353,6 +398,16 @@ def test_everything_from_the_api_is_escaped_before_it_becomes_markup(
     body = js_run["data"]["hostile_sheet_body"]
     assert "&lt;b&gt;reasons&lt;/b&gt;" in body, body
     assert "javascript:" not in body, body
+
+    # The attribute case, spelled out here too. `safeUrl` is an *origin*
+    # check: `/x.png" onerror="alert(1)` passes it (it is a same-origin
+    # path), so `esc()` is the only thing between it and a working handler.
+    # Removing `esc(url)` from renderGearGrid left all 121 checks of the
+    # previous wave green — hence this.
+    gear = js_run["data"]["hostile_gear_html"]
+    assert 'src="/x.png&quot; onerror=&quot;alert(1)"' in gear, gear
+    assert 'onerror="' not in gear, gear
+    assert "evil.example" not in gear, gear
 
 
 def test_a_failed_section_is_named_rather_than_blanking_the_page(
@@ -433,6 +488,11 @@ def test_regenerate_locks_out_a_second_recompute_while_one_is_in_flight(
             "finishing re-enables it",
             "and so does failing",
             "which is reported, not swallowed",
+            # The lockout is on [data-regen] only — the board itself must
+            # stay usable, and the answer must not undo a choice made while
+            # it was in the air.
+            "the board still switches mode while a refresh is open",
+            "and the arriving bundle keeps the mode chosen during the wait",
         ],
     )
 
@@ -453,6 +513,9 @@ def test_portrait_slugs_agree_with_the_python_that_named_the_files(
         [
             "every hero in the lineup gets a portrait URL",
             "a name that slugifies to nothing still resolves somewhere",
+            "a two-word name takes one initial from each word",
+            "punctuation does not shift which letters those are",
+            "and a one-word name takes its first two letters",
         ],
     )
     urls = json.loads(js_run["data"]["slug_urls"])

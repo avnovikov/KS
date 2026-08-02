@@ -43,6 +43,71 @@
 })();
 
 /**
+ * Publishes window.escapeHtml and window.bindDialogDismiss — the two things
+ * every page that builds markup or opens a dialog needs.
+ *
+ * WHY shared: both already existed twice, and the escaping copies had
+ * diverged. hero_detail.js escaped four characters; the event lineups board
+ * escaped five (it also handles `'`, which matters the moment a value lands
+ * in a single-quoted attribute). Two spellings of one *security* helper is
+ * worse than two spellings of a formatter: a fix to either would never reach
+ * the other, and nothing pointed either at its twin. The strict version won.
+ */
+(function () {
+  "use strict";
+
+  /**
+   * Escape a value for interpolation into HTML — including into a
+   * double- or single-quoted attribute.
+   *
+   * Not a substitute for `textContent`, which cannot inject at all and is
+   * what a caller should reach for wherever a single node holds the text.
+   * This is for the places that assemble nested markup by hand.
+   *
+   * @param {*} value anything; stringified first
+   * @returns {string} the same text with & < > " ' replaced by entities
+   */
+  function esc(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  /**
+   * Wire the three ways a dialog gets dismissed: its close button, a click
+   * on the backdrop *itself*, and Escape.
+   *
+   * `ev.target === backdrop` is the load-bearing part — a click that bubbled
+   * up from the panel must not dismiss the thing the user is reading — and it
+   * is exactly the line that was duplicated. `close` is supplied by the
+   * caller because the two dialogs hide themselves differently (one toggles
+   * `hidden` alongside the class, one only sets `aria-hidden`); this owns the
+   * triggers, not the hiding.
+   *
+   * @param {?Element} backdrop the full-screen dimmer
+   * @param {?Element} closeButton the explicit close control, if there is one
+   * @param {function(): void} close idempotent; called once per dismissal
+   */
+  function bindDialogDismiss(backdrop, closeButton, close) {
+    if (closeButton) closeButton.addEventListener("click", close);
+    if (backdrop) {
+      backdrop.addEventListener("click", function (ev) {
+        if (ev.target === backdrop) close();
+      });
+    }
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape") close();
+    });
+  }
+
+  window.escapeHtml = esc;
+  window.bindDialogDismiss = bindDialogDismiss;
+})();
+
+/**
  * Carries a rescan's trust payload (ks/heroes/ui/trust.py's flags/new/
  * changed/incomplete summary) across the page reload that follows a
  * successful rescan.

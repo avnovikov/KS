@@ -781,33 +781,57 @@ def test_events_page_renders_the_three_event_segments(tmp_path: Path) -> None:
         assert f">{label}</button>" in body
 
 
-def test_events_page_ships_no_inline_style(tmp_path: Path) -> None:
-    """Global constraint: every rule lives in app.css. The script is inline
-    (see the module docstring in tests/test_heroes_optimiser_events_js.py);
-    styling is not."""
+def test_events_page_ships_no_inline_script_or_style(tmp_path: Path) -> None:
+    """Global constraint: every rule lives in app.css, and the board's logic
+    lives in /static/optimiser_events.js. It was briefly inline — see the
+    re-anchoring note on test_optimiser_events_page_has_esc_helper — which is
+    exactly why this is pinned."""
     body = _events_client(tmp_path).get("/optimiser/events").text
     assert "<style" not in body
     assert "style=" not in body
+    assert "<script>" not in body
+    assert 'src="/static/optimiser_events.js"' in body
 
 
 def test_every_element_the_board_script_looks_up_exists_in_the_page(
     tmp_path: Path,
 ) -> None:
-    """The template/script contract, derived rather than transcribed: every
-    `getElementById("x")` in the shipped script must have a matching `id="x"`
-    in the shipped markup, and every attribute selector must match something.
-    A rename on either side fails here instead of silently rendering an empty
-    page in the browser (the JS harness supplies its own DOM, so it cannot
-    notice)."""
-    body = _events_client(tmp_path).get("/optimiser/events").text
+    """The markup/script contract, derived rather than transcribed: every
+    `getElementById("x")` in the served module must have a matching `id="x"`
+    in the served page, and every attribute selector must match something.
 
-    looked_up = set(re.findall(r'getElementById\("([^"]+)"\)', body))
+    This is the one check that spans the two files. The JS harness supplies
+    its own DOM, so it cannot notice a template rename; the page tests do not
+    read the script. A rename on either side lands here instead of silently
+    rendering an empty board in the browser.
+    """
+    client = _events_client(tmp_path)
+    body = client.get("/optimiser/events").text
+    script = client.get("/static/optimiser_events.js").text
+
+    looked_up = set(re.findall(r'getElementById\("([^"]+)"\)', script))
     assert len(looked_up) >= 8, looked_up
     assert not sorted(i for i in looked_up if f'id="{i}"' not in body)
 
-    selectors = set(re.findall(r'querySelectorAll\("\[([a-z-]+)\]"\)', body))
+    selectors = set(re.findall(r'querySelectorAll\("\[([a-z-]+)\]"\)', script))
     assert selectors == {"data-event", "data-regen"}, selectors
     assert not sorted(a for a in selectors if f"{a}=" not in body)
+
+
+def test_events_page_has_a_heading_before_the_solve_returns(
+    tmp_path: Path,
+) -> None:
+    """The only other h1 on this page is injected by the board and names the
+    selected *mode*, so for the several seconds the first ILP takes the
+    document had no heading at all. The screen names itself server-side and
+    the board's title is an h2 under it."""
+    body = _events_client(tmp_path).get("/optimiser/events").text
+    assert '<h1 class="page-title">Event lineups</h1>' in body
+    script = _events_client(tmp_path / "second").get(
+        "/static/optimiser_events.js"
+    ).text
+    assert '"h1"' not in script, "the board must not inject a competing h1"
+    assert 'appendText("h2", "board-title"' in script
 
 
 def test_event_lineups_styles_are_phone_first(tmp_path: Path) -> None:

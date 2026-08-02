@@ -177,11 +177,15 @@ def test_optimize_page_cache_control(tmp_path: Path) -> None:
 # xfail against the new route until the page that owes it shipped; Task 6
 # shipped it, so the mark is gone and this is an ordinary test again.
 #
-# The helper has to be *in the page*, which is why the board's script is
-# inline rather than a /static module: a <script src> would leave this
-# assertion permanently unsatisfiable. What esc() actually escapes is
-# executed in tests/test_heroes_optimiser_events_js.py; this end pins that
-# the page ships it at all.
+# Fix wave 1 RE-ANCHORED the needle without changing it. It used to read
+# `/optimiser/events`, which forced the board's script to be inline; the
+# escaping helper is now shared with hero_detail.js and lives in app.js, so
+# the identical `b"function esc("` is asserted against the bytes the app
+# serves for /static/app.js instead. The whole chain is pinned here — the
+# page loads the board module, the board module loads through the shared
+# helper, and the helper is defined once — so nothing is loosened by the
+# move. What esc() actually escapes is executed in
+# tests/test_heroes_optimiser_events_js.py.
 def test_optimiser_events_page_has_esc_helper(tmp_path: Path) -> None:
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
@@ -194,4 +198,14 @@ def test_optimiser_events_page_has_esc_helper(tmp_path: Path) -> None:
     client = TestClient(create_app(heroes_dir=tmp_path))
     events = client.get("/optimiser/events")
     assert events.status_code == 200
-    assert b"function esc(" in events.content
+
+    # The page ships the board, the board comes with the shared helpers.
+    assert b'src="/static/optimiser_events.js"' in events.content
+    assert b'src="/static/app.js"' in events.content
+    board = client.get("/static/optimiser_events.js")
+    assert board.status_code == 200
+    assert b"window.escapeHtml" in board.content
+
+    shared = client.get("/static/app.js")
+    assert shared.status_code == 200
+    assert b"function esc(" in shared.content

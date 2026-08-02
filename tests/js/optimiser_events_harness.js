@@ -7,9 +7,10 @@
  *
  * So this does what tests/js/inventory_harness.js does for the inventory
  * table: stands up a fake DOM and a recordable fetch, then runs the *real,
- * unmodified* script — lifted verbatim out of the <script> block in
- * ks/heroes/ui/templates/optimiser_events.html by
- * tests/test_heroes_optimiser_events_js.py and injected at the marker below.
+ * unmodified* sources — ks/heroes/ui/static/app.js (which publishes the
+ * shared escapeHtml and bindDialogDismiss the board depends on) and
+ * ks/heroes/ui/static/optimiser_events.js — injected at the markers below by
+ * tests/test_heroes_optimiser_events_js.py.
  *
  * Protocol: a single line "@@RESULTS@@<json>" on stdout, holding
  * {checks: [{name, ok, detail}], data: {...}}. Anything that throws is
@@ -403,15 +404,27 @@ async function settle() {
   for (var i = 0; i < 80; i++) await Promise.resolve();
 }
 
-/* --- the unit under test, injected verbatim by the pytest runner ----------- */
+/* --- the units under test, injected verbatim by the pytest runner ---------- */
 
-/** Runs the <script> block of ks/heroes/ui/templates/optimiser_events.html
- *  against whatever makePage() installed. */
+/** Runs ks/heroes/ui/static/app.js, which publishes showToast, escapeHtml
+ *  and bindDialogDismiss. */
+function loadSharedAppJs() {
+// @@APP_JS@@
+}
+
+/** Runs ks/heroes/ui/static/optimiser_events.js against whatever makePage()
+ *  installed. */
 function loadBoardScript() {
 // @@OPTIMISER_EVENTS_JS@@
 }
 
+/** app.js first, then the page script — the load order _layout.html produces.
+ *  The harness's own showToast stub is restored afterwards so toasts stay
+ *  inspectable; app.js's real one is covered by the troops harness. */
 async function boot(page) {
+  var stub = globalThis.window.showToast;
+  loadSharedAppJs();
+  globalThis.window.showToast = stub;
   loadBoardScript();
   await settle();
   return page;
@@ -429,6 +442,29 @@ function loo(points, alternates) {
     alternate_lineup: alternates,
     replacement_heroes: alternates,
     status: "Optimal",
+  };
+}
+
+/** The two leave_one_out shapes explain.py can emit besides a plain marginal
+ *  cost. Neither was reachable from any fixture until they were added here,
+ *  so both branches of renderWhy went unexecuted. */
+function criticalLoo() {
+  return {
+    baseline_points: 26152.4,
+    marginal_points: null,
+    critical: true,
+    inconclusive: false,
+    status: "Infeasible",
+  };
+}
+
+function inconclusiveLoo(status) {
+  return {
+    baseline_points: 26152.4,
+    marginal_points: null,
+    critical: false,
+    inconclusive: true,
+    status: status,
   };
 }
 
@@ -597,6 +633,11 @@ async function suiteFirstRender() {
       d.boardMeta().indexOf("C ") !== -1 &&
       d.boardMeta().indexOf("A ") !== -1 &&
       d.boardMeta().indexOf("cap") !== -1,
+    d.boardMeta()
+  );
+  check(
+    "and the points breakdown behind them",
+    d.boardMeta().indexOf("combat") !== -1 && d.boardMeta().indexOf("occupation") !== -1,
     d.boardMeta()
   );
   record("sword_board_meta", d.boardMeta());
@@ -911,16 +952,118 @@ async function suiteEscaping() {
     d.modalTitle.textContent
   );
 
-  // A protocol-relative URL passes a naive "starts with /" check but points
-  // off-site; the legacy page's safeUrl let it through.
+  // The chip's second line is API-derived too: a non-Optimal arena side puts
+  // its raw `status` string there.
+  var bundleStatus = goodBundle();
+  bundleStatus.arena.defense.status = 'Broken" onmouseover="x';
+  var dStatus = makePage({ bundle: bundleStatus });
+  await boot(dStatus);
+  dStatus.eventButton("arena").fire("click");
+  check(
+    "a hostile solver status cannot break out of the chip either",
+    dStatus.chipText(1).indexOf('onmouseover="x') === -1 &&
+      dStatus.chipText(1).indexOf("Broken&quot; onmouseover=&quot;x") !== -1,
+    dStatus.chipText(1)
+  );
+
+  /* The gear icon is the only place a safeUrl-approved value reaches an HTML
+     *attribute*, and the two obviously-bad URLs above never get that far —
+     safeUrl rejects them before esc() is reached, so they prove nothing about
+     the escape. `/x.png" onerror="alert(1)` is the case that matters: a
+     perfectly good same-origin path that closes the src attribute if it goes
+     in raw. All four gear slots are loaded so each cell renders one. */
   var bundle2 = goodBundle();
-  bundle2.sword.modes.garrison.gear_assignment.Hilde[0].icon_url = "//evil.example/x.png";
+  bundle2.sword.modes.garrison.gear_assignment.Hilde = [
+    { slot: "helmet", name: "A", icon_url: "//evil.example/x.png" },
+    { slot: "gloves", name: "B", icon_url: "/\\evil.example/x.png" },
+    { slot: "chest", name: "C", icon_url: "https://evil.example/x.png" },
+    { slot: "boots", name: "D", icon_url: '/x.png" onerror="alert(1)' },
+  ];
   var d2 = makePage({ bundle: bundle2 });
   await boot(d2);
   d2.slot("Hilde").el.fire("click");
+  var gear = d2.modalBody.innerHTML;
+  record("hostile_gear_html", gear);
   check(
     "a protocol-relative icon URL is refused",
-    d2.modalBody.innerHTML.indexOf("evil.example") === -1,
+    gear.indexOf("//evil.example") === -1,
+    gear
+  );
+  check(
+    "so is its backslash spelling, which a browser parses the same way",
+    gear.indexOf("evil.example") === -1,
+    gear
+  );
+  check(
+    "and an absolute off-site URL, since every icon the app makes is a path",
+    gear.indexOf("https:") === -1,
+    gear
+  );
+  check(
+    "a same-origin path that would close the src attribute is escaped, not waved through",
+    gear.indexOf('src="/x.png&quot; onerror=&quot;alert(1)"') !== -1,
+    gear
+  );
+  check(
+    "so no onerror handler ever reaches the markup",
+    gear.indexOf('onerror="alert') === -1,
+    gear
+  );
+}
+
+async function suiteLeaveOneOutBranches() {
+  var bundle = goodBundle();
+  var mode = bundle.sword.modes.garrison;
+  mode.heroes[0].explain.leave_one_out = criticalLoo();
+  mode.heroes[1].explain.leave_one_out = inconclusiveLoo('Undefined" onmouseover="x');
+  var d = makePage({ bundle: bundle });
+  await boot(d);
+
+  d.slot("Hilde").el.fire("click");
+  check(
+    "a hero the lineup cannot do without is called out by name",
+    d.modalBody.innerHTML.indexOf("Critical — no feasible lineup without this hero") !== -1,
+    d.modalBody.innerHTML
+  );
+  check(
+    "in the critical style, not the ordinary cost line",
+    d.modalBody.innerHTML.indexOf('class="why-marginal critical"') !== -1,
+    d.modalBody.innerHTML
+  );
+  check(
+    "and without inventing a cost the solver never computed",
+    d.modalBody.innerHTML.indexOf("Removing costs") === -1,
+    d.modalBody.innerHTML
+  );
+
+  d.slot("Howard").el.fire("click");
+  check(
+    "an inconclusive leave-one-out says so rather than reading as free",
+    d.modalBody.innerHTML.indexOf("Leave-one-out inconclusive (status") !== -1,
+    d.modalBody.innerHTML
+  );
+  check(
+    "carrying the solver's status, escaped like everything else it returns",
+    d.modalBody.innerHTML.indexOf('onmouseover="x') === -1 &&
+      d.modalBody.innerHTML.indexOf("Undefined&quot; onmouseover=&quot;x") !== -1,
+    d.modalBody.innerHTML
+  );
+
+  // A slot with no role: the head line used to render only inside
+  // `if (explain.role)`, so the slot went missing with it.
+  var bundle2 = goodBundle();
+  bundle2.arena.attack.explanations.Helga = {
+    slot: "F1",
+    fits_because: ["Placed F1"],
+    leave_one_out: {},
+  };
+  var d2 = makePage({ bundle: bundle2 });
+  await boot(d2);
+  d2.eventButton("arena").fire("click");
+  d2.slot("Helga").el.fire("click");
+  check(
+    "a formation slot is shown even when the solver named no role",
+    d2.modalBody.innerHTML.indexOf('class="why-role">F1</p>') !== -1,
     d2.modalBody.innerHTML
   );
 }
@@ -1036,6 +1179,27 @@ async function suiteRegenerateLockout() {
   await settle();
   check("finishing re-enables it", d.regenBtn.disabled === false, "disabled=" + d.regenBtn.disabled);
 
+  // The lockout is on the regenerate controls only. The board is still
+  // rendered from the bundle already in hand, so tapping a chip mid-refresh
+  // has to keep working — and the arriving bundle must not yank the user
+  // back to the mode they were on when they pressed the button.
+  d.holdNextFetch();
+  d.regenBtn.fire("click");
+  await settle();
+  d.chips()[1].fire("click");
+  check(
+    "the board still switches mode while a refresh is open",
+    d.boardTitle() === "Swordland · rally lead",
+    d.boardTitle()
+  );
+  d.releaseFetch();
+  await settle();
+  check(
+    "and the arriving bundle keeps the mode chosen during the wait",
+    d.boardTitle() === "Swordland · rally lead",
+    d.boardTitle()
+  );
+
   d.queueReply({ status: 500, body: "boom" });
   d.holdNextFetch();
   d.regenBtn.fire("click");
@@ -1108,6 +1272,23 @@ async function suiteSlugContract() {
     urls["###"] === "/static/heroes/hero.webp",
     urls["###"]
   );
+  // One initial from each of the first two words — not two from the first,
+  // which is what a single-word name gets and is easy to conflate.
+  check(
+    "a two-word name takes one initial from each word",
+    d.slot("Yeon Woo").initials === "YW",
+    d.slot("Yeon Woo").initials
+  );
+  check(
+    "punctuation does not shift which letters those are",
+    d.slot("Sgt. Reginald III").initials === "SR",
+    d.slot("Sgt. Reginald III").initials
+  );
+  check(
+    "and a one-word name takes its first two letters",
+    d.slot("Amadeus").initials === "AM",
+    d.slot("Amadeus").initials
+  );
 }
 
 async function suiteApiPortraits() {
@@ -1142,6 +1323,7 @@ async function suiteApiPortraits() {
     suiteArenaFormation,
     suiteHeroSheet,
     suiteEscaping,
+    suiteLeaveOneOutBranches,
     suitePartialFailure,
     suiteArenaSideFailure,
     suiteWarningsAndSkippedModes,

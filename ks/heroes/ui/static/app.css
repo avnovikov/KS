@@ -212,6 +212,13 @@ main {
   padding: 1.1rem 1.15rem;
 }
 
+/* Screen heading. Server-rendered, so the document has one before any
+   client-side render lands. */
+.page-title {
+  margin: 0.1rem 0 0.3rem;
+  font-size: 1.35rem;
+}
+
 .page-meta {
   color: var(--muted);
   font-size: 0.82rem;
@@ -1066,6 +1073,8 @@ table.data-table {
   display: none;
 }
 
+/* An h2 under the page's own h1 — it names the selected lineup, not the
+   screen. */
 .board-title {
   font-size: 1.05rem;
   text-transform: capitalize;
