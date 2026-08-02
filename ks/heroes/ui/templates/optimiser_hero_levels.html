@@ -2,8 +2,161 @@
 {% block title %}Hero levels · Optimiser · KS{% endblock %}
 
 {% block content %}
+<style>
+  .status.ok { color: var(--ok, #34c759); }
+  .status.err { color: var(--err, #ff3b30); }
+  #spend-form .field { display: block; margin-bottom: 0.85rem; }
+  #spend-form .field-label { display: block; margin-bottom: 0.35rem; }
+  #spend-form select.field-input,
+  #spend-form input.field-input {
+    text-align: left;
+    display: block;
+  }
+</style>
 <section class="panel">
   <h1>Hero levels</h1>
-  <p class="muted">Level-push recommendations arrive here in a later step.</p>
+  <p class="muted">
+    Enter available Hero EXP and an event. We propose which heroes to level to raise event utility
+    (propose only — does not write <code>heroes.json</code>).
+  </p>
+
+  <p class="status muted" id="status" style="min-height:1.25rem;margin:0.75rem 0">
+    {% if not heroes_enabled %}
+    Start the UI with <code>--heroes</code> to run Hero levels.
+    {% else %}
+    Ready.
+    {% endif %}
+  </p>
+
+  <form id="spend-form">
+    <div class="field">
+      <label class="field-label" for="event">Event</label>
+      <select id="event" name="event" class="field-input" style="width:100%;max-width:20rem"
+              {% if not heroes_enabled %}disabled{% endif %}>
+        <option value="swordland">Swordland (best mode)</option>
+        <option value="beartrap">Bear Trap (best mode)</option>
+        <option value="arena_attack">Arena attack</option>
+        <option value="arena_defense">Arena defense</option>
+      </select>
+    </div>
+    <div class="field">
+      <label class="field-label" for="hero_exp">Hero EXP available</label>
+      <input type="number" id="hero_exp" name="hero_exp" class="field-input" min="0" value="0"
+             style="width:100%;max-width:12rem"
+             {% if not heroes_enabled %}disabled{% endif %} />
+    </div>
+    <button type="submit" class="btn" id="run-btn" {% if not heroes_enabled %}disabled{% endif %}>
+      Find best spends
+    </button>
+  </form>
 </section>
+
+<section class="panel" id="results" hidden>
+  <h2>Result</h2>
+  <p class="summary-line" id="util-line"></p>
+  <p class="summary-line muted" id="lineup-line"></p>
+  <p class="summary-line muted" id="leftover-line"></p>
+  <h2 style="margin-top:1rem;font-size:1rem">Steps</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Hero</th>
+          <th>Levels</th>
+          <th>XP</th>
+        </tr>
+      </thead>
+      <tbody id="steps-body"></tbody>
+    </table>
+  </div>
+  <p style="margin-top:0.75rem">
+    <a id="open-events" class="muted" href="/optimiser/events">Open in Event lineups</a>
+  </p>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function esc(s) {
+    return String(s ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  const form = document.getElementById("spend-form");
+  const statusEl = document.getElementById("status");
+  const results = document.getElementById("results");
+  const runBtn = document.getElementById("run-btn");
+  const heroesEnabled = {{ "true" if heroes_enabled else "false" }};
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (!heroesEnabled || runBtn.disabled) return;
+    runBtn.disabled = true;
+    statusEl.className = "status muted";
+    statusEl.textContent = "Running spend search…";
+    results.hidden = true;
+    const body = {
+      event: document.getElementById("event").value,
+      hero_exp: Number(document.getElementById("hero_exp").value) || 0,
+    };
+    try {
+      const res = await fetch("/api/optimize/hero-levels", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = data.detail;
+        throw new Error(
+          typeof detail === "string" ? detail : (res.statusText || "request failed")
+        );
+      }
+      const delta = data.delta_utility ?? (data.best_utility - data.baseline_utility);
+      document.getElementById("util-line").innerHTML =
+        `Utility <strong>${esc(data.baseline_utility?.toFixed?.(1) ?? data.baseline_utility)}</strong>` +
+        ` → <strong>${esc(data.best_utility?.toFixed?.(1) ?? data.best_utility)}</strong>` +
+        ` (Δ ${esc(typeof delta === "number" ? delta.toFixed(1) : delta)})`;
+      const best = data.best_summary || {};
+      const heroes = best.heroes || best.formation || {};
+      let lineupTxt = "";
+      if (Array.isArray(heroes)) {
+        lineupTxt = "Lineup: " + heroes.join(", ");
+      } else if (heroes && typeof heroes === "object") {
+        lineupTxt = "Formation: " + Object.entries(heroes).map(([k, v]) => `${k}=${v}`).join(", ");
+      }
+      if (best.mode) lineupTxt = `Mode: ${best.mode}. ` + lineupTxt;
+      if (best.side) lineupTxt = `Side: ${best.side}. ` + lineupTxt;
+      document.getElementById("lineup-line").textContent = lineupTxt || "—";
+      document.getElementById("leftover-line").textContent =
+        "Leftover EXP: " + esc(data.leftover_exp ?? 0);
+      const tbody = document.getElementById("steps-body");
+      tbody.innerHTML = "";
+      const steps = data.steps || [];
+      if (!steps.length) {
+        tbody.innerHTML = `<tr><td colspan="3" class="muted">No positive-ΔU spends found (or bag empty).</td></tr>`;
+      } else {
+        for (const s of steps) {
+          const tr = document.createElement("tr");
+          tr.innerHTML =
+            `<td>${esc(s.name)}</td>` +
+            `<td>${esc(s.from_level)} → ${esc(s.to_level)}</td>` +
+            `<td>${esc(s.xp_spent)}</td>`;
+          tbody.appendChild(tr);
+        }
+      }
+      results.hidden = false;
+      statusEl.className = "status ok";
+      statusEl.textContent = `Done · ${steps.length} step(s)`;
+    } catch (err) {
+      statusEl.className = "status err";
+      statusEl.textContent = String(err.message || err);
+    } finally {
+      runBtn.disabled = !heroesEnabled;
+    }
+  });
+</script>
 {% endblock %}

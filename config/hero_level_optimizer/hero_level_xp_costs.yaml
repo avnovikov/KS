@@ -1,0 +1,245 @@
+source: https://ks.h5joy-games.com/guides/hero-level/
+scraped_at: "2026-08-02"
+notes: Incremental Hero XP cost to reach each level. Level 1 cost is 0 (starting level).
+max_level: 80
+levels:
+  - level: 1
+    xp_cost: 0
+    cumulative_xp: 0
+  - level: 2
+    xp_cost: 480
+    cumulative_xp: 480
+  - level: 3
+    xp_cost: 690
+    cumulative_xp: 1170
+  - level: 4
+    xp_cost: 920
+    cumulative_xp: 2090
+  - level: 5
+    xp_cost: 1200
+    cumulative_xp: 3290
+  - level: 6
+    xp_cost: 1500
+    cumulative_xp: 4790
+  - level: 7
+    xp_cost: 1800
+    cumulative_xp: 6590
+  - level: 8
+    xp_cost: 2200
+    cumulative_xp: 8790
+  - level: 9
+    xp_cost: 2600
+    cumulative_xp: 11390
+  - level: 10
+    xp_cost: 3100
+    cumulative_xp: 14490
+  - level: 11
+    xp_cost: 3800
+    cumulative_xp: 18290
+  - level: 12
+    xp_cost: 4200
+    cumulative_xp: 22490
+  - level: 13
+    xp_cost: 5100
+    cumulative_xp: 27590
+  - level: 14
+    xp_cost: 5700
+    cumulative_xp: 33290
+  - level: 15
+    xp_cost: 6800
+    cumulative_xp: 40090
+  - level: 16
+    xp_cost: 7800
+    cumulative_xp: 47890
+  - level: 17
+    xp_cost: 8900
+    cumulative_xp: 56790
+  - level: 18
+    xp_cost: 10000
+    cumulative_xp: 66790
+  - level: 19
+    xp_cost: 12000
+    cumulative_xp: 78790
+  - level: 20
+    xp_cost: 13000
+    cumulative_xp: 91790
+  - level: 21
+    xp_cost: 14000
+    cumulative_xp: 105790
+  - level: 22
+    xp_cost: 15000
+    cumulative_xp: 120790
+  - level: 23
+    xp_cost: 16000
+    cumulative_xp: 136790
+  - level: 24
+    xp_cost: 17000
+    cumulative_xp: 153790
+  - level: 25
+    xp_cost: 18000
+    cumulative_xp: 171790
+  - level: 26
+    xp_cost: 19000
+    cumulative_xp: 190790
+  - level: 27
+    xp_cost: 20000
+    cumulative_xp: 210790
+  - level: 28
+    xp_cost: 21000
+    cumulative_xp: 231790
+  - level: 29
+    xp_cost: 22000
+    cumulative_xp: 253790
+  - level: 30
+    xp_cost: 24000
+    cumulative_xp: 277790
+  - level: 31
+    xp_cost: 26000
+    cumulative_xp: 303790
+  - level: 32
+    xp_cost: 28000
+    cumulative_xp: 331790
+  - level: 33
+    xp_cost: 30000
+    cumulative_xp: 361790
+  - level: 34
+    xp_cost: 32000
+    cumulative_xp: 393790
+  - level: 35
+    xp_cost: 36000
+    cumulative_xp: 429790
+  - level: 36
+    xp_cost: 40000
+    cumulative_xp: 469790
+  - level: 37
+    xp_cost: 44000
+    cumulative_xp: 513790
+  - level: 38
+    xp_cost: 48000
+    cumulative_xp: 561790
+  - level: 39
+    xp_cost: 52000
+    cumulative_xp: 613790
+  - level: 40
+    xp_cost: 58000
+    cumulative_xp: 671790
+  - level: 41
+    xp_cost: 64000
+    cumulative_xp: 735790
+  - level: 42
+    xp_cost: 70000
+    cumulative_xp: 805790
+  - level: 43
+    xp_cost: 76000
+    cumulative_xp: 881790
+  - level: 44
+    xp_cost: 82000
+    cumulative_xp: 963790
+  - level: 45
+    xp_cost: 90000
+    cumulative_xp: 1053790
+  - level: 46
+    xp_cost: 98000
+    cumulative_xp: 1151790
+  - level: 47
+    xp_cost: 100000
+    cumulative_xp: 1251790
+  - level: 48
+    xp_cost: 110000
+    cumulative_xp: 1361790
+  - level: 49
+    xp_cost: 120000
+    cumulative_xp: 1481790
+  - level: 50
+    xp_cost: 130000
+    cumulative_xp: 1611790
+  - level: 51
+    xp_cost: 140000
+    cumulative_xp: 1751790
+  - level: 52
+    xp_cost: 150000
+    cumulative_xp: 1901790
+  - level: 53
+    xp_cost: 160000
+    cumulative_xp: 2061790
+  - level: 54
+    xp_cost: 170000
+    cumulative_xp: 2231790
+  - level: 55
+    xp_cost: 190000
+    cumulative_xp: 2421790
+  - level: 56
+    xp_cost: 210000
+    cumulative_xp: 2631790
+  - level: 57
+    xp_cost: 230000
+    cumulative_xp: 2861790
+  - level: 58
+    xp_cost: 250000
+    cumulative_xp: 3111790
+  - level: 59
+    xp_cost: 270000
+    cumulative_xp: 3381790
+  - level: 60
+    xp_cost: 300000
+    cumulative_xp: 3681790
+  - level: 61
+    xp_cost: 330000
+    cumulative_xp: 4011790
+  - level: 62
+    xp_cost: 360000
+    cumulative_xp: 4371790
+  - level: 63
+    xp_cost: 390000
+    cumulative_xp: 4761790
+  - level: 64
+    xp_cost: 420000
+    cumulative_xp: 5181790
+  - level: 65
+    xp_cost: 470000
+    cumulative_xp: 5651790
+  - level: 66
+    xp_cost: 520000
+    cumulative_xp: 6171790
+  - level: 67
+    xp_cost: 570000
+    cumulative_xp: 6741790
+  - level: 68
+    xp_cost: 620000
+    cumulative_xp: 7361790
+  - level: 69
+    xp_cost: 670000
+    cumulative_xp: 8031790
+  - level: 70
+    xp_cost: 770000
+    cumulative_xp: 8801790
+  - level: 71
+    xp_cost: 870000
+    cumulative_xp: 9671790
+  - level: 72
+    xp_cost: 970000
+    cumulative_xp: 10641790
+  - level: 73
+    xp_cost: 1000000
+    cumulative_xp: 11641790
+  - level: 74
+    xp_cost: 1100000
+    cumulative_xp: 12741790
+  - level: 75
+    xp_cost: 1300000
+    cumulative_xp: 14041790
+  - level: 76
+    xp_cost: 1500000
+    cumulative_xp: 15541790
+  - level: 77
+    xp_cost: 1700000
+    cumulative_xp: 17241790
+  - level: 78
+    xp_cost: 1900000
+    cumulative_xp: 19141790
+  - level: 79
+    xp_cost: 2100000
+    cumulative_xp: 21241790
+  - level: 80
+    xp_cost: 2400000
+    cumulative_xp: 23641790
