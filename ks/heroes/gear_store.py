@@ -16,7 +16,9 @@ _PRESERVE_IF_NONE: frozenset[str] = frozenset({
 })
 
 # Fields never overwritten by rescan unless the caller explicitly opts in.
-_LOCKED_UNLESS_OVERWRITE: frozenset[str] = frozenset({"enhancement_level", "mastery_level"})
+_LOCKED_UNLESS_OVERWRITE: frozenset[str] = frozenset(
+    {"enhancement_level", "mastery_level", "rarity"}
+)
 
 
 def _merge_preserved(
@@ -26,17 +28,20 @@ def _merge_preserved(
 ) -> GearRecord:
     """Return incoming with locked/preserved fields filled from prev.
 
-    Locked fields (enhancement_level, mastery_level) always keep the prior
-    value unless the caller explicitly includes them in ``overwrite``.
-    Other _PRESERVE_IF_NONE fields are filled only when incoming is None.
+    Locked fields always keep the prior value unless listed in ``overwrite``.
+    When a field is in ``overwrite``, the incoming value wins — including
+    explicit ``None`` (UI clear). Other ``_PRESERVE_IF_NONE`` fields fill only
+    when incoming is None.
     """
     updates: dict[str, object] = {}
     for field in _PRESERVE_IF_NONE:
-        if field in _LOCKED_UNLESS_OVERWRITE and field not in overwrite:
+        if field in overwrite:
+            continue
+        if field in _LOCKED_UNLESS_OVERWRITE:
             prev_val = getattr(prev, field)
             if prev_val is not None:
                 updates[field] = prev_val
-                continue
+            continue
         incoming_val = getattr(incoming, field)
         if incoming_val is None:
             prev_val = getattr(prev, field)
