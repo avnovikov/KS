@@ -14,8 +14,12 @@ from fastapi.testclient import TestClient  # noqa: E402
 from ks.heroes.gear_models import GearRecord  # noqa: E402
 from ks.heroes.gear_store import GearStore  # noqa: E402
 from ks.heroes.models import HeroRecord  # noqa: E402
+from ks.heroes.optimize.troops import load_troops_config  # noqa: E402
 from ks.heroes.store import HeroStore  # noqa: E402
 from ks.heroes.ui.app import create_app  # noqa: E402
+from ks.heroes.ui.troop_store import TroopStore  # noqa: E402
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 SHELL_PAGES = (
     "/inventory/gear",
@@ -73,6 +77,24 @@ def _seeded_client(tmp_path: Path) -> TestClient:
         )
     )
     return TestClient(create_app(gear_dir, heroes_dir=heroes_dir))
+
+
+@pytest.fixture
+def repo_troops() -> Path:
+    return REPO_ROOT / "config" / "troops.yaml"
+
+
+# Names present in config/hero_catalog.yaml — a roster of these is enough
+# for recommend()/recommend_all_modes() to find a feasible sword/bear lineup,
+# so build_event_utility()/run_optimize_bundle() actually run the ILP instead
+# of erroring out before ever touching the troops file.
+_CATALOG_HEROES = ("Helga", "Howard", "Jabel", "Chenko", "Saul", "Gordon", "Diana")
+
+
+def _seed_catalog_heroes(heroes_dir: Path) -> None:
+    store = HeroStore(heroes_dir)
+    for name in _CATALOG_HEROES:
+        store.upsert(HeroRecord(name=name, stars=3, power=300_000))
 
 
 # --- routing -------------------------------------------------------------
@@ -301,3 +323,200 @@ def test_inventory_heroes_renders_roster(tmp_path: Path) -> None:
     assert "hero-name-link" in r.text
     assert "hero-detail-modal" in r.text
     assert "Rescan from OCR" in r.text
+
+
+# --- TroopStore ------------------------------------------------------------
+
+
+def test_troop_store_seeds_and_roundtrips(tmp_path: Path, repo_troops: Path) -> None:
+    dest = tmp_path / "troops.yaml"
+    store = TroopStore(dest, seed_from=repo_troops)
+    store.ensure_exists()
+    raw = store.load_raw()
+    assert "march_capacity" in raw
+    raw["march_capacity"] = 90000
+    saved = store.save_raw(raw)
+    assert saved["march_capacity"] == 90000
+    cfg = load_troops_config(dest)
+    assert cfg.march_capacity == 90000
+
+
+def test_troop_store_ensure_exists_does_not_clobber_edits(
+    tmp_path: Path, repo_troops: Path
+) -> None:
+    dest = tmp_path / "troops.yaml"
+    store = TroopStore(dest, seed_from=repo_troops)
+    store.ensure_exists()
+    edited = store.load_raw()
+    edited["march_capacity"] = 12345
+    store.save_raw(edited)
+
+    store.ensure_exists()  # file already exists — must be a no-op, not re-seed
+
+    assert store.load_raw()["march_capacity"] == 12345
+
+
+def test_troop_store_save_raw_rejects_missing_type_key(
+    tmp_path: Path, repo_troops: Path
+) -> None:
+    dest = tmp_path / "troops.yaml"
+    store = TroopStore(dest, seed_from=repo_troops)
+    store.ensure_exists()
+    with pytest.raises(ValueError, match="archers"):
+        store.save_raw({"march_capacity": 100, "infantry": 0, "cavalry": 0})
+
+
+def test_troop_store_save_raw_preserves_truegold_which_validation_ignores(
+    tmp_path: Path, repo_troops: Path
+) -> None:
+    """truegold is not part of TroopsConfig, so troops_config_from_dict never
+    looks at it — but the store must still round-trip it faithfully since the
+    optimisers read it back out of the raw YAML separately.
+    """
+    dest = tmp_path / "troops.yaml"
+    store = TroopStore(dest, seed_from=repo_troops)
+    store.ensure_exists()
+    raw = store.load_raw()
+    raw["truegold"] = 4
+    store.save_raw(raw)
+    assert store.load_raw()["truegold"] == 4
+
+
+# --- /api/troops -------------------------------------------------------
+
+
+def test_put_troops_rejects_negative(tmp_path: Path) -> None:
+    c = _client(tmp_path, with_gear=False)
+    body = {
+        "march_capacity": 80280,
+        "truegold": 0,
+        "infantry": {"1": -5},
+        "cavalry": 0,
+        "archers": 0,
+    }
+    r = c.put("/api/troops", json=body)
+    assert r.status_code == 422
+    assert "infantry" in r.json()["detail"]
+
+
+def test_get_troops_returns_seeded_raw_and_totals(tmp_path: Path) -> None:
+    c = _client(tmp_path, with_gear=False)
+    r = c.get("/api/troops")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["troops"]["march_capacity"] == 80280
+    assert body["troops"]["truegold"] == 0
+    assert body["totals"] == {
+        "march_capacity": 80280,
+        "infantry": 33858,
+        "cavalry": 27924,
+        "archers": 29386,
+    }
+
+
+def test_put_troops_persists_and_get_reflects_update(tmp_path: Path) -> None:
+    c = _client(tmp_path, with_gear=False)
+    body = {
+        "march_capacity": 90000,
+        "truegold": 3,
+        "infantry": {"1": 10},
+        "cavalry": 0,
+        "archers": 0,
+    }
+    r = c.put("/api/troops", json=body)
+    assert r.status_code == 200
+    saved = r.json()
+    assert saved["troops"]["march_capacity"] == 90000
+    assert saved["troops"]["truegold"] == 3
+    assert saved["totals"]["infantry"] == 10
+
+    again = c.get("/api/troops").json()
+    assert again["troops"]["truegold"] == 3
+    assert again["totals"]["march_capacity"] == 90000
+
+
+def test_troops_file_lives_in_heroes_dir_when_both_configured(tmp_path: Path) -> None:
+    c = _client(tmp_path)  # both gear and heroes configured
+    assert c.get("/api/troops").status_code == 200
+    assert (tmp_path / "heroes" / "troops.yaml").is_file()
+    assert not (tmp_path / "gear" / "troops.yaml").exists()
+
+
+def test_troops_file_lives_in_gear_dir_when_heroes_not_configured(
+    tmp_path: Path,
+) -> None:
+    c = _client(tmp_path, with_heroes=False)
+    assert c.get("/api/troops").status_code == 200
+    assert (tmp_path / "gear" / "troops.yaml").is_file()
+
+
+# --- optimisers read the edited troops copy, not config/troops.yaml -------
+
+
+def test_optimize_api_uses_edited_troops_not_repo_file(tmp_path: Path) -> None:
+    """Regression for the two-read truegold bug: build_event_utility/
+    _event_bundle read truegold via a *second*, separate yaml.safe_load of
+    the troops file. If that second read stayed hardcoded to the repo's
+    config/troops.yaml, editing truegold through the API would silently have
+    no effect on the returned score even though counts were wired correctly.
+    """
+    heroes_dir = tmp_path / "heroes"
+    heroes_dir.mkdir()
+    _seed_catalog_heroes(heroes_dir)
+    c = TestClient(create_app(heroes_dir=heroes_dir))
+
+    baseline = c.get("/api/optimize").json()
+    baseline_score = baseline["sword"]["modes"]["garrison"]["expected_personal_points"]
+    assert baseline_score > 0
+
+    troops = c.get("/api/troops").json()["troops"]
+    assert troops["truegold"] == 0  # seeded from config/troops.yaml
+    troops["truegold"] = 5
+    assert c.put("/api/troops", json=troops).status_code == 200
+
+    updated = c.get("/api/optimize").json()
+    updated_score = updated["sword"]["modes"]["garrison"]["expected_personal_points"]
+
+    assert updated_score != baseline_score
+
+
+def test_gear_xp_api_uses_edited_troops_not_repo_file(tmp_path: Path) -> None:
+    heroes_dir = tmp_path / "heroes"
+    heroes_dir.mkdir()
+    _seed_catalog_heroes(heroes_dir)
+    gear_dir = tmp_path / "gear"
+    gear_dir.mkdir()
+    GearStore(gear_dir).upsert(
+        GearRecord(
+            piece_id="p0",
+            name="Test Helm",
+            troop_type="infantry",
+            slot="helmet",
+            rarity="mythic",
+            enhancement_level=0,
+            power=1000,
+        )
+    )
+    c = TestClient(create_app(gear_dir, heroes_dir=heroes_dir))
+
+    fodder = {
+        "event": "swordland",
+        "grey": 0,
+        "green": 0,
+        "blue": 0,
+        "purple": 0,
+        "part_100": 0,
+    }
+    baseline = c.post("/api/optimize/gear-xp", json=fodder)
+    assert baseline.status_code == 200, baseline.text
+    baseline_utility = baseline.json()["baseline_utility"]
+
+    troops = c.get("/api/troops").json()["troops"]
+    troops["truegold"] = 5
+    assert c.put("/api/troops", json=troops).status_code == 200
+
+    updated = c.post("/api/optimize/gear-xp", json=fodder)
+    assert updated.status_code == 200, updated.text
+    updated_utility = updated.json()["baseline_utility"]
+
+    assert updated_utility != baseline_utility

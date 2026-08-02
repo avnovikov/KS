@@ -15,6 +15,7 @@ from ks.heroes.gear_config import DEFAULT_GEAR_CONFIG
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.gear_store import GearStore
 from ks.heroes.models import HeroRecord
+from ks.heroes.optimize.troops import troops_config_from_dict
 from ks.heroes.store import HeroStore
 from ks.heroes.ui.hero_icons import ensure_all_hero_icons
 from ks.heroes.ui.hero_power import scale_power_for_star_change
@@ -22,10 +23,25 @@ from ks.heroes.ui.heroes_rescan import rescan_heroes_from_ocr
 from ks.heroes.ui.icons import ensure_all_icons
 from ks.heroes.ui.power import compute_gear_power
 from ks.heroes.ui.rescan import rescan_gear_from_ocr
+from ks.heroes.ui.troop_store import TroopStore
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 _STARS_RANGE = range(0, 6)
 _PELLETS_RANGE = range(0, 6)
+
+
+def _troop_totals(raw: dict[str, Any]) -> dict[str, int]:
+    """Type/march-capacity totals for the troops API — computed via the same
+    validator save_raw() uses, so totals and validation never disagree.
+    """
+    cfg = troops_config_from_dict(raw)
+    return {
+        "march_capacity": cfg.march_capacity,
+        "infantry": cfg.infantry,
+        "cavalry": cfg.cavalry,
+        "archers": cfg.archers,
+    }
 
 
 def inventory_revision(dir_path: Path, filename: str) -> str:
@@ -225,6 +241,17 @@ def create_app(
     hero_store = (
         HeroStore(resolved_heroes) if resolved_heroes is not None else None
     )
+    # Troops live alongside heroes when both halves are configured — heroes
+    # is what the optimisers actually consume troops for — else alongside
+    # gear. One of the two is always set (checked above), so this is never
+    # None; /inventory/troops and /api/troops stay ungated for the same
+    # reason.
+    troops_dir = resolved_heroes if resolved_heroes is not None else resolved_gear
+    troop_store = TroopStore(
+        troops_dir / "troops.yaml",
+        seed_from=REPO_ROOT / "config" / "troops.yaml",
+    )
+    troop_store.ensure_exists()
     gear_config_path = (gear_config or DEFAULT_GEAR_CONFIG).expanduser().resolve()
     heroes_config_path = (
         (heroes_config or DEFAULT_HEROES_CONFIG).expanduser().resolve()
@@ -242,6 +269,7 @@ def create_app(
     app.state.gear_config = gear_config_path
     app.state.heroes_config = heroes_config_path
     app.state.serial = serial
+    app.state.troops_path = troop_store.path
     static_dir = Path(__file__).resolve().parent / "static"
     if static_dir.is_dir():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
@@ -612,6 +640,25 @@ def create_app(
             ],
         }
 
+    @app.get("/api/troops")
+    def api_get_troops() -> dict[str, Any]:
+        raw = troop_store.load_raw()
+        return {"troops": raw, "totals": _troop_totals(raw)}
+
+    @app.put("/api/troops")
+    async def api_put_troops(request: Request) -> dict[str, Any]:
+        try:
+            raw = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="JSON body required") from exc
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="JSON object required")
+        try:
+            saved = troop_store.save_raw(raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"troops": saved, "totals": _troop_totals(saved)}
+
     @app.get("/api/optimize")
     def api_optimize() -> dict[str, Any]:
         """Sword/Bear all modes + Arena attack/defense from current inventory."""
@@ -639,7 +686,9 @@ def create_app(
                     }
                 except Exception as exc:  # noqa: BLE001 — optimize without icons
                     icon_warning = f"gear icons unavailable: {exc}"
-        bundle = run_optimize_bundle(heroes, gear=gear_pieces)
+        bundle = run_optimize_bundle(
+            heroes, gear=gear_pieces, troops_path=app.state.troops_path
+        )
         if icon_by_id:
             attach_gear_icon_urls(bundle, icon_by_id)
         if icon_warning:
@@ -694,7 +743,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="gear inventory is empty")
         try:
             utility_fn = build_event_utility(
-                event, heroes, mode=mode_s
+                event, heroes, mode=mode_s, troops_path=app.state.troops_path
             )
             result = allocate_fodder_xp(
                 gear_pieces,
