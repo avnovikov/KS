@@ -71,14 +71,75 @@ class OcrRegions:
     stars: OcrBox | None = None
 
 
+# Canonical skill-layout keys → expected slot counts (calibrated 2026-08-02).
+SKILL_SLOT_COUNTS: dict[str, int] = {
+    "rare": 4,
+    "epic": 5,
+    "legendary": 6,
+}
+
+# OCR / UI / color aliases → canonical skill-layout key.
+_SKILL_RARITY_ALIASES: dict[str, str] = {
+    "rare": "rare",
+    "blue": "rare",
+    "r": "rare",
+    "epic": "epic",
+    "purple": "epic",
+    "sr": "epic",
+    "legendary": "legendary",
+    "mythic": "legendary",
+    "gold": "legendary",
+    "yellow": "legendary",
+    "orange": "legendary",
+    "ssr": "legendary",
+    "ur": "legendary",
+}
+
+
 @dataclass(frozen=True)
 class HeroesConfig:
     adb_serial: str | None
     delays: DelaysConfig
     roster: RosterConfig
     nav: NavConfig
-    skill_slots: tuple[TapPoint, ...]
+    skill_slots_by_rarity: dict[str, tuple[TapPoint, ...]]
     ocr: OcrRegions
+
+    @property
+    def skill_slots(self) -> tuple[TapPoint, ...]:
+        """Legendary (6-slot) map — kept for callers that need a full grid."""
+        return self.skill_slots_by_rarity["legendary"]
+
+    def skill_slots_for_rarity(self, rarity: str | None) -> tuple[TapPoint, ...]:
+        """Tap points for this hero's rarity; unknown → legendary with full grid."""
+        key = normalize_skill_rarity(rarity)
+        if key is None:
+            return self.skill_slots_by_rarity["legendary"]
+        slots = self.skill_slots_by_rarity.get(key)
+        if slots is None:
+            raise ValueError(
+                f"no skill slot map for rarity {key!r}; "
+                f"configured={sorted(self.skill_slots_by_rarity)}"
+            )
+        return slots
+
+
+def normalize_skill_rarity(rarity: str | None) -> str | None:
+    """Map OCR/UI rarity labels to rare|epic|legendary, or None if unknown."""
+    if rarity is None:
+        return None
+    key = str(rarity).strip().lower()
+    if not key:
+        return None
+    return _SKILL_RARITY_ALIASES.get(key)
+
+
+def expected_skill_count(rarity: str | None) -> int | None:
+    """Expected skill slots for rarity, or None when rarity is unknown."""
+    key = normalize_skill_rarity(rarity)
+    if key is None:
+        return None
+    return SKILL_SLOT_COUNTS[key]
 
 
 def _tap(raw: Any, *, label: str) -> TapPoint:
@@ -171,16 +232,51 @@ def _parse_nav(raw: dict[str, Any]) -> NavConfig:
     )
 
 
-def _parse_skill_slots(raw: dict[str, Any]) -> tuple[TapPoint, ...]:
+def _parse_slot_list(slots_raw: Any, *, label: str) -> tuple[TapPoint, ...]:
+    if not isinstance(slots_raw, list) or len(slots_raw) < 1:
+        raise ValueError(f"{label} must be a non-empty list")
+    return tuple(_tap(s, label=f"{label}[{i}]") for i, s in enumerate(slots_raw))
+
+
+def _parse_skill_slots_by_rarity(raw: dict[str, Any]) -> dict[str, tuple[TapPoint, ...]]:
+    """Load per-rarity tap maps; legacy ``skills.slots`` becomes legendary only."""
     skills_raw = raw.get("skills") or {}
     if not isinstance(skills_raw, dict):
         raise ValueError("skills must be a mapping")
-    slots_raw = skills_raw.get("slots") or []
-    if not isinstance(slots_raw, list) or len(slots_raw) < 1:
-        raise ValueError("skills.slots must be a non-empty list")
-    return tuple(
-        _tap(s, label=f"skills.slots[{i}]") for i, s in enumerate(slots_raw)
-    )
+
+    by_rarity_raw = skills_raw.get("by_rarity")
+    if by_rarity_raw is not None:
+        if not isinstance(by_rarity_raw, dict):
+            raise ValueError("skills.by_rarity must be a mapping")
+        parsed: dict[str, tuple[TapPoint, ...]] = {}
+        for rarity_key, expected in SKILL_SLOT_COUNTS.items():
+            slots_raw = by_rarity_raw.get(rarity_key)
+            if slots_raw is None:
+                raise ValueError(f"skills.by_rarity.{rarity_key} is required")
+            slots = _parse_slot_list(
+                slots_raw, label=f"skills.by_rarity.{rarity_key}"
+            )
+            if len(slots) != expected:
+                raise ValueError(
+                    f"skills.by_rarity.{rarity_key} must have {expected} taps; "
+                    f"got {len(slots)}"
+                )
+            parsed[rarity_key] = slots
+        return parsed
+
+    # Backward-compat: single 6-slot list → legendary; derive rare/epic subsets.
+    slots = _parse_slot_list(skills_raw.get("slots"), label="skills.slots")
+    if len(slots) != 6:
+        raise ValueError(
+            f"legacy skills.slots must have 6 taps (or use skills.by_rarity); "
+            f"got {len(slots)}"
+        )
+    # Layout: L0,L1,L2,R0,R1,R2 — rare skips middles; epic skips middle-right.
+    return {
+        "rare": (slots[0], slots[2], slots[3], slots[5]),
+        "epic": (slots[0], slots[1], slots[2], slots[3], slots[5]),
+        "legendary": slots,
+    }
 
 
 def _parse_ocr_regions(raw: dict[str, Any]) -> OcrRegions:
@@ -228,7 +324,7 @@ def load_heroes_config(path: Path | None = None) -> HeroesConfig:
         delays=_parse_delays(raw),
         roster=_parse_roster(raw),
         nav=_parse_nav(raw),
-        skill_slots=_parse_skill_slots(raw),
+        skill_slots_by_rarity=_parse_skill_slots_by_rarity(raw),
         ocr=_parse_ocr_regions(raw),
     )
 
@@ -268,14 +364,30 @@ def default_heroes_yaml_dict() -> dict[str, Any]:
             "stats_list_button": {"x": 980, "y": 1680},
         },
         "skills": {
-            "slots": [
-                {"x": 160, "y": 520},
-                {"x": 160, "y": 720},
-                {"x": 160, "y": 920},
-                {"x": 920, "y": 520},
-                {"x": 920, "y": 720},
-                {"x": 920, "y": 920},
-            ]
+            # Calibrated 2026-08-02 on BlueStacks 1080×1920 (Seth/Gordon/Jabel).
+            "by_rarity": {
+                "rare": [
+                    {"x": 160, "y": 440},
+                    {"x": 160, "y": 860},
+                    {"x": 920, "y": 440},
+                    {"x": 920, "y": 860},
+                ],
+                "epic": [
+                    {"x": 160, "y": 440},
+                    {"x": 160, "y": 680},
+                    {"x": 160, "y": 860},
+                    {"x": 920, "y": 440},
+                    {"x": 920, "y": 860},
+                ],
+                "legendary": [
+                    {"x": 160, "y": 440},
+                    {"x": 160, "y": 680},
+                    {"x": 160, "y": 860},
+                    {"x": 920, "y": 440},
+                    {"x": 920, "y": 680},
+                    {"x": 920, "y": 860},
+                ],
+            }
         },
         "ocr": {
             "name": {"x": 300, "y": 90, "w": 480, "h": 70},

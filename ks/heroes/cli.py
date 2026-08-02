@@ -479,7 +479,12 @@ def _cmd_collect(args: argparse.Namespace) -> int:
         print("heroes collect dry-run")
         print(f"  config: {args.config}")
         print(f"  roster cells: {len(cfg.roster.cells)}")
-        print(f"  skill slots: {len(cfg.skill_slots)}")
+        by = cfg.skill_slots_by_rarity
+        print(
+            "  skill slots: "
+            f"rare={len(by['rare'])} epic={len(by['epic'])} "
+            f"legendary={len(by['legendary'])}"
+        )
         print(f"  max_pages: {cfg.roster.max_pages}")
         print(f"  adb serial: {args.serial or cfg.adb_serial or '(default device)'}")
         return 0

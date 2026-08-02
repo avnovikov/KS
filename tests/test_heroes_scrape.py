@@ -39,7 +39,8 @@ def test_scrape_hero_tap_order_and_fields():
             return "Hero Attack 1,619\nExpedition\nCavalry Attack +101.37%"
         if box == cfg.ocr.skill_panel.as_tuple():
             # First skill slot returns content; later slots repeat → skipped
-            if len([t for t in device.taps if t == (cfg.skill_slots[0].x, cfg.skill_slots[0].y)]) <= 1:
+            first = cfg.skill_slots_for_rarity("SSR")[0]
+            if len([t for t in device.taps if t == (first.x, first.y)]) <= 1:
                 return "Rally Flag Lv. 3\nDescription long enough here.\n8%/16%/24%"
             return "Rally Flag Lv. 3\nDescription long enough here.\n8%/16%/24%"
         return ""
@@ -72,7 +73,9 @@ def test_scrape_hero_tap_order_and_fields():
     assert device.taps[0] == list_btn
     assert device.taps[1] == list_btn
     assert device.taps[2] == skills_tab
-    for i, slot in enumerate(cfg.skill_slots):
+    legendary_slots = cfg.skill_slots_for_rarity("SSR")
+    assert len(legendary_slots) == 6
+    for i, slot in enumerate(legendary_slots):
         assert device.taps[3 + i] == (slot.x, slot.y)
 
 

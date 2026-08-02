@@ -8,7 +8,7 @@ from typing import Any, Callable, NamedTuple, Protocol
 import cv2
 import numpy as np
 
-from ks.heroes.config import HeroesConfig, OcrBox
+from ks.heroes.config import HeroesConfig, OcrBox, expected_skill_count
 from ks.heroes.errors import DetailOpenError
 from ks.heroes.models import HeroRecord, SkillRecord
 from ks.heroes.name_ocr import resolve_hero_name
@@ -295,15 +295,21 @@ def _capture_stats_panel(
 
 
 def _capture_skills(
-    device: DeviceProtocol, cfg: HeroesConfig, ocr: OcrFn, sleep: Callable[[float], None]
+    device: DeviceProtocol,
+    cfg: HeroesConfig,
+    ocr: OcrFn,
+    sleep: Callable[[float], None],
+    *,
+    rarity: str | None,
 ) -> list[SkillRecord]:
-    """Open the Skills tab and OCR each configured skill slot."""
+    """Open the Skills tab and OCR each rarity-specific skill slot."""
     device.tap(cfg.nav.skills_tab.x, cfg.nav.skills_tab.y)
     _sleep_ms(cfg.delays.after_tab_ms, sleep_fn=sleep)
 
+    slots = cfg.skill_slots_for_rarity(rarity)
     skills: list[SkillRecord] = []
     previous_panel = ""
-    for slot, point in enumerate(cfg.skill_slots):
+    for slot, point in enumerate(slots):
         device.tap(point.x, point.y)
         _sleep_ms(cfg.delays.after_skill_ms, sleep_fn=sleep)
         skill_img = _decode_screencap(device.screencap())
@@ -316,6 +322,13 @@ def _capture_skills(
         )
         skills.append(
             parse_skill_panel(panel_text, slot=slot, current_bonus=current_bonus)
+        )
+
+    expected = expected_skill_count(rarity)
+    if expected is not None and len(skills) != expected:
+        print(
+            f"warn: skill count {len(skills)} != expected {expected} "
+            f"for rarity={rarity!r} (tapped {len(slots)} slots)"
         )
     return skills
 
@@ -380,7 +393,7 @@ def scrape_hero(
             print(f"warn: Power-i capture failed for {identity.name!r}: {exc}")
 
     stats = _capture_stats_panel(device, cfg, ocr, sleep)
-    skills = _capture_skills(device, cfg, ocr, sleep)
+    skills = _capture_skills(device, cfg, ocr, sleep, rarity=attrs.rarity)
 
     scraped_at = now().isoformat().replace("+00:00", "Z")
     return HeroRecord(
