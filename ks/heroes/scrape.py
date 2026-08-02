@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, NamedTuple, Protocol
+from typing import Any, Callable, NamedTuple, Protocol
 
 import cv2
 import numpy as np
@@ -331,6 +331,7 @@ def scrape_hero(
     now_fn: Callable[[], datetime] | None = None,
     names_dir: Path | None = None,
     keep_name: str | None = None,
+    on_power_breakdown: Callable[[Any], None] | None = None,
 ) -> HeroRecord | None:
     """Scrape the currently open hero detail screen.
 
@@ -365,6 +366,19 @@ def scrape_hero(
         return None
 
     attrs = _scrape_secondary_attributes(img, cfg, ocr, ocr_fn, identity.name, identity.rarity_ui)
+
+    # Power-i while still on Stats chrome (before stats popup / Skills tab).
+    # Live path only — injected ocr_fn tests skip ADB tooltip capture.
+    if on_power_breakdown is not None and ocr_fn is None:
+        try:
+            from ks.heroes.power_i_capture import capture_power_i_breakdown
+
+            breakdown = capture_power_i_breakdown(device, cfg, sleep_fn=sleep)
+            if breakdown is not None:
+                on_power_breakdown(breakdown)
+        except Exception as exc:  # noqa: BLE001 — rescan must continue
+            print(f"warn: Power-i capture failed for {identity.name!r}: {exc}")
+
     stats = _capture_stats_panel(device, cfg, ocr, sleep)
     skills = _capture_skills(device, cfg, ocr, sleep)
 

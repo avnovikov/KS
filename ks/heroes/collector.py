@@ -207,6 +207,7 @@ def _scan_roster_page(
     on_progress: Callable[[str, object], None] | None,
     rematch_name_fn: Callable[..., str | None] | None,
     max_consecutive_duplicates: int,
+    after_upsert: Callable[[HeroRecord], None] | None = None,
 ) -> int:
     """Scan every cell on one roster page; upsert new heroes into ``collected``.
 
@@ -216,7 +217,15 @@ def _scan_roster_page(
     consecutive_dups = 0
     for index, cell in enumerate(cfg.roster.cells):
         hero, opened_detail = _open_and_scrape_cell(
-            device, cfg, store, scrape, ocr_fn, sleep, page=page, index=index, cell=cell
+            device,
+            cfg,
+            store,
+            scrape,
+            ocr_fn,
+            sleep,
+            page=page,
+            index=index,
+            cell=cell,
         )
 
         if hero is None:
@@ -260,11 +269,26 @@ def _scan_roster_page(
         consecutive_dups = 0
         seen.add(hero.name)
         store.upsert(hero)
-        collected.append(hero)
+        # Prefer store-merged record (preserved level) for history covariates.
+        stored = next(
+            (h for h in store.all_heroes() if h.name == hero.name),
+            hero,
+        )
+        collected.append(stored)
         page_new += 1
-        _log_collected_hero(hero, len(collected))
+        _log_collected_hero(stored, len(collected))
+        if after_upsert is not None:
+            after_upsert(stored)
         if on_progress is not None:
-            on_progress("hero", {"name": hero.name, "power": hero.power, "page": page, "index": index})
+            on_progress(
+                "hero",
+                {
+                    "name": stored.name,
+                    "power": stored.power,
+                    "page": page,
+                    "index": index,
+                },
+            )
 
     return page_new
 
@@ -280,8 +304,13 @@ def collect_heroes(
     on_progress: Callable[[str, object], None] | None = None,
     max_consecutive_duplicates: int = 3,
     rematch_name_fn: Callable[..., str | None] | None = None,
+    record_power_history: bool = True,
 ) -> list[HeroRecord]:
     """Walk the roster grid with paging; upsert each new hero into store.
+
+    When ``record_power_history`` is True (default), live scrapes also tap
+    Power-i and append lifetime observations under
+    ``{store.out_dir}/power_history/`` when covariates/buckets change.
 
     Emits progress events via on_progress(event_type, payload):
       "hero"      — new hero collected
@@ -289,11 +318,58 @@ def collect_heroes(
       "rematch"   — same name but different power → re-OCR to find true name
       "stopped"   — consecutive-duplicate cap triggered; cell loop broken
       "done"      — page scan finished
+      "power_history" — Power-i point appended (or skipped as unchanged)
     """
     sleep = sleep_fn or time.sleep
     scrape = scrape_fn or scrape_hero
     seen: set[str] = set()
     collected: list[HeroRecord] = []
+    history_dir = store.out_dir / "power_history"
+    last_breakdown: list = []
+    after_upsert: Callable[[HeroRecord], None] | None = None
+    if record_power_history and ocr_fn is None:
+        base_scrape = scrape
+
+        def _on_power_breakdown(breakdown) -> None:
+            last_breakdown.append(breakdown)
+
+        def scrape_with_power_i(*args, **kwargs):
+            # Reset so a missed Power-i cannot attach the previous hero's buckets.
+            last_breakdown.clear()
+            kwargs = {**kwargs, "on_power_breakdown": _on_power_breakdown}
+            return base_scrape(*args, **kwargs)
+
+        scrape = scrape_with_power_i
+
+        def _after_upsert(hero: HeroRecord) -> None:
+            if not last_breakdown:
+                return
+            from ks.heroes.power_history import record_breakdown_for_hero
+
+            breakdown = last_breakdown[0]
+            last_breakdown.clear()
+            try:
+                appended = record_breakdown_for_hero(history_dir, hero, breakdown)
+            except Exception as exc:  # noqa: BLE001
+                print(f"warn: power history write failed for {hero.name}: {exc}")
+                return
+            print(
+                f"power history {'append' if appended else 'unchanged'} {hero.name} "
+                f"L={hero.level} Plvl={breakdown.from_level}"
+            )
+            if on_progress is not None:
+                on_progress(
+                    "power_history",
+                    {
+                        "name": hero.name,
+                        "appended": appended,
+                        "from_level": breakdown.from_level,
+                        "from_stars": breakdown.from_stars,
+                        "from_skills": breakdown.from_skills,
+                    },
+                )
+
+        after_upsert = _after_upsert
 
     for page in range(cfg.roster.max_pages):
         page_new = _scan_roster_page(
@@ -309,6 +385,7 @@ def collect_heroes(
             on_progress=on_progress,
             rematch_name_fn=rematch_name_fn,
             max_consecutive_duplicates=max_consecutive_duplicates,
+            after_upsert=after_upsert,
         )
 
         if page_new == 0:
