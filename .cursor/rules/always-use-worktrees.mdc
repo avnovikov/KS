@@ -1,0 +1,14 @@
+---
+description: Always develop in an isolated git worktree — never commit feature work on the primary checkout
+alwaysApply: true
+---
+
+# Always use git worktrees
+
+- **Mandatory:** Start every feature, bug fix, or multi-file change in an isolated git worktree under `.worktrees/` (already gitignored). Do not implement on the primary workspace checkout.
+- **Branch:** Create a dedicated branch for the worktree, e.g. `feature/…` or `bug/…`, matching existing naming.
+- **Path:** Prefer `.worktrees/<kebab-branch-or-topic>/` (example: `.worktrees/feature-hero-levels-optimizer`).
+- **Before coding:** If not already inside a linked worktree for this task, create one (`git worktree add -b <branch> .worktrees/<dir> <base>`) or use the platform worktree tool; then work only there.
+- **One concern per worktree:** Do not pile unrelated features into an existing worktree; cut a new one (as with hero-levels vs inventory UI).
+- **Exceptions:** Trivial single-file doc typo on an already-open worktree branch is fine; never use the primary checkout as the default place to land feature commits.
+- **Skill:** Follow `using-git-worktrees` when starting implementation plans or new feature work.
