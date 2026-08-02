@@ -1,3 +1,7 @@
+import json
+
+import pytest
+
 from ks.heroes.models import HeroRecord, SkillRecord
 from ks.heroes.optimize.combat_formation import load_combat_roles
 from ks.heroes.optimize.conquest import (
@@ -112,3 +116,24 @@ def test_higher_ultimate_preferred_when_otherwise_equal() -> None:
     result = optimize_conquest(heroes, catalog, roles)
     front = {result.formation["F1"], result.formation["F2"]}
     assert "Howard" in front
+
+
+def test_cli_conquest_argparse_smoke(tmp_path: pytest.TempPathFactory) -> None:
+    """CLI parser accepts conquest subcommand with required --heroes flag."""
+    from ks.heroes.cli import build_parser
+
+    heroes_file = tmp_path / "heroes.json"
+    heroes_file.write_text(
+        json.dumps({"heroes": [h.to_dict() for h in _heroes()]}),
+        encoding="utf-8",
+    )
+    parser = build_parser()
+    args = parser.parse_args([
+        "conquest",
+        "--heroes", str(heroes_file),
+        "--out", str(tmp_path / "conquest_result.json"),
+    ])
+    assert args.command == "conquest"
+    assert args.heroes == heroes_file
+    assert args.roles.name == "conquest_roles.yaml"
+    assert args.gear is None
