@@ -285,11 +285,14 @@ function makePage(spec) {
 
   /* --- controllable clock ------------------------------------------------- */
 
+  /* The delay is kept, not just the callback: with it discarded, raising
+     DEBOUNCE_MS to 30 seconds left every check in this file passing, so the
+     400ms the brief specifies was asserted by nothing. */
   var pending = {};
   var nextTimer = 1;
-  globalThis.setTimeout = function (fn) {
+  globalThis.setTimeout = function (fn, delay) {
     var id = nextTimer++;
-    pending[id] = fn;
+    pending[id] = { fn: fn, delay: delay };
     return id;
   };
   globalThis.clearTimeout = function (id) {
@@ -484,11 +487,17 @@ function makePage(spec) {
     runTimers: function () {
       var ids = Object.keys(pending);
       ids.forEach(function (id) {
-        var fn = pending[id];
+        var timer = pending[id];
         delete pending[id];
-        fn();
+        timer.fn();
       });
       return ids.length;
+    },
+    /** Delays of every timer currently scheduled, in creation order. */
+    pendingDelays: function () {
+      return Object.keys(pending).map(function (id) {
+        return pending[id].delay;
+      });
     },
     replyWith: function (res) {
       nextResponse = res;
@@ -669,6 +678,13 @@ async function suiteAutoSave() {
     "typing schedules a save instead of sending one",
     d.calls.length === 0,
     "calls=" + d.calls.length
+  );
+  // Nothing has saved yet, so the debounce is the only timer outstanding.
+  record("debounce_delays", d.pendingDelays().join(","));
+  check(
+    "and schedules it at the 400ms the brief specifies",
+    d.pendingDelays().length === 1 && d.pendingDelays()[0] === 400,
+    d.pendingDelays().join(",")
   );
   d.runTimers();
   await settle();
@@ -934,6 +950,115 @@ async function suiteInFlight() {
     "a response landing mid-typing does not clobber the box",
     mastery.value === "5",
     mastery.value
+  );
+}
+
+/* A write the store refused. With no per-row Save button and no further blur
+   coming on a field the user has already left, the row itself is the only
+   lasting record that what is on screen is not what was stored. */
+async function suiteRejectedSave() {
+  var d = makePage(gearSpec());
+  boot(d);
+  await settle();
+
+  var enh = d.input("cell0", "enhancement_level");
+  d.replyWith({
+    ok: false,
+    status: 400,
+    statusText: "Bad Request",
+    json: function () {
+      return Promise.resolve({ detail: "enhancement_level must be 0..200; got 201" });
+    },
+  });
+  enh.value = "77";
+  enh.fire("blur");
+  await settle();
+
+  check(
+    "a rejected PATCH marks the row unsaved",
+    d.row("cell0").dataset.unsaved === "1",
+    String(d.row("cell0").dataset.unsaved)
+  );
+  check(
+    "and flags the box the user just left for assistive tech",
+    enh.getAttribute("aria-invalid") === "true",
+    String(enh.getAttribute("aria-invalid"))
+  );
+  check(
+    "the box keeps what the user typed rather than silently reverting",
+    enh.value === "77",
+    enh.value
+  );
+  record("rejected_row_state", String(d.row("cell0").dataset.unsaved));
+
+  // The toast is on a timer; the row mark must not be.
+  d.runTimers();
+  await settle();
+  check(
+    "the mark outlives the toast that carried the reason",
+    d.row("cell0").dataset.unsaved === "1",
+    String(d.row("cell0").dataset.unsaved)
+  );
+
+  // And it is findable afterwards, once the toast is long gone.
+  d.chip("attention").fire("click");
+  check(
+    "a row the server rejected shows up under Needs attention",
+    d.visibleIds().indexOf("cell0") !== -1,
+    d.visibleIds().join(",")
+  );
+  d.chip("all").fire("click");
+
+  // Retrying: the failed body must not have been recorded as saved, or the
+  // dedupe would swallow the retry.
+  var before = d.calls.length;
+  enh.value = "78";
+  enh.fire("blur");
+  await settle();
+  check(
+    "a later edit retries rather than being deduped against a body that never landed",
+    d.calls.length === before + 1,
+    "calls=+" + (d.calls.length - before)
+  );
+  check(
+    "a successful save clears the unsaved mark",
+    d.row("cell0").dataset.unsaved === undefined,
+    String(d.row("cell0").dataset.unsaved)
+  );
+  check(
+    "and drops the row back out of Needs attention",
+    !d.row("cell0").dataset.unsaved && !d.row("cell0").dataset.trust,
+    String(d.row("cell0").dataset.unsaved)
+  );
+
+  // A value the client refuses to send is the same divergence: nothing was
+  // written, and the box shows something the store does not hold.
+  var mastery = d.input("cell1", "mastery_level");
+  mastery.value = "99"; // max="20"
+  mastery.fire("blur");
+  await settle();
+  check(
+    "a client-side range error also marks the row unsaved",
+    d.row("cell1").dataset.unsaved === "1",
+    String(d.row("cell1").dataset.unsaved)
+  );
+  mastery.value = "3";
+  mastery.fire("input");
+  check(
+    "typing clears the per-box nag straight away",
+    mastery.classes.invalid === false
+  );
+  check(
+    "but the row still says it has not saved",
+    d.row("cell1").dataset.unsaved === "1",
+    String(d.row("cell1").dataset.unsaved)
+  );
+  d.runTimers();
+  await settle();
+  check(
+    "until the fix actually reaches the server",
+    d.row("cell1").dataset.unsaved === undefined,
+    String(d.row("cell1").dataset.unsaved)
   );
 }
 
@@ -1203,6 +1328,42 @@ async function suiteSorting() {
   );
   record("rarity_order", d.domOrder().join(","));
 
+  // Keyboard: a <th> has no built-in activation, so Enter/Space are wired by
+  // hand. Space must be prevented or the page scrolls under the user.
+  d.header("name").fire("click"); // ascending
+  var prevented = 0;
+  d.header("name").fire("keydown", {
+    key: "Enter",
+    preventDefault: function () {
+      prevented += 1;
+    },
+  });
+  check(
+    "Enter sorts a header from the keyboard",
+    d.header("name").getAttribute("aria-sort") === "descending",
+    String(d.header("name").getAttribute("aria-sort"))
+  );
+  d.header("name").fire("keydown", {
+    key: " ",
+    preventDefault: function () {
+      prevented += 1;
+    },
+  });
+  check(
+    "so does Space",
+    d.header("name").getAttribute("aria-sort") === "ascending",
+    String(d.header("name").getAttribute("aria-sort"))
+  );
+  check("and both suppress the browser's default", prevented === 2, String(prevented));
+  var order = d.domOrder().join(",");
+  d.header("name").fire("keydown", {
+    key: "Tab",
+    preventDefault: function () {
+      prevented += 1;
+    },
+  });
+  check("an unrelated key does nothing", d.domOrder().join(",") === order && prevented === 2);
+
   // An edit keeps the sortable column's key in step with the box.
   var enh = d.input("cell2", "enhancement_level");
   enh.value = "200";
@@ -1336,6 +1497,7 @@ async function suiteHeroesPage() {
   try {
     await suiteAutoSave();
     await suiteInFlight();
+    await suiteRejectedSave();
     await suiteTrust();
     await suiteMarkAllReviewed();
     await suiteIncompleteness();

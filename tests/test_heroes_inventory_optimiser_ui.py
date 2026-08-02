@@ -518,6 +518,41 @@ def test_troop_chips_are_derived_from_the_rows_actually_present(
     assert 'data-filter="troop:archers"' not in body
 
 
+def test_troop_chips_are_case_folded_before_de_duplication(
+    tmp_path: Path,
+) -> None:
+    """The chip's data-filter and the row's data-troop are both lowercased,
+    so OCR handing back "Cavalry" alongside "cavalry" would otherwise render
+    two chips that filter identically — and one of them would look broken
+    because both match the same rows."""
+    gear_dir = tmp_path / "gear"
+    gear_dir.mkdir()
+    store = GearStore(gear_dir)
+    store.upsert(GearRecord(piece_id="a", name="A", troop_type="Cavalry"))
+    store.upsert(GearRecord(piece_id="b", name="B", troop_type="cavalry"))
+    body = TestClient(create_app(gear_dir)).get("/inventory/gear").text
+    assert body.count('data-filter="troop:cavalry"') == 1
+    assert 'data-filter="troop:Cavalry"' not in body
+
+
+@pytest.mark.parametrize("path", ["/inventory/gear", "/inventory/heroes"])
+def test_sortable_headers_are_reachable_without_a_pointer(
+    tmp_path: Path, path: str
+) -> None:
+    """A bare `<th>` is not focusable and has no activation behaviour, so a
+    click-only sort header cannot be used from a keyboard at all. They keep
+    their columnheader role — `aria-sort` is only meaningful there, so
+    `role="button"` would be a downgrade — and gain `tabindex="0"`; Enter and
+    Space are wired in inventory.js and executed in
+    tests/test_heroes_inventory_js.py."""
+    body = _spreadsheet_client(tmp_path).get(path).text
+    headers = re.findall(r"<th[^>]*\bclass=\"sortable\"[^>]*>", body)
+    assert headers
+    for tag in headers:
+        assert 'tabindex="0"' in tag, tag
+        assert 'role="button"' not in tag, tag
+
+
 def test_incomplete_rows_are_marked_server_side_by_the_trust_predicate(
     tmp_path: Path,
 ) -> None:
@@ -669,6 +704,40 @@ def test_spreadsheet_styles_are_phone_first(tmp_path: Path) -> None:
 
     # Trust cues use the warn token, per the design's locked palette.
     assert "var(--warn)" in _css_rule_body(css, "tr[data-trust]")
+
+    # A rejected save is the one row state that must read as an error, and it
+    # has to out-rank the trust tint (a row can be both flagged and unsaved).
+    # Bound to the row rule specifically: the sticky-first companion rule
+    # below it also matches a bare "tr[data-unsaved]" substring and carries
+    # the same two tokens, so a looser needle would keep passing with the row
+    # rule deleted outright.
+    unsaved = _css_rule_body(css, ".data-table tbody tr[data-unsaved] > td")
+    assert "var(--err-tint)" in unsaved
+    assert "var(--err)" in unsaved
+    assert css.index("tr[data-trust]") < css.index("tr[data-unsaved]")
+    sticky_unsaved = _css_rule_body(
+        css, ".data-table.sticky-first tr[data-unsaved] > td:first-child"
+    )
+    assert "var(--err)" in sticky_unsaved  # marker survives sideways scroll
+
+    # Sortable headers are focusable, so they need the shared focus ring.
+    assert ".data-table th.sortable:focus-visible" in css
+
+
+@pytest.mark.parametrize("state", ["[data-trust]", "[data-unsaved]", ".row-saved"])
+def test_row_state_tints_out_specify_row_hover_rather_than_racing_it(
+    tmp_path: Path, state: str
+) -> None:
+    """`.data-table tbody tr:hover td` and `.data-table tbody tr<state> > td`
+    are both specificity (0,2,3): the row state wins only because it happens
+    to be declared later, which silently breaks the first time someone
+    reorders the file — and the symptom (a flagged row losing its tint under
+    the pointer, i.e. the row you are about to act on) is easy to miss.
+    Listing the `:hover` variant explicitly makes it (0,3,3), so it wins
+    outright.
+    """
+    css = _client(tmp_path).get("/static/app.css").text
+    assert f".data-table tbody tr{state}:hover > td" in css
 
 
 # --- trust diff helpers (Task 4) --------------------------------------------

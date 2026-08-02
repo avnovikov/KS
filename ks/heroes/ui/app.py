@@ -390,7 +390,12 @@ def create_app(
             mastery_required_ids={
                 p.piece_id for p in pieces if gear_mastery_required(p.rarity)
             },
-            troop_types=sorted({p.troop_type for p in pieces if p.troop_type}),
+            # Lowercased before de-duplication: the chip's data-filter and
+            # the row's data-troop are both `|lower`ed, so "Cavalry" and
+            # "cavalry" would otherwise render two chips filtering identically.
+            troop_types=sorted(
+                {p.troop_type.lower() for p in pieces if p.troop_type}
+            ),
         )
 
     @app.get("/inventory/heroes", response_class=HTMLResponse)
@@ -415,7 +420,9 @@ def create_app(
             incomplete_names={
                 h.name for h in heroes if hero_row_incomplete(h)
             },
-            troop_types=sorted({h.troop_type for h in heroes if h.troop_type}),
+            troop_types=sorted(
+                {h.troop_type.lower() for h in heroes if h.troop_type}
+            ),
         )
 
     @app.get("/inventory/troops", response_class=HTMLResponse)

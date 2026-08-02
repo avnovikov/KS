@@ -130,6 +130,16 @@ def test_inventory_js_runs_under_a_real_engine(js_run: dict) -> None:
     assert not _failures(js_run, ["harness ran to completion"])
 
 
+def test_the_debounce_is_actually_400ms(js_run: dict) -> None:
+    """The harness's fake clock used to discard `setTimeout`'s delay, so the
+    interval the brief specifies was asserted by nothing: raising
+    `DEBOUNCE_MS` to 30 seconds left every check green. The clock records the
+    delay now, and this pins the number on both sides — in JS, and here.
+    """
+    _assert_ran(js_run, ["and schedules it at the 400ms the brief specifies"])
+    assert js_run["data"]["debounce_delays"] == "400"
+
+
 def test_inventory_js_every_behavioural_check(js_run: dict) -> None:
     """Every check in the harness, reported together."""
     failures = _failures(js_run)
@@ -262,6 +272,62 @@ def test_concurrent_saves_coalesce_per_row_but_not_across_rows(
             "and the queue drains rather than looping",
             "a different row saves concurrently instead of queueing behind the first",
             "a response landing mid-typing does not clobber the box",
+        ],
+    )
+
+
+def test_a_rejected_save_leaves_a_mark_that_outlives_its_toast(
+    js_run: dict,
+) -> None:
+    """A failed write used to be reported only by a toast that clears itself
+    after ~6 seconds. The box kept the rejected value, the row looked normal,
+    `lastSavedBody` stayed stale, and `blur` never fires again on a field the
+    user has already left — so an edit could be lost with nothing on screen
+    saying so. Removing the per-row Save button is exactly what made that
+    dangerous: with a button, the user's attention was on the row when the
+    write failed.
+
+    The row now carries `data-unsaved` until a save for it actually succeeds,
+    joins the "Needs attention" filter so it stays findable, and the failed
+    body is not recorded as saved so a later edit really does retry. The
+    per-input flag still clears on the next keystroke — the page must not nag
+    while the user is fixing it — which is why the persistent half lives on
+    the row.
+    """
+    _assert_ran(
+        js_run,
+        [
+            "a rejected PATCH marks the row unsaved",
+            "and flags the box the user just left for assistive tech",
+            "the box keeps what the user typed rather than silently reverting",
+            "the mark outlives the toast that carried the reason",
+            "a row the server rejected shows up under Needs attention",
+            "a later edit retries rather than being deduped against a body that never landed",
+            "a successful save clears the unsaved mark",
+            "and drops the row back out of Needs attention",
+            "a client-side range error also marks the row unsaved",
+            "typing clears the per-box nag straight away",
+            "but the row still says it has not saved",
+            "until the fix actually reaches the server",
+        ],
+    )
+    assert js_run["data"]["rejected_row_state"] == "1"
+
+
+def test_sortable_headers_are_operable_from_the_keyboard(js_run: dict) -> None:
+    """A `<th>` has no built-in activation behaviour, so click-only headers
+    are unreachable without a pointer. They stay columnheaders rather than
+    becoming `role="button"` — `aria-sort` is only meaningful on a
+    columnheader — with `tabindex="0"` from the template and Enter/Space
+    wired here. Space is prevented, or activating a header scrolls the page.
+    """
+    _assert_ran(
+        js_run,
+        [
+            "Enter sorts a header from the keyboard",
+            "so does Space",
+            "and both suppress the browser's default",
+            "an unrelated key does nothing",
         ],
     )
 

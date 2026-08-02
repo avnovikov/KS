@@ -153,6 +153,24 @@
     return label + " must be a whole number, " + min + " or more";
   }
 
+  /** Mark the row as holding something the store does not.
+   *
+   *  This is the only lasting trace of a failed write. The toast carrying the
+   *  server's reason times out; the per-row Save button that used to keep the
+   *  user's attention on the row is gone; and `blur` will not fire again on a
+   *  field they have already left, so nothing retries by itself. Without this
+   *  the box would sit there showing a value the store never accepted.
+   *
+   *  Cleared only by a save for this row that actually succeeds — not by the
+   *  next keystroke, which is why it lives on the row rather than riding along
+   *  with markValidity()'s per-input flag (that one deliberately clears as
+   *  soon as the user starts fixing things, so the page never nags mid-typing).
+   */
+  function markRowUnsaved(state, origin) {
+    state.tr.dataset.unsaved = "1";
+    if (origin) markValidity(origin, false);
+  }
+
   /** Brief per-row confirmation. Auto-save fires constantly, so a toast on
    *  every success would bury the error toasts that actually need reading. */
   function flashSaved(state) {
@@ -337,6 +355,9 @@
       // otherwise the first one found, which may be a column they never
       // touched.
       var culprit = origin && bad.indexOf(origin) !== -1 ? origin : bad[0];
+      // Nothing was sent, so the row is out of step with the store just as
+      // surely as if the server had rejected it.
+      markRowUnsaved(state);
       toast(invalidMessage(culprit), false);
       return;
     }
@@ -379,10 +400,12 @@
       // the server's values into the boxes would clobber whatever the user
       // typed while this request was in the air.
       applyServerRow(state, data[PAYLOAD_KEY]);
+      delete state.tr.dataset.unsaved; // screen and store agree again
       refreshIncomplete(state);
       clearTrustFor(state.id);
       flashSaved(state);
     } catch (err) {
+      markRowUnsaved(state, origin);
       toast(String((err && err.message) || err), false);
     } finally {
       state.saving = false;
@@ -398,13 +421,19 @@
   var activeFilter = "all";
   var searchTerm = "";
 
-  /** "Needs attention" is the union of the two signals the user cares about:
-   *  a flag from the last rescan (session-scoped, cleared as rows are
-   *  reviewed) and an incompleteness the server computed from trust.py's own
-   *  predicate — the latter so the chip still means something on a plain page
-   *  load, long after any rescan payload is gone. */
+  /** "Needs attention" is the union of the signals the user cares about: a
+   *  flag from the last rescan (session-scoped, cleared as rows are
+   *  reviewed), an incompleteness the server computed from trust.py's own
+   *  predicate (so the chip still means something on a plain page load, long
+   *  after any rescan payload is gone), and a row whose last save was
+   *  rejected — which is how a failed write stays findable once its toast
+   *  has gone. */
   function needsAttention(state) {
-    return !!state.tr.dataset.trust || state.tr.dataset.incomplete === "1";
+    return (
+      !!state.tr.dataset.trust ||
+      state.tr.dataset.incomplete === "1" ||
+      state.tr.dataset.unsaved === "1"
+    );
   }
 
   function matches(state) {
@@ -585,10 +614,21 @@
   });
 
   headers.forEach(function (th) {
-    th.addEventListener("click", function () {
+    function toggleSort() {
       var key = th.dataset.sort;
       var dir = th.getAttribute("aria-sort") === "ascending" ? "desc" : "asc";
       sortTable(key, dir);
+    }
+    th.addEventListener("click", toggleSort);
+    // The template gives these tabindex="0"; a <th> has no built-in
+    // activation behaviour, so Enter/Space have to be wired by hand. They
+    // stay columnheaders rather than becoming role="button", because
+    // aria-sort is only meaningful on a columnheader.
+    th.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault(); // Space would otherwise scroll the page
+        toggleSort();
+      }
     });
   });
 

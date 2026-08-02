@@ -278,7 +278,10 @@ input[type="search"] {
 
 input:focus-visible,
 button:focus-visible,
-a:focus-visible {
+a:focus-visible,
+/* Sortable headers are keyboard-operable (tabindex="0" + Enter/Space), so
+   they need the same visible focus ring every other control gets. */
+.data-table th.sortable:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -653,10 +656,14 @@ table.data-table {
 
 /* Post-rescan trust cues: a --warn tint and hairline, per the locked
    palette. Advisory only — nothing here blocks the user from moving on.
-   Qualified with `.data-table tbody` to out-specify the row-hover rule
-   above, which would otherwise wash the tint off the row being pointed at —
-   i.e. exactly the row the user is about to check. */
-.data-table tbody tr[data-trust] > td {
+   `.data-table tbody tr…` alone only ties with the row-hover rule above at
+   (0,2,3) and would win on source order — a trap for whoever next moves a
+   block. The `:hover` variant is listed explicitly so the tint out-specifies
+   hover outright and stays on the row being pointed at, which is exactly the
+   row the user is about to check. Same pattern for every row-state rule
+   below. */
+.data-table tbody tr[data-trust] > td,
+.data-table tbody tr[data-trust]:hover > td {
   background: var(--warn-tint);
   border-bottom-color: var(--warn);
 }
@@ -669,9 +676,28 @@ table.data-table {
   box-shadow: inset 3px 0 0 var(--warn);
 }
 
+/* A PATCH the server rejected. The box still shows what the user typed while
+   the store holds something else, and removing the per-row Save button
+   removed the thing that used to make that visible — the toast carrying the
+   reason times out after a few seconds, and blur never fires again on a
+   field the user has already left. So the row says so until a save for it
+   actually succeeds. Declared after the trust cues on purpose: "this did not
+   save" outranks "worth a look". */
+.data-table tbody tr[data-unsaved] > td,
+.data-table tbody tr[data-unsaved]:hover > td {
+  background: var(--err-tint);
+  border-bottom-color: var(--err);
+}
+
+.data-table.sticky-first tr[data-unsaved] > td:first-child {
+  background: var(--err-tint);
+  box-shadow: inset 3px 0 0 var(--err);
+}
+
 /* The design's brief "cell saved flash": auto-save fires on a debounce, so a
    toast per save would bury the error toasts that need reading. */
-.data-table tbody tr.row-saved > td {
+.data-table tbody tr.row-saved > td,
+.data-table tbody tr.row-saved:hover > td {
   background: rgba(52, 199, 89, 0.14);
   transition: background 0.25s ease;
 }
