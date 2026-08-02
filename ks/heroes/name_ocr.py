@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 import pytesseract
 
+from ks.heroes.ocr_util import crop_bgr_box
 from ks.heroes.optimize.catalog import load_catalog
 from ks.heroes.optimize.types import CatalogEntry
 from ks.heroes.parse import clean_name, parse_rarity
@@ -166,15 +167,7 @@ def _bright_name_mask(bgr: np.ndarray) -> np.ndarray:
 def _crop_name_box(
     image: np.ndarray, box: tuple[int, int, int, int] | None
 ) -> np.ndarray:
-    h, w = image.shape[:2]
-    if box is None:
-        box = (300, 26, 480, 64)
-    x, y, bw, bh = box
-    if bw <= 0 or bh <= 0:
-        raise ValueError(f"invalid box {box}")
-    if x < 0 or y < 0 or x + bw > w or y + bh > h:
-        raise ValueError(f"box {box} outside image")
-    return image[y : y + bh, x : x + bw]
+    return crop_bgr_box(image, box, default=(300, 26, 480, 64))
 
 
 def _upscaled_name_variants(crop: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

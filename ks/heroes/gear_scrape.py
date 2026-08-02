@@ -15,7 +15,7 @@ from ks.heroes.errors import DetailOpenError
 from ks.heroes.gear_config import GearConfig
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.gear_parse import parse_gear_detail
-from ks.heroes.ocr_util import ocr_box_robust
+from ks.heroes.ocr_util import ocr_box_robust, region_text_lower, text_has_any
 from ks.heroes.scrape import decode_screencap
 
 
@@ -93,18 +93,20 @@ def is_gear_detail_open(image: np.ndarray, *, ocr_fn: OcrFn | None = None) -> bo
     ocr = ocr_fn or _default_ocr
     h, w = image.shape[:2]
     # Title + identity strip (OCR on "Gear Details" alone is unreliable).
-    top = ocr(image, (80, 240, min(920, w - 80), min(220, h - 240))).lower()
+    top = region_text_lower(image, (80, 240, min(920, w - 80), min(220, h - 240)), ocr_fn=ocr)
     compact = top.replace(" ", "").replace("\n", "")
     if "geardetail" in compact:
         return True
-    if ("unequip" in top or "nequip" in top) and any(
-        r in top for r in ("mythic", "epic", "rare", "gold", "purple")
+    if text_has_any(top, ("unequip", "nequip")) and text_has_any(
+        top, ("mythic", "epic", "rare", "gold", "purple")
     ):
         return True
-    body = ocr(image, (80, 300, min(920, w - 80), min(500, h - 300))).lower()
-    if "conquest" in body or "expedition" in body:
+    body = region_text_lower(
+        image, (80, 300, min(920, w - 80), min(500, h - 300)), ocr_fn=ocr
+    )
+    if text_has_any(body, ("conquest", "expedition")):
         return True
-    if "hero attack" in body or "hero health" in body:
+    if text_has_any(body, ("hero attack", "hero health")):
         return True
     return False
 

@@ -13,7 +13,7 @@ from ks.heroes.errors import DetailOpenError
 from ks.heroes.models import HeroRecord, SkillRecord
 from ks.heroes.name_ocr import resolve_hero_name
 from ks.heroes.name_shot import save_name_screenshot
-from ks.heroes.ocr_util import ocr_box_robust
+from ks.heroes.ocr_util import ocr_box_robust, region_text_lower, text_has_any
 from ks.heroes.parse import (
     clean_name,
     parse_int,
@@ -44,23 +44,19 @@ def is_hero_detail_screen(image: np.ndarray) -> bool:
     h, w = image.shape[:2]
     # Bottom tabs: Stats / Skills / Gear are unique to detail (1080x1920).
     tab_y = max(0, h - 120)
-    tabs = ocr_box_robust(
-        image,
-        (100, tab_y, min(880, w - 100), min(110, h - tab_y)),
-        psm=6,
-    ).lower()
-    if "skill" in tabs or "gear" in tabs or "stat" in tabs:
+    tabs = region_text_lower(
+        image, (100, tab_y, min(880, w - 100), min(110, h - tab_y))
+    )
+    if text_has_any(tabs, ("skill", "gear", "stat")):
         return True
     # Ascend / promotion overlay is still a hero context.
-    mid = ocr_box_robust(
+    mid = region_text_lower(
         image,
         (300, min(h - 280, h - 1), 480, 120),
         whitelist="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
         psm=7,
-    ).lower()
-    if "ascend" in mid or "upgrade" in mid or "pgrade" in mid:
-        return True
-    return False
+    )
+    return text_has_any(mid, ("ascend", "upgrade", "pgrade"))
 
 
 def dismiss_blocking_overlays(device: DeviceProtocol, cfg: HeroesConfig, *, sleep_fn) -> np.ndarray:
@@ -68,13 +64,13 @@ def dismiss_blocking_overlays(device: DeviceProtocol, cfg: HeroesConfig, *, slee
     img = _decode_screencap(device.screencap())
     h, w = img.shape[:2]
     for _ in range(3):
-        mid = ocr_box_robust(
+        mid = region_text_lower(
             img,
             (300, min(h - 280, h - 1), 480, 120),
             whitelist="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
             psm=7,
-        ).lower()
-        if "ascend" not in mid and "promotion" not in mid:
+        )
+        if not text_has_any(mid, ("ascend", "promotion")):
             break
         device.tap(cfg.nav.back.x, cfg.nav.back.y)
         _sleep_ms(cfg.delays.after_tap_ms, sleep_fn=sleep_fn)

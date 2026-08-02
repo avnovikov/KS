@@ -8,6 +8,8 @@ import cv2
 import numpy as np
 import pytesseract
 
+from ks.heroes.ocr_util import crop_bgr_box
+
 _PERCENT_OR_NUM = re.compile(r"(\d+(?:\.\d+)?)\s*%?")
 
 
@@ -30,15 +32,7 @@ def teal_highlight_mask(bgr: np.ndarray) -> np.ndarray:
 def _crop_to_box(
     image: np.ndarray, box: tuple[int, int, int, int] | None
 ) -> np.ndarray:
-    if box is None:
-        return image
-    x, y, w, h = box
-    if w <= 0 or h <= 0:
-        raise ValueError(f"box w/h must be > 0; got {box}")
-    img_h, img_w = image.shape[:2]
-    if x < 0 or y < 0 or x + w > img_w or y + h > img_h:
-        raise ValueError(f"box {box} outside image bounds {image.shape[:2]}")
-    return image[y : y + h, x : x + w]
+    return crop_bgr_box(image, box, none_returns_full=True)
 
 
 def _denoise_teal_mask(mask: np.ndarray) -> np.ndarray:
