@@ -21,6 +21,11 @@ from ks.heroes.store import HeroStore  # noqa: E402
 from ks.heroes.ui.app import create_app  # noqa: E402
 from ks.heroes.ui.troop_store import TroopStore  # noqa: E402
 from ks.heroes.ui.troops_form import troops_form_model  # noqa: E402
+from ks.heroes.ui.trust import (  # noqa: E402
+    flag_gear_rows,
+    flag_hero_rows,
+    summarize_flags,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -326,6 +331,193 @@ def test_inventory_heroes_renders_roster(tmp_path: Path) -> None:
     assert "hero-name-link" in r.text
     assert "hero-detail-modal" in r.text
     assert "Rescan from OCR" in r.text
+
+
+# --- trust diff helpers (Task 4) --------------------------------------------
+#
+# Precedence pin: when a row is both "new" (absent from `before`) and
+# "incomplete" (missing progression data OCR should have read), the flag map
+# reports "incomplete". A data-quality problem needs the same manual check
+# whether or not the row is brand new, so folding it into "new" would hide
+# the more actionable signal. "new" and "changed" can never collide on the
+# same row by construction (a row is only "new" when its key is absent from
+# `before`), so incomplete-over-new is the only precedence rule needed.
+
+
+def test_flag_gear_rows_new_and_changed_gear() -> None:
+    """The brief's own Step 1 example, with the vague `in {"new",
+    "incomplete"}` assertion replaced by the pinned precedence: "b" is new
+    *and* missing enhancement_level, so it reports "incomplete"."""
+    before = [
+        GearRecord(
+            piece_id="a", name="A", enhancement_level=10, mastery_level=1, rarity="epic"
+        )
+    ]
+    after = [
+        GearRecord(
+            piece_id="a", name="A", enhancement_level=12, mastery_level=1, rarity="epic"
+        ),
+        GearRecord(
+            piece_id="b", name="B", enhancement_level=None, mastery_level=None, rarity="epic"
+        ),
+    ]
+    flags = flag_gear_rows(before, after)
+    assert flags == {"a": "changed", "b": "incomplete"}
+
+
+def test_flag_gear_rows_mastery_incompleteness_is_rarity_gated() -> None:
+    """Blue/green gear has no mastery track, so a missing mastery there is
+    expected, not incomplete; epic/mythic/red always carry one."""
+    after = [
+        GearRecord(piece_id="g", name="G", rarity="green", enhancement_level=1, mastery_level=None),
+        GearRecord(piece_id="r", name="R", rarity="red", enhancement_level=1, mastery_level=None),
+    ]
+    flags = flag_gear_rows([], after)
+    assert flags["g"] == "new"
+    assert flags["r"] == "incomplete"
+
+
+def test_flag_gear_rows_ignores_volatile_metadata_when_diffing_changed() -> None:
+    """scraped_at/raw_text/detail_screenshot are rewritten by OCR on every
+    rescan even when nothing meaningful moved; comparing them would mark
+    every row "changed" every time and make the flag useless."""
+    before = [
+        GearRecord(
+            piece_id="a", name="A", rarity="blue", enhancement_level=5,
+            raw_text="OLD", scraped_at="2026-08-01T00:00:00Z",
+            detail_screenshot="old.png",
+        )
+    ]
+    after = [
+        GearRecord(
+            piece_id="a", name="A", rarity="blue", enhancement_level=5,
+            raw_text="NEW", scraped_at="2026-08-02T00:00:00Z",
+            detail_screenshot="new.png",
+        )
+    ]
+    assert flag_gear_rows(before, after) == {}
+
+
+def test_flag_hero_rows_new_changed_incomplete_and_unchanged() -> None:
+    before = [
+        HeroRecord(name="Helga", power=1_000_000, stars=2, scraped_at="t0"),
+        HeroRecord(name="Steady", power=500_000, stars=1, scraped_at="t0"),
+    ]
+    after = [
+        HeroRecord(name="Helga", power=1_100_000, stars=2, scraped_at="t1"),
+        HeroRecord(name="Steady", power=500_000, stars=1, scraped_at="t1"),
+        HeroRecord(name="Newbie", power=None, stars=None, scraped_at="t1"),
+    ]
+    flags = flag_hero_rows(before, after)
+    assert flags == {"Helga": "changed", "Newbie": "incomplete"}
+
+
+def test_flag_hero_rows_incomplete_when_stars_or_power_missing() -> None:
+    after = [
+        HeroRecord(name="NoStars", power=1000, stars=None, scraped_at="t"),
+        HeroRecord(name="NoPower", power=None, stars=3, scraped_at="t"),
+    ]
+    flags = flag_hero_rows([], after)
+    assert flags["NoStars"] == "incomplete"
+    assert flags["NoPower"] == "incomplete"
+
+
+def test_summarize_flags_counts_tally_the_flags_map_exactly() -> None:
+    """The rescan API's new/changed/incomplete counts must never drift from
+    the flags map they summarize — this tallies flags rather than
+    recomputing anything, so the two can never disagree."""
+    flags = {"a": "new", "b": "changed", "c": "changed", "d": "incomplete"}
+    summary = summarize_flags(flags)
+    assert summary == {"flags": flags, "new": 1, "changed": 2, "incomplete": 1}
+    assert (
+        summary["new"] + summary["changed"] + summary["incomplete"]
+        == len(summary["flags"])
+    )
+
+
+def test_gear_rescan_api_returns_trust_flags_from_a_real_diff(tmp_path: Path) -> None:
+    """Drives an actual rescan through /api/gear/rescan (OCR itself is
+    stubbed via rescan_fn, same seam test_heroes_gear_ui.py uses) and
+    asserts the flags the *route* produces, not just the helper in
+    isolation — this is what would catch the snapshot being taken after
+    the rescan instead of before it."""
+    pytest.importorskip("fastapi")
+
+    gear_dir = tmp_path / "gear"
+    gear_dir.mkdir()
+    GearStore(gear_dir).upsert(
+        GearRecord(
+            piece_id="cell0", name="Old Armet", troop_type="cavalry", slot="helmet",
+            rarity="epic", enhancement_level=10, mastery_level=1,
+            inventory_page=0, inventory_index=0,
+        )
+    )
+
+    def fake_rescan(store: GearStore, **_kwargs: object) -> list[GearRecord]:
+        store.clear()
+        store.upsert(
+            GearRecord(
+                piece_id="cell0", name="Old Armet", troop_type="cavalry", slot="helmet",
+                rarity="epic", enhancement_level=15, mastery_level=1,
+                inventory_page=0, inventory_index=0,
+            )
+        )
+        store.upsert(
+            GearRecord(
+                piece_id="cell1", name="New Boots", troop_type="infantry", slot="boots",
+                rarity="mythic", enhancement_level=None, mastery_level=None,
+                inventory_page=0, inventory_index=1,
+            )
+        )
+        return store.all_pieces()
+
+    client = TestClient(create_app(gear_dir, rescan_fn=fake_rescan))
+    res = client.post("/api/gear/rescan")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["count"] == 2
+    trust = body["trust"]
+    assert trust["flags"] == {"cell0": "changed", "cell1": "incomplete"}
+    assert trust["new"] == 0
+    assert trust["changed"] == 1
+    assert trust["incomplete"] == 1
+    assert trust["new"] + trust["changed"] + trust["incomplete"] == len(trust["flags"])
+    # Existing keys are untouched by the new "trust" key.
+    assert set(body.keys()) == {"ok", "count", "trust", "cache_bust", "gear"}
+
+
+def test_heroes_rescan_api_returns_trust_flags_from_a_real_diff(tmp_path: Path) -> None:
+    """Same real-route coverage for the upserting heroes rescan: "new" must
+    mean first-ever-seen, and an untouched hero must not flag "changed"
+    just because its scraped_at moved."""
+    pytest.importorskip("fastapi")
+
+    heroes_dir = tmp_path / "heroes"
+    heroes_dir.mkdir()
+    store = HeroStore(heroes_dir)
+    store.upsert(HeroRecord(name="Helga", power=1_000_000, stars=2, scraped_at="t0"))
+    store.upsert(HeroRecord(name="Steady", power=200_000, stars=1, scraped_at="t0"))
+
+    def fake_rescan(store: HeroStore, **_kwargs: object) -> list[HeroRecord]:
+        store.upsert(HeroRecord(name="Helga", power=1_200_000, stars=2, scraped_at="t1"))
+        store.upsert(HeroRecord(name="Steady", power=200_000, stars=1, scraped_at="t1"))
+        store.upsert(HeroRecord(name="Newbie", power=None, stars=None, scraped_at="t1"))
+        return store.all_heroes()
+
+    client = TestClient(create_app(heroes_dir=heroes_dir, heroes_rescan_fn=fake_rescan))
+    res = client.post("/api/heroes/rescan")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["count"] == 3
+    trust = body["trust"]
+    assert trust["flags"] == {"Helga": "changed", "Newbie": "incomplete"}
+    assert trust["new"] == 0
+    assert trust["changed"] == 1
+    assert trust["incomplete"] == 1
+    assert trust["new"] + trust["changed"] + trust["incomplete"] == len(trust["flags"])
+    assert set(body.keys()) == {"ok", "count", "trust", "cache_bust", "heroes"}
 
 
 # --- TroopStore ------------------------------------------------------------

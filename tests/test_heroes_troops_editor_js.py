@@ -306,3 +306,28 @@ def test_shared_toast_unhides_the_live_region_before_writing_the_message(
     )
     log = js_run["data"]["toast_log"]
     assert log.index("hidden=false") < log.index("text=Saved"), log
+
+
+def test_heroes_trust_helper_persists_and_scopes_by_inventory_kind(
+    js_run: dict,
+) -> None:
+    """app.js's HeroesTrust is the sessionStorage contract Task 5 consumes
+    to survive the page reload a successful rescan triggers. This runs the
+    real save()/load()/clear() against a fake sessionStorage rather than
+    just reading the source, so a typo'd key or a shape drift would fail
+    here instead of silently breaking Task 5's page."""
+    _assert_ran(
+        js_run,
+        [
+            "app.js publishes window.HeroesTrust",
+            "load() with nothing stored returns null",
+            "save() writes to the documented sessionStorage key",
+            "the stored shape carries flags/new/changed/incomplete verbatim",
+            "save() adds a storedAt timestamp not present in the API payload",
+            "load() reads back exactly what save() wrote",
+            "gear and heroes payloads live in separate keys",
+            "saving heroes does not clobber the gear payload",
+            "clear() removes only the requested kind",
+            "save() rejects an unknown kind instead of silently writing garbage",
+        ],
+    )

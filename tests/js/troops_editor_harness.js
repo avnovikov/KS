@@ -243,6 +243,26 @@ function makeDom(opts) {
     toasts.push({ msg: String(m), ok: false, viaConsole: true });
   };
 
+  /* --- fake sessionStorage (app.js's HeroesTrust helper) -------------------
+     A bare global, matching how `document` is installed above: real browsers
+     expose `sessionStorage` unqualified, and app.js reads it that way. Fresh
+     per makeDom() call so state never leaks between suites. */
+  var sessionStore = {};
+  globalThis.sessionStorage = {
+    getItem: function (key) {
+      return Object.prototype.hasOwnProperty.call(sessionStore, key) ? sessionStore[key] : null;
+    },
+    setItem: function (key, value) {
+      sessionStore[key] = String(value);
+    },
+    removeItem: function (key) {
+      delete sessionStore[key];
+    },
+    clear: function () {
+      sessionStore = {};
+    },
+  };
+
   return {
     form: form,
     statusEl: statusEl,
@@ -883,6 +903,76 @@ function suiteToastOrder() {
   );
 }
 
+/* app.js: HeroesTrust persists a rescan's trust payload across the page
+   reload that follows a successful rescan (both inventory pages navigate
+   away on success, discarding in-memory JS state) — this is the written
+   sessionStorage contract Task 5 consumes. */
+function suiteHeroesTrust() {
+  var d = makeDom();
+  loadSharedAppJs();
+  var HeroesTrust = globalThis.window.HeroesTrust;
+
+  check(
+    "app.js publishes window.HeroesTrust",
+    typeof HeroesTrust === "object" && HeroesTrust !== null
+  );
+
+  check("load() with nothing stored returns null", HeroesTrust.load("gear") === null);
+
+  var trust = { flags: { cell0: "changed", cell1: "incomplete" }, new: 0, changed: 1, incomplete: 1 };
+  HeroesTrust.save("gear", trust);
+
+  var raw = globalThis.sessionStorage.getItem("heroesUiTrust:gear");
+  check("save() writes to the documented sessionStorage key", raw !== null, String(raw));
+
+  var stored = raw ? JSON.parse(raw) : null;
+  check(
+    "the stored shape carries flags/new/changed/incomplete verbatim",
+    !!stored &&
+      JSON.stringify(stored.flags) === JSON.stringify(trust.flags) &&
+      stored.new === 0 &&
+      stored.changed === 1 &&
+      stored.incomplete === 1,
+    JSON.stringify(stored)
+  );
+  check(
+    "save() adds a storedAt timestamp not present in the API payload",
+    !!stored && typeof stored.storedAt === "number" && stored.storedAt > 0,
+    JSON.stringify(stored)
+  );
+
+  var loaded = HeroesTrust.load("gear");
+  check(
+    "load() reads back exactly what save() wrote",
+    JSON.stringify(loaded) === JSON.stringify(stored),
+    JSON.stringify(loaded)
+  );
+
+  check(
+    "gear and heroes payloads live in separate keys",
+    globalThis.sessionStorage.getItem("heroesUiTrust:heroes") === null
+  );
+  HeroesTrust.save("heroes", { flags: { Helga: "new" }, new: 1, changed: 0, incomplete: 0 });
+  check(
+    "saving heroes does not clobber the gear payload",
+    HeroesTrust.load("gear") !== null && HeroesTrust.load("heroes") !== null
+  );
+
+  HeroesTrust.clear("gear");
+  check(
+    "clear() removes only the requested kind",
+    HeroesTrust.load("gear") === null && HeroesTrust.load("heroes") !== null
+  );
+
+  var threw = false;
+  try {
+    HeroesTrust.save("bogus", {});
+  } catch (err) {
+    threw = true;
+  }
+  check("save() rejects an unknown kind instead of silently writing garbage", threw);
+}
+
 /* --- run ------------------------------------------------------------------- */
 
 (async function main() {
@@ -893,6 +983,7 @@ function suiteToastOrder() {
     await suiteClampOnLoad();
     await suiteLocale();
     suiteToastOrder();
+    suiteHeroesTrust();
   } catch (err) {
     check("harness ran to completion", false, String((err && err.stack) || err));
   }

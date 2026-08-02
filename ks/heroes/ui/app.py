@@ -27,6 +27,7 @@ from ks.heroes.ui.power import compute_gear_power
 from ks.heroes.ui.rescan import rescan_gear_from_ocr
 from ks.heroes.ui.troop_store import TroopStore
 from ks.heroes.ui.troops_form import troops_form_model
+from ks.heroes.ui.trust import flag_gear_rows, flag_hero_rows, summarize_flags
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -482,6 +483,11 @@ def create_app(
                 detail="gear rescan already in progress",
             )
         try:
+            # Snapshot before the rescan touches the store, so the trust
+            # diff below compares "what was here" to "what OCR just saw"
+            # rather than the new state against itself.
+            store.reload()
+            before = store.all_pieces()
             pieces = do_gear_rescan(
                 store,
                 config_path=gear_config_path,
@@ -503,9 +509,11 @@ def create_app(
             gear_rescan_lock.release()
         bust = inventory_revision(gear_path, "gear.json")
         icon_map = ensure_all_icons(pieces, gear_path)
+        trust = summarize_flags(flag_gear_rows(before, pieces))
         return {
             "ok": True,
             "count": len(pieces),
+            "trust": trust,
             "cache_bust": bust,
             "gear": [
                 {
@@ -633,6 +641,11 @@ def create_app(
                 detail="heroes rescan already in progress",
             )
         try:
+            # Snapshot before the rescan upserts into the store: heroes
+            # rescans never wipe the roster, so "new" must mean "not in the
+            # pre-rescan snapshot," not "not in the file we just wrote."
+            store.reload()
+            before = store.all_heroes()
             do_heroes_rescan(
                 store,
                 config_path=heroes_config_path,
@@ -650,9 +663,11 @@ def create_app(
             heroes_rescan_lock.release()
         bust = inventory_revision(heroes_path, "heroes.json")
         icon_map = ensure_all_hero_icons(heroes, heroes_path)
+        trust = summarize_flags(flag_hero_rows(before, heroes))
         return {
             "ok": True,
             "count": len(heroes),
+            "trust": trust,
             "cache_bust": bust,
             "heroes": [
                 {
