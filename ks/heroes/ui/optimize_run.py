@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.models import HeroRecord
@@ -16,6 +19,9 @@ from ks.heroes.optimize.troop_stats import load_troop_stats
 from ks.heroes.optimize.troops import load_troops_config
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+logger = logging.getLogger(__name__)
+
+_DOMAIN_ERRORS = (ValueError, OSError, FileNotFoundError, yaml.YAMLError, KeyError)
 
 
 def _event_bundle(
@@ -34,9 +40,7 @@ def _event_bundle(
     scenarios = load_scenarios(scenarios_path)
     event = load_event_profile(event_path)
     troop_stats = load_troop_stats(troop_stats_path)
-    raw_troops = __import__("yaml").safe_load(
-        troops_path.read_text(encoding="utf-8")
-    ) or {}
+    raw_troops = yaml.safe_load(troops_path.read_text(encoding="utf-8")) or {}
     truegold = int(raw_troops.get("truegold", troop_stats.default_truegold))
     modes: dict[str, Any] = {}
     mode_errors: dict[str, str] = {}
@@ -64,11 +68,16 @@ def _event_bundle(
     out: dict[str, Any] = {
         "label": label,
         "event": event.name,
+        "status": "ok",
         "modes": modes,
     }
     if mode_errors:
         out["mode_errors"] = mode_errors
     return out
+
+
+def _section_error(label: str, message: str) -> dict[str, Any]:
+    return {"label": label, "modes": {}, "status": "Error", "error": message}
 
 
 def run_optimize_bundle(
@@ -89,7 +98,8 @@ def run_optimize_bundle(
     roles = load_arena_roles(roles_path, catalog=catalog)
 
     errors: dict[str, str] = {}
-    out: dict[str, Any] = {"errors": errors}
+    warnings: list[str] = []
+    out: dict[str, Any] = {"errors": errors, "warnings": warnings}
 
     try:
         out["sword"] = _event_bundle(
@@ -103,9 +113,13 @@ def run_optimize_bundle(
             gear=gear,
             gear_profile=gear_profile_events,
         )
-    except Exception as exc:  # noqa: BLE001 — surface per-section errors to UI
+    except _DOMAIN_ERRORS as exc:
         errors["sword"] = str(exc)
-        out["sword"] = {"label": "Swordland", "modes": {}}
+        out["sword"] = _section_error("Swordland", str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("sword optimize failed")
+        errors["sword"] = f"internal error: {exc}"
+        out["sword"] = _section_error("Swordland", errors["sword"])
 
     try:
         out["bear"] = _event_bundle(
@@ -119,9 +133,13 @@ def run_optimize_bundle(
             gear=gear,
             gear_profile=gear_profile_events,
         )
-    except Exception as exc:  # noqa: BLE001
+    except _DOMAIN_ERRORS as exc:
         errors["bear"] = str(exc)
-        out["bear"] = {"label": "Bear Trap", "modes": {}}
+        out["bear"] = _section_error("Bear Trap", str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("bear optimize failed")
+        errors["bear"] = f"internal error: {exc}"
+        out["bear"] = _section_error("Bear Trap", errors["bear"])
 
     arena: dict[str, Any] = {}
     for side in ("attack", "defense"):
@@ -134,8 +152,12 @@ def run_optimize_bundle(
                 gear=gear,
                 gear_profile=gear_profile_arena,
             )
-            arena[side] = result.to_dict()
-        except Exception as exc:  # noqa: BLE001
+            payload = result.to_dict()
+            warn = (result.reasons or {}).get("_explain_warning")
+            if warn:
+                warnings.append(f"arena_{side}: {warn}")
+            arena[side] = payload
+        except _DOMAIN_ERRORS as exc:
             errors[f"arena_{side}"] = str(exc)
             arena[side] = {
                 "side": side,
@@ -145,6 +167,18 @@ def run_optimize_bundle(
                 "score": None,
                 "reasons": {},
                 "error": str(exc),
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("arena %s optimize failed", side)
+            errors[f"arena_{side}"] = f"internal error: {exc}"
+            arena[side] = {
+                "side": side,
+                "status": "Error",
+                "formation": {},
+                "heroes": [],
+                "score": None,
+                "reasons": {},
+                "error": errors[f"arena_{side}"],
             }
     out["arena"] = arena
     return out

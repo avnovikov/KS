@@ -94,17 +94,23 @@ def recommend(
     )
     from ks.heroes.optimize.explain import explain_selected_heroes
 
-    hero_rows = explain_selected_heroes(
-        heroes,
-        catalog,
-        troops,
-        best_scenario,
-        best,
-        event=event,
-        troop_stats=troop_stats,
-        truegold=truegold,
-        gear_bonus_by_troop=gear_bonus,
-    )
+    try:
+        hero_rows = explain_selected_heroes(
+            heroes,
+            catalog,
+            troops,
+            best_scenario,
+            best,
+            event=event,
+            troop_stats=troop_stats,
+            truegold=truegold,
+            gear_bonus_by_troop=gear_bonus,
+        )
+    except Exception:  # noqa: BLE001 — keep Optimal lineup if LOO/explain fails
+        hero_rows = tuple(
+            {"name": name, "reason": "owned", "explain": None}
+            for name in best.hero_names
+        )
     alternatives = tuple(
         {
             "mode": s.mode,

@@ -285,13 +285,25 @@ def _solve_arena(
             if pulp.value(x[h.name, s]) and pulp.value(x[h.name, s]) > 0.5:
                 formation[s] = h.name
 
-    ordered = tuple(formation[s] for s in ALL_SLOTS if s in formation)
+    if set(formation) != set(ALL_SLOTS):
+        return ArenaResult(
+            side=side,
+            formation={},
+            heroes=(),
+            score=float("-inf"),
+            gear_assignment=None,
+            reasons={},
+            status="Error",
+        )
+
+    ordered = tuple(formation[s] for s in ALL_SLOTS)
     reasons = {
         name: _reason(name, catalog, roles, troop_of[name], base[name])
         for name in ordered
     }
     gear_assignment = None
     if gear:
+        # Slot claim order (defense: fronts first, heal/B1 last).
         priority = [formation.get(slot) for slot in gear_slot_order]
         priority_names = [n for n in priority if n]
         assigned = assign_exclusive_sets(
@@ -304,24 +316,39 @@ def _solve_arena(
         )
         gear_assignment = assignment_to_dict(assigned)
 
-    score = float(pulp.value(prob.objective) or 0.0)
+    objective = pulp.value(prob.objective)
+    if objective is None:
+        return ArenaResult(
+            side=side,
+            formation={},
+            heroes=(),
+            score=float("-inf"),
+            gear_assignment=None,
+            reasons={},
+            status="Error",
+        )
+    score = float(objective)
     explanations = None
     if with_explanations:
         from ks.heroes.optimize.explain import explain_arena_formation
 
-        explanations = explain_arena_formation(
-            side,
-            heroes,
-            catalog,
-            roles,
-            formation,
-            base,
-            score,
-            gear=gear,
-            gear_profile=gear_profile,
-        )
-        for name, exp in explanations.items():
-            reasons[name] = exp.get("summary") or reasons.get(name, "")
+        try:
+            explanations = explain_arena_formation(
+                side,
+                heroes,
+                catalog,
+                roles,
+                formation,
+                base,
+                score,
+                gear=gear,
+                gear_profile=gear_profile,
+            )
+            for name, exp in explanations.items():
+                reasons[name] = exp.get("summary") or reasons.get(name, "")
+        except Exception as exc:  # noqa: BLE001 — keep Optimal solve if LOO fails
+            explanations = None
+            reasons["_explain_warning"] = f"explainability unavailable: {exc}"
     return ArenaResult(
         side=side,
         formation=formation,

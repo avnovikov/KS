@@ -566,19 +566,27 @@ def create_app(
         heroes = hero_store_local.all_heroes()
         gear_pieces: list[GearRecord] | None = None
         icon_by_id: dict[str, str | None] = {}
+        icon_warning: str | None = None
         if gear_store is not None and resolved_gear is not None:
             gear_store.reload()
             gear_pieces = gear_store.all_pieces() or None
             if gear_pieces:
-                bust = inventory_revision(resolved_gear, "gear.json")
-                raw_icons = ensure_all_icons(gear_pieces, resolved_gear)
-                icon_by_id = {
-                    pid: with_cache_bust(url, bust)
-                    for pid, url in raw_icons.items()
-                }
+                try:
+                    bust = inventory_revision(resolved_gear, "gear.json")
+                    raw_icons = ensure_all_icons(gear_pieces, resolved_gear)
+                    icon_by_id = {
+                        pid: with_cache_bust(url, bust)
+                        for pid, url in raw_icons.items()
+                    }
+                except Exception as exc:  # noqa: BLE001 — optimize without icons
+                    icon_warning = f"gear icons unavailable: {exc}"
         bundle = run_optimize_bundle(heroes, gear=gear_pieces)
         if icon_by_id:
             attach_gear_icon_urls(bundle, icon_by_id)
+        if icon_warning:
+            warnings = list(bundle.get("warnings") or [])
+            warnings.append(icon_warning)
+            bundle["warnings"] = warnings
         bundle["heroes_dir"] = str(heroes_path)
         return bundle
 

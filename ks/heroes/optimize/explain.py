@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from ks.heroes.models import HeroRecord
@@ -14,6 +15,98 @@ from ks.heroes.optimize.types import (
     Scenario,
     TroopsConfig,
 )
+
+
+@dataclass(frozen=True)
+class LeaveOneOutPoints:
+    baseline_points: float
+    points_without: float | None
+    marginal_points: float | None
+    critical: bool
+    alternate_lineup: tuple[str, ...]
+    status: str
+    inconclusive: bool = False
+
+    def __post_init__(self) -> None:
+        if self.critical:
+            assert self.points_without is None and self.marginal_points is None, (
+                "critical LOO must null out points"
+            )
+        elif not self.inconclusive:
+            assert self.points_without is not None and self.marginal_points is not None, (
+                "non-critical LOO must include point deltas"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        lineup = list(self.alternate_lineup)
+        return {
+            "baseline_points": self.baseline_points,
+            "points_without": self.points_without,
+            "marginal_points": self.marginal_points,
+            "critical": self.critical,
+            "inconclusive": self.inconclusive,
+            "alternate_lineup": lineup,
+            # Compat alias used by older UI copy.
+            "replacement_heroes": lineup,
+            "status": self.status,
+        }
+
+
+@dataclass(frozen=True)
+class LeaveOneOutScore:
+    baseline_score: float
+    score_without: float | None
+    marginal_score: float | None
+    critical: bool
+    alternate_lineup: tuple[str, ...]
+    replacement_formation: dict[str, str]
+    status: str
+    inconclusive: bool = False
+
+    def __post_init__(self) -> None:
+        if self.critical:
+            assert self.score_without is None and self.marginal_score is None, (
+                "critical LOO must null out scores"
+            )
+        elif not self.inconclusive:
+            assert self.score_without is not None and self.marginal_score is not None, (
+                "non-critical LOO must include score deltas"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        lineup = list(self.alternate_lineup)
+        return {
+            "baseline_score": self.baseline_score,
+            "score_without": self.score_without,
+            "marginal_score": self.marginal_score,
+            "critical": self.critical,
+            "inconclusive": self.inconclusive,
+            "alternate_lineup": lineup,
+            "replacement_heroes": lineup,
+            "replacement_formation": dict(self.replacement_formation),
+            "status": self.status,
+        }
+
+
+@dataclass(frozen=True)
+class HeroExplain:
+    role: str
+    fits_because: tuple[str, ...]
+    leave_one_out: LeaveOneOutPoints | LeaveOneOutScore
+    slot: str | None = None
+    summary: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "role": self.role,
+            "fits_because": list(self.fits_because),
+            "leave_one_out": self.leave_one_out.to_dict(),
+        }
+        if self.slot is not None:
+            out["slot"] = self.slot
+        if self.summary is not None:
+            out["summary"] = self.summary
+        return out
 
 
 def _tier_for_mode(entry: CatalogEntry, mode: str) -> str | None:
@@ -71,7 +164,9 @@ def fits_because_event(
         bits.append(f"{mode} tier={tier}")
     first_skills = [e.kind for e in entry.effects if e.first_expedition]
     if mode == "joiner" and first_skills:
-        bits.append("First-expedition skill helps joiner scoring: " + ", ".join(first_skills))
+        bits.append(
+            "First-expedition skill helps joiner scoring: " + ", ".join(first_skills)
+        )
     if strength is not None:
         bits.append(f"Mode strength score={strength:.1f}")
     return bits
@@ -88,11 +183,11 @@ def leave_one_out_mode(
     troop_stats: TroopStatsTable | None = None,
     truegold: int = 0,
     gear_bonus_by_troop: dict[str, float] | None = None,
-) -> dict[str, dict[str, Any]]:
+) -> dict[str, LeaveOneOutPoints]:
     """Re-solve mode without each selected hero; report point drop."""
     from ks.heroes.optimize.model import solve_mode
 
-    out: dict[str, dict[str, Any]] = {}
+    out: dict[str, LeaveOneOutPoints] = {}
     baseline_pts = float(baseline.expected_personal_points)
     for name in baseline.hero_names:
         reduced = [h for h in heroes if h.name != name]
@@ -106,25 +201,35 @@ def leave_one_out_mode(
             truegold=truegold,
             gear_bonus_by_troop=gear_bonus_by_troop,
         )
-        if alt.status != "Optimal":
-            out[name] = {
-                "baseline_points": baseline_pts,
-                "points_without": None,
-                "marginal_points": None,
-                "critical": True,
-                "replacement_heroes": [],
-                "status": alt.status,
-            }
-        else:
+        if alt.status == "Optimal":
             without = float(alt.expected_personal_points)
-            out[name] = {
-                "baseline_points": baseline_pts,
-                "points_without": without,
-                "marginal_points": baseline_pts - without,
-                "critical": False,
-                "replacement_heroes": list(alt.hero_names),
-                "status": "Optimal",
-            }
+            out[name] = LeaveOneOutPoints(
+                baseline_points=baseline_pts,
+                points_without=without,
+                marginal_points=baseline_pts - without,
+                critical=False,
+                alternate_lineup=tuple(alt.hero_names),
+                status="Optimal",
+            )
+        elif alt.status == "Infeasible":
+            out[name] = LeaveOneOutPoints(
+                baseline_points=baseline_pts,
+                points_without=None,
+                marginal_points=None,
+                critical=True,
+                alternate_lineup=(),
+                status=alt.status,
+            )
+        else:
+            out[name] = LeaveOneOutPoints(
+                baseline_points=baseline_pts,
+                points_without=None,
+                marginal_points=None,
+                critical=False,
+                alternate_lineup=(),
+                status=alt.status,
+                inconclusive=True,
+            )
     return out
 
 
@@ -172,17 +277,16 @@ def explain_selected_heroes(
                 ),
             )
         role = _role_label(entry, scenario.mode, scenario)
-        fits = fits_because_event(
-            name, catalog, scenario.mode, scenario, strength=strength
+        fits = tuple(
+            fits_because_event(
+                name, catalog, scenario.mode, scenario, strength=strength
+            )
         )
-        loo_row = loo[name]
-        if loo_row.get("critical"):
-            fits = [*fits, "Critical: no feasible lineup if removed"]
-        elif loo_row.get("marginal_points") is not None:
-            fits = [
-                *fits,
-                f"Leave-one-out: −{loo_row['marginal_points']:.0f} pts if removed",
-            ]
+        explain = HeroExplain(
+            role=role,
+            fits_because=fits,
+            leave_one_out=loo[name],
+        )
         summary_bits = [f"role={role}"]
         if entry and entry.troop:
             summary_bits.append(f"troop={entry.troop}")
@@ -192,11 +296,7 @@ def explain_selected_heroes(
             {
                 "name": name,
                 "reason": ", ".join(summary_bits),
-                "explain": {
-                    "role": role,
-                    "fits_because": fits,
-                    "leave_one_out": loo_row,
-                },
+                "explain": explain.to_dict(),
             }
         )
     return tuple(rows)
@@ -217,6 +317,7 @@ def fits_because_arena(
     tags = [str(t) for t in (meta.get("tags") or meta.get("arena_tags") or [])]
     troop = normalize_troop(entry.troop if entry else None) or "unknown"
     family = "front" if slot.startswith("F") else "back"
+    carry_slot = str(roles.get("slots", {}).get("carry_slot") or "B2")
     bits = [
         f"Placed {slot} ({family}) as {role.replace('_', ' ')}",
         f"troop={troop}",
@@ -231,9 +332,8 @@ def fits_because_arena(
             bits.append("Defense bias: heal valued for offline sustain")
         if "team_def" in tags:
             bits.append("Defense bias: team defense tag boosted")
-    elif "dps" in tags or "aoe" in tags:
-        if slot == "B2":
-            bits.append("Attack carry slot (B2) favors DPS/AoE")
+    elif ("dps" in tags or "aoe" in tags) and slot == carry_slot:
+        bits.append(f"Attack carry slot ({carry_slot}) favors DPS/AoE")
     if entry and entry.rarity:
         bits.append(f"rarity={entry.rarity}")
     return role, bits
@@ -249,11 +349,11 @@ def leave_one_out_arena(
     *,
     gear: list[Any] | None = None,
     gear_profile: str = "early_game_combat",
-) -> dict[str, dict[str, Any]]:
+) -> dict[str, LeaveOneOutScore]:
     """Re-solve arena without each selected hero; report score drop."""
     from ks.heroes.optimize.arena import optimize_arena
 
-    out: dict[str, dict[str, Any]] = {}
+    out: dict[str, LeaveOneOutScore] = {}
     selected = list(baseline_formation.values())
     for name in selected:
         reduced = [h for h in heroes if h.name != name]
@@ -266,26 +366,38 @@ def leave_one_out_arena(
             gear_profile=gear_profile,
             with_explanations=False,
         )
-        if alt.status != "Optimal":
-            out[name] = {
-                "baseline_score": baseline_score,
-                "score_without": None,
-                "marginal_score": None,
-                "critical": True,
-                "replacement_formation": {},
-                "status": alt.status,
-            }
-        else:
+        if alt.status == "Optimal":
             without = float(alt.score)
-            out[name] = {
-                "baseline_score": baseline_score,
-                "score_without": without,
-                "marginal_score": baseline_score - without,
-                "critical": False,
-                "replacement_formation": dict(alt.formation),
-                "replacement_heroes": list(alt.heroes),
-                "status": "Optimal",
-            }
+            out[name] = LeaveOneOutScore(
+                baseline_score=baseline_score,
+                score_without=without,
+                marginal_score=baseline_score - without,
+                critical=False,
+                alternate_lineup=tuple(alt.heroes),
+                replacement_formation=dict(alt.formation),
+                status="Optimal",
+            )
+        elif alt.status == "Infeasible":
+            out[name] = LeaveOneOutScore(
+                baseline_score=baseline_score,
+                score_without=None,
+                marginal_score=None,
+                critical=True,
+                alternate_lineup=(),
+                replacement_formation={},
+                status=alt.status,
+            )
+        else:
+            out[name] = LeaveOneOutScore(
+                baseline_score=baseline_score,
+                score_without=None,
+                marginal_score=None,
+                critical=False,
+                alternate_lineup=(),
+                replacement_formation={},
+                status=alt.status,
+                inconclusive=True,
+            )
     return out
 
 
@@ -321,19 +433,12 @@ def explain_arena_formation(
             base_score=float(base_scores.get(name, 0.0)),
             side=side,
         )
-        loo_row = loo[name]
-        if loo_row.get("critical"):
-            fits = [*fits, "Critical: no feasible 5 if removed"]
-        elif loo_row.get("marginal_score") is not None:
-            fits = [
-                *fits,
-                f"Leave-one-out: −{loo_row['marginal_score']:.1f} score if removed",
-            ]
-        out[name] = {
-            "slot": slot,
-            "role": role,
-            "fits_because": fits,
-            "leave_one_out": loo_row,
-            "summary": f"slot={slot}, role={role}",
-        }
+        explain = HeroExplain(
+            role=role,
+            fits_because=tuple(fits),
+            leave_one_out=loo[name],
+            slot=slot,
+            summary=f"slot={slot}, role={role}",
+        )
+        out[name] = explain.to_dict()
     return out

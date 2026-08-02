@@ -316,11 +316,27 @@
       { key: "chest", label: "Body" },
       { key: "boots", label: "Boots" },
     ];
-    let cache = null;
 
+    function esc(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+    function safeUrl(u) {
+      if (!u) return "";
+      const s = String(u);
+      if (s.startsWith("/") || s.startsWith("http://") || s.startsWith("https://")) return s;
+      return "";
+    }
     function fmtPoints(n) {
-      if (n == null || Number.isNaN(n)) return "—";
+      if (n == null || Number.isNaN(n) || !Number.isFinite(Number(n))) return "—";
       return Math.round(n).toLocaleString();
+    }
+    function fmtScore(n) {
+      if (n == null || Number.isNaN(n) || !Number.isFinite(Number(n))) return "—";
+      return Number(n).toFixed(1);
     }
     function heroNames(row) {
       return (row.heroes || []).map((h) => h.name || h).join(", ");
@@ -344,20 +360,21 @@
       return GEAR_SLOTS.map(({ key, label }) => {
         const p = pieceForSlot(pieces, key);
         if (!p) {
-          return `<div class="gear-cell"><div class="slot-label">${label}</div><div class="empty">Empty</div></div>`;
+          return `<div class="gear-cell"><div class="slot-label">${esc(label)}</div><div class="empty">Empty</div></div>`;
         }
-        const img = p.icon_url
-          ? `<img src="${p.icon_url}" alt="" />`
+        const url = safeUrl(p.icon_url);
+        const img = url
+          ? `<img src="${esc(url)}" alt="" />`
           : `<img alt="" style="opacity:.35" />`;
         const enh = p.enhancement_level != null ? `+${p.enhancement_level}` : "";
         const mast = p.mastery_level != null ? ` M${p.mastery_level}` : "";
         return (
           `<div class="gear-cell">` +
-          `<div class="slot-label">${label}</div>` +
+          `<div class="slot-label">${esc(label)}</div>` +
           `<div class="piece">${img}<div>` +
-          `<div>${p.name || "—"}</div>` +
-          `<div class="meta-line">${p.rarity || ""} ${enh}${mast}</div>` +
-          `<div class="meta-line">${p.power != null ? p.power.toLocaleString() + " pwr" : ""}</div>` +
+          `<div>${esc(p.name || "—")}</div>` +
+          `<div class="meta-line">${esc(p.rarity || "")} ${esc(enh)}${esc(mast)}</div>` +
+          `<div class="meta-line">${p.power != null ? esc(p.power.toLocaleString() + " pwr") : ""}</div>` +
           `</div></div></div>`
         );
       }).join("");
@@ -367,31 +384,35 @@
       const hero = (row.heroes || []).find((h) => (h.name || h) === name);
       return (hero && hero.explain) || null;
     }
+    function alternateLine(loo) {
+      return (loo.alternate_lineup || loo.replacement_heroes || []).join(", ");
+    }
     function renderWhy(explain) {
       if (!explain) return "";
       const fits = (explain.fits_because || [])
-        .filter((b) => !String(b).startsWith("Leave-one-out:"))
-        .map((b) => `<li>${b}</li>`)
+        .map((b) => `<li>${esc(b)}</li>`)
         .join("");
       const loo = explain.leave_one_out || {};
       let marginal = "";
       if (loo.critical) {
         marginal = `<p class="marginal critical">Critical — no feasible lineup if removed</p>`;
+      } else if (loo.inconclusive) {
+        marginal = `<p class="marginal critical">Leave-one-out inconclusive (status ${esc(loo.status || "?")})</p>`;
       } else if (loo.marginal_points != null) {
-        const repl = (loo.replacement_heroes || []).join(", ");
+        const alt = alternateLine(loo);
         marginal =
-          `<p class="marginal">Removing costs ${Math.round(loo.marginal_points).toLocaleString()} pts` +
-          (repl ? ` → replaced by ${repl}` : "") +
+          `<p class="marginal">Removing costs ${esc(Math.round(loo.marginal_points).toLocaleString())} pts` +
+          (alt ? ` · alternate lineup: ${esc(alt)}` : "") +
           `</p>`;
       } else if (loo.marginal_score != null) {
-        const repl = (loo.replacement_heroes || []).join(", ");
+        const alt = alternateLine(loo);
         marginal =
-          `<p class="marginal">Removing costs ${Number(loo.marginal_score).toFixed(1)} score` +
-          (repl ? ` → replaced by ${repl}` : "") +
+          `<p class="marginal">Removing costs ${esc(Number(loo.marginal_score).toFixed(1))} score` +
+          (alt ? ` · alternate lineup: ${esc(alt)}` : "") +
           `</p>`;
       }
       const role = explain.role
-        ? `<p class="role">${explain.slot ? explain.slot + " · " : ""}${String(explain.role).replaceAll("_", " ")}</p>`
+        ? `<p class="role">${esc(explain.slot ? explain.slot + " · " : "")}${esc(String(explain.role).replaceAll("_", " "))}</p>`
         : "";
       return (
         `<div class="why">${role}` +
@@ -401,6 +422,7 @@
       );
     }
     function openGearModal(title, sub, row) {
+      if (row.status && row.status !== "Optimal") return;
       const modal = document.getElementById("gear-detail-modal");
       document.getElementById("gear-modal-title").textContent = title;
       const bd = row.breakdown || {};
@@ -422,7 +444,7 @@
           const why = renderWhy(explainFor(row, name));
           return (
             `<div class="hero-gear">` +
-            `<h3>${name}</h3>` +
+            `<h3>${esc(name)}</h3>` +
             why +
             `<div class="gear-grid">${renderGearGrid(pieces)}</div>` +
             `</div>`
@@ -437,11 +459,18 @@
       modal.classList.remove("open");
       modal.hidden = true;
     }
-    function renderModes(el, modes, sectionLabel) {
+    function renderModes(el, section, sectionLabel) {
       el.innerHTML = "";
-      const keys = Object.keys(modes || {});
+      if ((section || {}).status === "Error" || (section || {}).error) {
+        el.innerHTML =
+          `<p class="heroes" style="color:var(--err)">Section failed: ${esc(section.error || "unknown error")}</p>`;
+        return;
+      }
+      const modes = (section || {}).modes || {};
+      const keys = Object.keys(modes);
+      const modeErrors = (section || {}).mode_errors || {};
       if (!keys.length) {
-        el.innerHTML = '<p class="heroes">No feasible modes.</p>';
+        el.innerHTML = '<p class="heroes">No feasible modes for this roster.</p>';
         return;
       }
       for (const mode of keys) {
@@ -450,11 +479,11 @@
         card.type = "button";
         card.className = "card";
         card.innerHTML =
-          `<h3>${mode.replaceAll("_", " ")}</h3>` +
-          `<div class="points">${fmtPoints(row.expected_personal_points)} pts</div>` +
-          `<p class="heroes"><strong>${heroNames(row)}</strong></p>` +
-          `<p class="troops">${troopsLine(row)}</p>` +
-          `<p class="card-hint">Click for gear (helm · gloves · body · boots)</p>`;
+          `<h3>${esc(mode.replaceAll("_", " "))}</h3>` +
+          `<div class="points">${esc(fmtPoints(row.expected_personal_points))} pts</div>` +
+          `<p class="heroes"><strong>${esc(heroNames(row))}</strong></p>` +
+          `<p class="troops">${esc(troopsLine(row))}</p>` +
+          `<p class="card-hint">Click for why + gear (helm · gloves · body · boots)</p>`;
         card.addEventListener("click", () => {
           openGearModal(
             `${sectionLabel} · ${mode.replaceAll("_", " ")}`,
@@ -464,56 +493,56 @@
         });
         el.appendChild(card);
       }
+      const skipped = Object.keys(modeErrors);
+      if (skipped.length) {
+        const note = document.createElement("p");
+        note.className = "heroes";
+        note.textContent = "Skipped infeasible: " + skipped.join(", ");
+        el.appendChild(note);
+      }
     }
     function renderArena(el, arena) {
       el.innerHTML = "";
       for (const side of ["attack", "defense"]) {
         const row = (arena || {})[side] || {};
-        const card = document.createElement("button");
-        card.type = "button";
+        const ok = row.status === "Optimal";
+        const card = document.createElement(ok ? "button" : "div");
+        if (ok) card.type = "button";
         card.className = "card";
         const form = row.formation || {};
         const slots = ["F1", "F2", "B1", "B2", "B3"]
           .map((s) => {
             const name = form[s] || "—";
-            return `<span class="slot"><span class="k">${s}</span>${name}</span>`;
+            return `<span class="slot"><span class="k">${esc(s)}</span>${esc(name)}</span>`;
           })
           .join("");
         card.innerHTML =
-          `<h3>${side}</h3>` +
-          `<div class="points">score ${row.score != null ? Number(row.score).toFixed(1) : "—"}</div>` +
-          `<p class="formation">status: ${row.status || "—"}</p>` +
-          `<div class="slot-row">${slots}</div>` +
-          `<p class="card-hint">Click for gear (helm · gloves · body · boots)</p>`;
-        card.addEventListener("click", () => {
-          openGearModal(
-            `Arena · ${side}`,
-            row.score != null ? `score ${Number(row.score).toFixed(1)}` : "",
-            row
-          );
-        });
+          `<h3>${esc(side)}</h3>` +
+          `<div class="points">score ${esc(fmtScore(row.score))}</div>` +
+          `<p class="formation">status: ${esc(row.status || "—")}</p>` +
+          (ok ? `<div class="slot-row">${slots}</div>` : "") +
+          (ok
+            ? `<p class="card-hint">Click for why + gear (helm · gloves · body · boots)</p>`
+            : `<p class="heroes">${esc(row.error || "No optimal formation")}</p>`);
+        if (ok) {
+          card.addEventListener("click", () => {
+            openGearModal(`Arena · ${side}`, `score ${fmtScore(row.score)}`, row);
+          });
+        }
         el.appendChild(card);
       }
     }
-    function applySection(section, data) {
-      if (section === "all" || section === "sword") {
-        renderModes(document.getElementById("sword-modes"), (data.sword || {}).modes, "Swordland");
-      }
-      if (section === "all" || section === "bear") {
-        renderModes(document.getElementById("bear-modes"), (data.bear || {}).modes, "Bear Trap");
-      }
-      if (section === "all" || section === "arena") {
-        renderArena(document.getElementById("arena-sides"), data.arena);
-      }
+    function applyAll(data) {
+      renderModes(document.getElementById("sword-modes"), data.sword, "Swordland");
+      renderModes(document.getElementById("bear-modes"), data.bear, "Bear Trap");
+      renderArena(document.getElementById("arena-sides"), data.arena);
     }
-    async function loadOptimize(section = "all") {
+    async function loadOptimize() {
       const status = document.getElementById("status");
       const buttons = document.querySelectorAll("[data-regen]");
       buttons.forEach((b) => { b.disabled = true; });
       status.className = "status";
-      status.textContent = section === "all"
-        ? "Regenerating recommendations…"
-        : `Regenerating ${section}…`;
+      status.textContent = "Regenerating recommendations…";
       try {
         const res = await fetch("/api/optimize");
         if (!res.ok) {
@@ -521,18 +550,20 @@
           throw new Error(detail || res.statusText);
         }
         const data = await res.json();
-        cache = data;
-        applySection(section, data);
+        // Full recompute always; refresh every panel so nothing stays stale.
+        applyAll(data);
         const errs = data.errors || {};
+        const warns = data.warnings || [];
         const errKeys = Object.keys(errs);
         if (errKeys.length) {
           status.className = "status err";
           status.textContent = errKeys.map((k) => `${k}: ${errs[k]}`).join(" · ");
+        } else if (warns.length) {
+          status.className = "status err";
+          status.textContent = warns.join(" · ");
         } else {
           status.className = "status ok";
-          status.textContent = section === "all"
-            ? "Updated from current heroes + gear inventory."
-            : `Updated ${section} from current inventory.`;
+          status.textContent = "Updated from current heroes + gear inventory.";
         }
       } catch (err) {
         status.className = "status err";
@@ -542,7 +573,7 @@
       }
     }
     document.querySelectorAll("[data-regen]").forEach((btn) => {
-      btn.addEventListener("click", () => loadOptimize(btn.getAttribute("data-regen") || "all"));
+      btn.addEventListener("click", () => loadOptimize());
     });
     document.getElementById("gear-modal-close").addEventListener("click", closeGearModal);
     document.getElementById("gear-detail-modal").addEventListener("click", (ev) => {
@@ -551,7 +582,7 @@
     document.addEventListener("keydown", (ev) => {
       if (ev.key === "Escape") closeGearModal();
     });
-    loadOptimize("all");
+    loadOptimize();
   </script>
 </body>
 </html>
