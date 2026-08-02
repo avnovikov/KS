@@ -7,6 +7,7 @@ from ks.heroes.optimize.gear_assign import (
     assignment_to_dict,
     gear_bonus_by_troop,
 )
+from ks.heroes.optimize.bear_damage import BeartrapBuffs
 from ks.heroes.optimize.model import solve_mode
 from ks.heroes.optimize.troop_stats import TroopStatsTable
 from ks.heroes.optimize.troops import breakdown_for_totals
@@ -31,6 +32,7 @@ def recommend(
     truegold: int = 0,
     gear: list[GearRecord] | None = None,
     gear_profile: str = "early_game_growth",
+    beartrap_buffs: BeartrapBuffs | None = None,
 ) -> RecommendResult:
     if not scenarios:
         raise ValueError("scenarios must not be empty")
@@ -69,6 +71,7 @@ def recommend(
                 troop_stats=troop_stats,
                 truegold=truegold,
                 gear_bonus_by_troop=gear_bonus,
+                beartrap_buffs=beartrap_buffs,
             )
         )
 

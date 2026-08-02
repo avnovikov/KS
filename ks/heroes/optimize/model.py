@@ -3,6 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ks.heroes.models import HeroRecord
+from ks.heroes.optimize.bear_damage import (
+    BeartrapBuffs,
+    greedy_fill_march,
+)
 from ks.heroes.optimize.scoring import hero_strength, max_power_by_troop, normalize_troop
 from ks.heroes.optimize.troop_stats import TroopStatsTable, inventory_combat_weights
 from ks.heroes.optimize.types import (
@@ -58,6 +62,23 @@ class _ObjectiveTerms:
     @property
     def expected(self) -> pulp.LpAffineExpression:
         return self.combat + self.occupation + self.first_control + self.loot
+
+
+def _use_bear_damage(event: EventProfile | None, mode: str) -> bool:
+    return bool(event and event.name == "beartrap" and mode == "rally_lead")
+
+
+def _inventory_levels(troops: TroopsConfig) -> dict[str, dict[int, int]]:
+    """Per-type tier maps; flat inventories (no levels) default to T6 pool."""
+    out: dict[str, dict[int, int]] = {}
+    for typ in ("infantry", "cavalry", "archers"):
+        levels = troops.levels(typ)
+        if levels:
+            out[typ] = dict(levels)
+        else:
+            owned = troops.owned(typ)
+            out[typ] = {6: owned} if owned > 0 else {}
+    return out
 
 
 def _empty_troops() -> dict[str, int]:
@@ -135,6 +156,8 @@ def _build_ilp_variables(
     troops: TroopsConfig,
     escorts: dict[str, int],
     mode: str,
+    *,
+    bear_mode: bool = False,
 ) -> _TroopVariables:
     prob = pulp.LpProblem(f"heroes_{mode}", pulp.LpMaximize)
     x = pulp.LpVariable.dicts("hero", [h.name for h in usable], cat="Binary")
@@ -146,7 +169,11 @@ def _build_ilp_variables(
 
     # Capacity: march_capacity + escorts of selected heroes
     cap = troops.march_capacity + pulp.lpSum(x[n] * escorts[n] for n in x)
-    prob += t_i + t_c + t_a <= cap
+    if bear_mode:
+        # Troop formation is filled post-solve via damage greedy; keep vars at 0.
+        prob += t_i + t_c + t_a == 0
+    else:
+        prob += t_i + t_c + t_a <= cap
 
     return _TroopVariables(prob=prob, hero_selected=x, infantry=t_i, cavalry=t_c, archers=t_a)
 
@@ -245,6 +272,15 @@ def _build_objective(
     return terms
 
 
+def _build_bear_hero_objective(
+    variables: _TroopVariables,
+    strengths: dict[str, float],
+) -> None:
+    """Maximize lineup hero strength; damage score is applied after greedy fill."""
+    x = variables.hero_selected
+    variables.prob += pulp.lpSum(x[n] * strengths[n] for n in x)
+
+
 def _extract_optimal_solution(
     variables: _TroopVariables,
     features: _HeroFeatures,
@@ -275,6 +311,45 @@ def _extract_optimal_solution(
     )
 
 
+def _extract_bear_damage_solution(
+    variables: _TroopVariables,
+    features: _HeroFeatures,
+    troops: TroopsConfig,
+    scenario: Scenario,
+    *,
+    troop_stats: TroopStatsTable,
+    truegold: int,
+    beartrap_buffs: BeartrapBuffs | None,
+) -> ModeSolution:
+    x = variables.hero_selected
+    chosen = tuple(sorted(n for n in x if pulp.value(x[n]) and pulp.value(x[n]) > 0.5))
+    eff_cap = troops.march_capacity + sum(features.escorts[n] for n in chosen)
+    buffs = beartrap_buffs or BeartrapBuffs()
+    lineup_strength = sum(features.strengths[n] for n in chosen)
+    skillmod = buffs.effective_skillmod(lineup_strength)
+    fill_cap = min(eff_cap, troops.infantry + troops.cavalry + troops.archers)
+    counts, _filled_levels, dmg = greedy_fill_march(
+        _inventory_levels(troops),
+        capacity=fill_cap,
+        table=troop_stats,
+        truegold=truegold,
+        skillmod=skillmod,
+        trap_attack_bonus=buffs.trap_attack_bonus,
+        host_attack_pct=buffs.host_attack_pct,
+    )
+    breakdown = dmg.breakdown()
+    breakdown["hero_strength"] = float(lineup_strength)
+    return ModeSolution(
+        mode=scenario.mode,
+        hero_names=chosen,
+        troops=dict(counts),
+        effective_capacity=eff_cap,
+        expected_personal_points=float(dmg.score),
+        breakdown=breakdown,
+        status="Optimal",
+    )
+
+
 def solve_mode(
     heroes: list[HeroRecord],
     catalog: dict[str, CatalogEntry],
@@ -286,13 +361,21 @@ def solve_mode(
     truegold: int = 0,
     one_per_troop_type: bool = True,
     gear_bonus_by_troop: dict[str, float] | None = None,
+    beartrap_buffs: BeartrapBuffs | None = None,
 ) -> ModeSolution:
     usable = _select_usable_heroes(heroes, catalog)
     if len(usable) < 3:
         return _infeasible_solution(scenario, troops)
 
+    bear_mode = _use_bear_damage(event, scenario.mode) and troop_stats is not None
     features = _compute_hero_features(usable, catalog, scenario, event, gear_bonus_by_troop)
-    variables = _build_ilp_variables(usable, troops, features.escorts, scenario.mode)
+    variables = _build_ilp_variables(
+        usable,
+        troops,
+        features.escorts,
+        scenario.mode,
+        bear_mode=bear_mode,
+    )
 
     if not _apply_widget_requirement(variables, features.widget, scenario.require_widget):
         return _infeasible_solution(scenario, troops)
@@ -300,12 +383,27 @@ def solve_mode(
     if one_per_troop_type:
         _apply_one_hero_per_troop_type(variables, features.troop_of)
 
-    troop_weights = _troop_combat_weights(scenario, troops, troop_stats, truegold)
-    terms = _build_objective(variables, features.strengths, troop_weights, scenario)
+    if bear_mode:
+        _build_bear_hero_objective(variables, features.strengths)
+    else:
+        troop_weights = _troop_combat_weights(scenario, troops, troop_stats, truegold)
+        terms = _build_objective(variables, features.strengths, troop_weights, scenario)
 
     status = variables.prob.solve(pulp.PULP_CBC_CMD(msg=False))
     status_name = pulp.LpStatus.get(status, str(status))
     if status_name != "Optimal":
         return _infeasible_solution(scenario, troops, status=status_name)
+
+    if bear_mode:
+        assert troop_stats is not None
+        return _extract_bear_damage_solution(
+            variables,
+            features,
+            troops,
+            scenario,
+            troop_stats=troop_stats,
+            truegold=truegold,
+            beartrap_buffs=beartrap_buffs,
+        )
 
     return _extract_optimal_solution(variables, features, troops, terms, scenario)
