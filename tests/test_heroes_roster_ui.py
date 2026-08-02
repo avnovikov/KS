@@ -216,7 +216,7 @@ def test_home_redirects_to_heroes_when_no_gear(tmp_path: Path) -> None:
     client = TestClient(create_app(heroes_dir=tmp_path))
     res = client.get("/", follow_redirects=False)
     assert res.status_code == 302
-    assert res.headers["location"] == "/heroes"
+    assert res.headers["location"] == "/inventory/heroes"
 
 
 def test_inventory_tabs_link_both_screens(tmp_path: Path) -> None:
@@ -245,14 +245,16 @@ def test_inventory_tabs_link_both_screens(tmp_path: Path) -> None:
     )
     client = TestClient(create_app(gear_dir, heroes_dir=heroes_dir))
 
+    # Legacy paths redirect into the Inventory/Optimiser IA; each screen marks
+    # its own subtab current and links the sibling screens.
     gear_page = client.get("/gear")
     assert gear_page.status_code == 200
-    assert b"Gear inventory" in gear_page.content
-    assert b'href="/heroes"' in gear_page.content
+    assert b'href="/inventory/gear" aria-current="page"' in gear_page.content
+    assert b'href="/inventory/heroes"' in gear_page.content
 
     heroes_page = client.get("/heroes")
     assert heroes_page.status_code == 200
-    assert b"Heroes inventory" in heroes_page.content
-    assert b'href="/gear"' in heroes_page.content
-    assert b'href="/optimize"' in heroes_page.content
-    assert b'href="/optimize"' in gear_page.content
+    assert b'href="/inventory/heroes" aria-current="page"' in heroes_page.content
+    assert b'href="/inventory/gear"' in heroes_page.content
+    assert b'href="/optimiser/events"' in heroes_page.content
+    assert b'href="/optimiser/events"' in gear_page.content

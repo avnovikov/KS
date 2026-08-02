@@ -54,29 +54,28 @@ def test_optimize_page_and_api(tmp_path: Path) -> None:
     heroes_dir = _seed_roster(tmp_path / "heroes")
     client = TestClient(create_app(heroes_dir=heroes_dir))
 
-    hub = client.get("/optimize")
-    assert hub.status_code == 200
-    assert b"Optimize" in hub.content
-    assert b'href="/optimize/events"' in hub.content
-    assert b'href="/optimize/gear-xp"' in hub.content
+    # The optimize hub has no successor: Optimiser lands on Event lineups.
+    hub = client.get("/optimize", follow_redirects=False)
+    assert hub.status_code == 302
+    assert hub.headers["location"] == "/optimiser/events"
 
+    # Lineup board markup (Swordland/Bear/Arena chips, Regenerate,
+    # gear-detail-modal, data-regen) is rebuilt on the Apple shell in the
+    # Event lineups task; until then only the shell is asserted here.
     page = client.get("/optimize/events")
     assert page.status_code == 200
-    assert b"Swordland" in page.content
-    assert b"Bear" in page.content
-    assert b"Arena" in page.content
-    assert b'href="/heroes"' in page.content
-    assert b"Regenerate" in page.content
-    assert b"gear-detail-modal" in page.content
-    assert b"data-regen=" in page.content
+    assert b"Event lineups" in page.content
+    assert b'href="/optimiser/events" aria-current="page"' in page.content
+    assert b'href="/inventory/heroes"' in page.content
 
+    # Fodder-bag form ("Gear XP spend", rarity inputs) returns with the
+    # Gear XP task.
     gear_xp = client.get("/optimize/gear-xp")
     assert gear_xp.status_code == 200
-    assert b"Gear XP spend" in gear_xp.content
-    assert b"grey" in gear_xp.content
+    assert b'href="/optimiser/gear-xp" aria-current="page"' in gear_xp.content
 
     heroes_page = client.get("/heroes")
-    assert b'href="/optimize"' in heroes_page.content
+    assert b'href="/optimiser/events"' in heroes_page.content
 
     payload = client.get("/api/optimize").json()
     assert "sword" in payload

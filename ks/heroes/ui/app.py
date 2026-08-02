@@ -274,14 +274,56 @@ def create_app(
             )
         return resolved_heroes, hero_store
 
+    def _shell_page(
+        request: Request,
+        template: str,
+        *,
+        primary: str,
+        subtab: str,
+        **extra: Any,
+    ) -> HTMLResponse:
+        """Render a page inside the Inventory/Optimiser shell (never cached)."""
+        context: dict[str, Any] = {
+            "primary": primary,
+            "subtab": subtab,
+            "gear_enabled": resolved_gear is not None,
+            "heroes_enabled": resolved_heroes is not None,
+        }
+        context.update(extra)
+        response = templates.TemplateResponse(request, template, context)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.get("/", include_in_schema=False)
     def home() -> RedirectResponse:
         if resolved_gear is not None:
-            return RedirectResponse(url="/gear", status_code=302)
-        return RedirectResponse(url="/heroes", status_code=302)
+            return RedirectResponse(url="/inventory/gear", status_code=302)
+        return RedirectResponse(url="/inventory/heroes", status_code=302)
 
-    @app.get("/gear", response_class=HTMLResponse)
-    def gear_page(request: Request) -> HTMLResponse:
+    # Legacy paths kept for bookmarks; the IA lives under /inventory and
+    # /optimiser now.
+    @app.get("/gear", include_in_schema=False)
+    def legacy_gear() -> RedirectResponse:
+        return RedirectResponse(url="/inventory/gear", status_code=302)
+
+    @app.get("/heroes", include_in_schema=False)
+    def legacy_heroes() -> RedirectResponse:
+        return RedirectResponse(url="/inventory/heroes", status_code=302)
+
+    @app.get("/optimize", include_in_schema=False)
+    def legacy_optimize() -> RedirectResponse:
+        return RedirectResponse(url="/optimiser/events", status_code=302)
+
+    @app.get("/optimize/events", include_in_schema=False)
+    def legacy_optimize_events() -> RedirectResponse:
+        return RedirectResponse(url="/optimiser/events", status_code=302)
+
+    @app.get("/optimize/gear-xp", include_in_schema=False)
+    def legacy_optimize_gear_xp() -> RedirectResponse:
+        return RedirectResponse(url="/optimiser/gear-xp", status_code=302)
+
+    @app.get("/inventory/gear", response_class=HTMLResponse)
+    def inventory_gear_page(request: Request) -> HTMLResponse:
         gear_path, store = _require_gear()
         store.reload()
         pieces = store.all_pieces()
@@ -290,20 +332,76 @@ def create_app(
             pid: with_cache_bust(url, bust)
             for pid, url in ensure_all_icons(pieces, gear_path).items()
         }
-        response = templates.TemplateResponse(
+        return _shell_page(
             request,
-            "gear.html",
-            {
-                "pieces": pieces,
-                "icons": icon_map,
-                "gear_dir": str(gear_path),
-                "cache_bust": bust,
-                "gear_enabled": True,
-                "heroes_enabled": resolved_heroes is not None,
-            },
+            "inventory_gear.html",
+            primary="inventory",
+            subtab="gear",
+            pieces=pieces,
+            icons=icon_map,
+            gear_dir=str(gear_path),
+            cache_bust=bust,
         )
-        response.headers["Cache-Control"] = "no-store"
-        return response
+
+    @app.get("/inventory/heroes", response_class=HTMLResponse)
+    def inventory_heroes_page(request: Request) -> HTMLResponse:
+        heroes_path, store = _require_heroes()
+        store.reload()
+        heroes = store.all_heroes()
+        bust = inventory_revision(heroes_path, "heroes.json")
+        icon_map = {
+            name: with_cache_bust(url, bust)
+            for name, url in ensure_all_hero_icons(heroes, heroes_path).items()
+        }
+        return _shell_page(
+            request,
+            "inventory_heroes.html",
+            primary="inventory",
+            subtab="heroes",
+            heroes=heroes,
+            icons=icon_map,
+            heroes_dir=str(heroes_path),
+            cache_bust=bust,
+        )
+
+    @app.get("/inventory/troops", response_class=HTMLResponse)
+    def inventory_troops_page(request: Request) -> HTMLResponse:
+        return _shell_page(
+            request,
+            "inventory_troops.html",
+            primary="inventory",
+            subtab="troops",
+        )
+
+    @app.get("/optimiser/events", response_class=HTMLResponse)
+    def optimiser_events_page(request: Request) -> HTMLResponse:
+        _require_heroes()
+        return _shell_page(
+            request,
+            "optimiser_events.html",
+            primary="optimiser",
+            subtab="events",
+        )
+
+    @app.get("/optimiser/gear-xp", response_class=HTMLResponse)
+    def optimiser_gear_xp_page(request: Request) -> HTMLResponse:
+        _require_heroes()
+        return _shell_page(
+            request,
+            "optimiser_gear_xp.html",
+            primary="optimiser",
+            subtab="gear-xp",
+        )
+
+    @app.get("/optimiser/hero-levels", response_class=HTMLResponse)
+    def optimiser_hero_levels_page(request: Request) -> HTMLResponse:
+        _require_heroes()
+        return _shell_page(
+            request,
+            "optimiser_hero_levels.html",
+            primary="optimiser",
+            subtab="hero-levels",
+        )
 
     @app.get("/api/gear")
     def api_list_gear() -> dict[str, Any]:
@@ -406,31 +504,6 @@ def create_app(
             "ok": True,
             "piece": {**updated.to_dict(), "icon_url": icon_url},
         }
-
-    @app.get("/heroes", response_class=HTMLResponse)
-    def heroes_page(request: Request) -> HTMLResponse:
-        heroes_path, store = _require_heroes()
-        store.reload()
-        heroes = store.all_heroes()
-        bust = inventory_revision(heroes_path, "heroes.json")
-        icon_map = {
-            name: with_cache_bust(url, bust)
-            for name, url in ensure_all_hero_icons(heroes, heroes_path).items()
-        }
-        response = templates.TemplateResponse(
-            request,
-            "heroes.html",
-            {
-                "heroes": heroes,
-                "icons": icon_map,
-                "heroes_dir": str(heroes_path),
-                "cache_bust": bust,
-                "gear_enabled": resolved_gear is not None,
-                "heroes_enabled": True,
-            },
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return response
 
     @app.get("/api/heroes")
     def api_list_heroes() -> dict[str, Any]:
@@ -538,46 +611,6 @@ def create_app(
                 for h in heroes
             ],
         }
-
-    def _optimize_ctx(heroes_path: Path) -> dict[str, Any]:
-        return {
-            "heroes_dir": str(heroes_path),
-            "gear_enabled": resolved_gear is not None,
-            "heroes_enabled": True,
-        }
-
-    @app.get("/optimize", response_class=HTMLResponse)
-    def optimize_hub(request: Request) -> HTMLResponse:
-        heroes_path, _store = _require_heroes()
-        response = templates.TemplateResponse(
-            request,
-            "optimize_hub.html",
-            _optimize_ctx(heroes_path),
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return response
-
-    @app.get("/optimize/events", response_class=HTMLResponse)
-    def optimize_events_page(request: Request) -> HTMLResponse:
-        heroes_path, _store = _require_heroes()
-        response = templates.TemplateResponse(
-            request,
-            "optimize_events.html",
-            _optimize_ctx(heroes_path),
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return response
-
-    @app.get("/optimize/gear-xp", response_class=HTMLResponse)
-    def optimize_gear_xp_page(request: Request) -> HTMLResponse:
-        heroes_path, _store = _require_heroes()
-        response = templates.TemplateResponse(
-            request,
-            "optimize_gear_xp.html",
-            _optimize_ctx(heroes_path),
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return response
 
     @app.get("/api/optimize")
     def api_optimize() -> dict[str, Any]:

@@ -1,0 +1,30 @@
+{# Apple-light shell. Expects: primary ("inventory"|"optimiser"), subtab,
+   gear_enabled, heroes_enabled. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>{% block title %}KS{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">KS</div>
+    <nav class="primary-nav" aria-label="Primary">
+      <a href="{{ '/inventory/gear' if gear_enabled else '/inventory/heroes' }}" class="{% if primary == 'inventory' %}on{% endif %}">Inventory</a>
+      {% if heroes_enabled %}
+      <a href="/optimiser/events" class="{% if primary == 'optimiser' %}on{% endif %}">Optimiser</a>
+      {% else %}
+      <span aria-disabled="true" title="Start the UI with --heroes to enable Optimiser">Optimiser</span>
+      {% endif %}
+    </nav>
+    <div class="header-actions">{% block actions %}{% endblock %}</div>
+  </header>
+  {% if primary == 'inventory' %}{% include "_subnav_inventory.html" %}{% endif %}
+  {% if primary == 'optimiser' %}{% include "_subnav_optimiser.html" %}{% endif %}
+  <main>{% block content %}{% endblock %}</main>
+  <div id="toast" role="status" hidden></div>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
