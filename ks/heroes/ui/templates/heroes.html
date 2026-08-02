@@ -172,6 +172,7 @@
     #rescan-log .log-line.rematch { color: var(--accent); }
     #rescan-log .log-line.stopped { color: #f0c674; }
     #rescan-log .log-line.error { color: var(--err); }
+    .modal-backdrop {
       position: fixed;
       inset: 0;
       background: rgba(0, 0, 0, 0.55);
@@ -283,7 +284,8 @@
   <div id="rescan-log" aria-live="polite"></div>
   <main>
     <p class="hint">
-      Edit stars/pellets mid-event. Click a hero name for full details. Power scales from the last OCR baseline.
+      Edit level, stars, pellets, and power (OCR fixes). Stars/pellets alone still rescale power;
+      an edited power value is kept as-is. Click a hero name for full details.
     </p>
     <table id="heroes-table">
       <thead>
@@ -291,6 +293,7 @@
           <th class="sortable" data-sort="name" scope="col" title="Sort by name">Name</th>
           <th class="sortable" data-sort="rarity" scope="col" title="Sort by rarity">Rarity</th>
           <th class="sortable" data-sort="troop" scope="col" title="Sort by troop">Troop</th>
+          <th class="sortable" data-sort="level" scope="col" title="Sort by level">Level</th>
           <th class="sortable" data-sort="stars" scope="col" title="Sort by stars">Stars</th>
           <th class="sortable" data-sort="pellets" scope="col" title="Sort by pellets">Pellets</th>
           <th class="sortable" data-sort="power" scope="col" title="Sort by power">Power</th>
@@ -302,6 +305,7 @@
         <tr data-name="{{ h.name }}"
             data-rarity="{{ (h.rarity or '')|lower }}"
             data-troop="{{ (h.troop_type or '')|lower }}"
+            data-level="{{ h.level if h.level is not none else '' }}"
             data-stars="{{ h.stars if h.stars is not none else '' }}"
             data-pellets="{{ h.pellets if h.pellets is not none else '' }}"
             data-power="{{ h.power if h.power is not none else '' }}">
@@ -320,6 +324,11 @@
           <td class="rarity {{ (h.rarity or '')|lower }}">{{ h.rarity or "—" }}</td>
           <td>{{ h.troop_type or "—" }}</td>
           <td>
+            <input type="number" min="1" max="80" step="1"
+                   class="level-input"
+                   value="{{ h.level if h.level is not none else '' }}" />
+          </td>
+          <td>
             <input type="number" min="0" max="5" step="1"
                    class="stars-input"
                    value="{{ h.stars if h.stars is not none else '' }}" />
@@ -329,7 +338,11 @@
                    class="pellets-input"
                    value="{{ h.pellets if h.pellets is not none else '' }}" />
           </td>
-          <td class="power-cell">{{ h.power if h.power is not none else "—" }}</td>
+          <td>
+            <input type="number" min="0" step="1"
+                   class="power-input"
+                   value="{{ h.power if h.power is not none else '' }}" />
+          </td>
           <td>
             <button type="button" class="save-btn">Save</button>
           </td>
@@ -484,7 +497,7 @@
 
     function sortValue(row, key) {
       const raw = row.dataset[key] || "";
-      if (key === "power" || key === "stars" || key === "pellets") {
+      if (key === "power" || key === "stars" || key === "pellets" || key === "level") {
         if (raw === "") return -1;
         const n = Number(raw);
         return Number.isFinite(n) ? n : -1;
@@ -542,11 +555,19 @@
       if (!btn) return;
       btn.addEventListener("click", async () => {
         const name = row.dataset.name;
+        const levelRaw = row.querySelector(".level-input").value;
         const starsRaw = row.querySelector(".stars-input").value;
         const pelletsRaw = row.querySelector(".pellets-input").value;
+        const powerRaw = row.querySelector(".power-input").value;
         const body = {};
+        if (levelRaw !== "") body.level = Number(levelRaw);
         if (starsRaw !== "") body.stars = Number(starsRaw);
         if (pelletsRaw !== "") body.pellets = Number(pelletsRaw);
+        // Only send power when the field changed — otherwise star edits still rescale.
+        const initialPower = row.dataset.power || "";
+        if (powerRaw !== initialPower) {
+          body.power = powerRaw === "" ? null : Number(powerRaw);
+        }
         btn.disabled = true;
         try {
           const res = await fetch("/api/heroes/" + encodeURIComponent(name), {
@@ -558,13 +579,23 @@
           if (!res.ok) {
             throw new Error(data.detail || res.statusText);
           }
-          const powerCell = row.querySelector(".power-cell");
+          const powerInput = row.querySelector(".power-input");
           const p = data.hero.power;
-          powerCell.textContent = p == null ? "—" : String(p);
+          if (powerInput) powerInput.value = p == null ? "" : String(p);
           row.dataset.power = p == null ? "" : String(p);
+          row.dataset.level = data.hero.level == null ? "" : String(data.hero.level);
           row.dataset.stars = data.hero.stars == null ? "" : String(data.hero.stars);
           row.dataset.pellets = data.hero.pellets == null ? "" : String(data.hero.pellets);
-          showToast("Saved " + name + (p != null ? " · power " + p : ""), true);
+          const levelInput = row.querySelector(".level-input");
+          if (levelInput && data.hero.level != null) {
+            levelInput.value = String(data.hero.level);
+          }
+          showToast(
+            "Saved " + name
+              + (data.hero.level != null ? " · Lv " + data.hero.level : "")
+              + (p != null ? " · power " + p : ""),
+            true
+          );
         } catch (err) {
           showToast(String(err.message || err), false);
         } finally {

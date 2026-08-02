@@ -129,6 +129,37 @@ def test_update_hero_unknown(tmp_path: Path) -> None:
         update_hero_stars(store, "Missing", stars=1)
 
 
+def test_update_hero_level_persists_without_changing_power(tmp_path: Path) -> None:
+    from ks.heroes.ui.app import update_hero_stars
+
+    store = _seed(tmp_path)
+    updated = update_hero_stars(store, "Helga", level=57)
+    assert updated.level == 57
+    assert updated.power == 1_000_000
+    raw = json.loads((tmp_path / "heroes.json").read_text(encoding="utf-8"))
+    row = next(h for h in raw["heroes"] if h["name"] == "Helga")
+    assert row["level"] == 57
+
+
+def test_hero_level_locked_against_ocr_without_overwrite(tmp_path: Path) -> None:
+    from ks.heroes.ui.app import update_hero_stars
+
+    store = _seed(tmp_path)
+    update_hero_stars(store, "Helga", level=56)
+    store.upsert(
+        HeroRecord(
+            name="Helga",
+            power=1_000_000,
+            level=1,
+            stars=2,
+            pellets=0,
+            scraped_at="t2",
+        )
+    )
+    locked = next(h for h in store.all_heroes() if h.name == "Helga")
+    assert locked.level == 56
+
+
 def test_fastapi_heroes_patch_and_page(tmp_path: Path) -> None:
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
@@ -191,9 +222,10 @@ def test_fastapi_heroes_rescan_mocked(tmp_path: Path) -> None:
     )
     res = client.post("/api/heroes/rescan")
     assert res.status_code == 200
-    assert res.json()["ok"] is True
-    assert res.json()["count"] >= 1
-    hero = res.json()["heroes"][0]
+    assert "event: done" in res.text
+    assert '"count": 1' in res.text
+    listed = client.get("/api/heroes").json()["heroes"]
+    hero = next(h for h in listed if h["name"] == "Helga")
     assert hero["power"] == 1_100_000
     assert hero["stars"] == 4
 

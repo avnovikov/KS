@@ -362,6 +362,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to heroes.yaml for heroes OCR rescan (default: config/heroes.yaml).",
     )
     ui.add_argument(
+        "--troops",
+        type=Path,
+        default=None,
+        help="Path to troops.yaml (default: config/troops.yaml).",
+    )
+    ui.add_argument(
         "--serial",
         type=str,
         default=None,
@@ -816,6 +822,7 @@ def _cmd_ui(args: argparse.Namespace) -> int:
     run_ui(
         gear,
         heroes_dir=heroes,
+        troops_path=Path(args.troops) if args.troops is not None else None,
         host=str(args.host),
         port=int(args.port),
         gear_config=Path(args.config),
