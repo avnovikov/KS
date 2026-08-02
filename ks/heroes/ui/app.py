@@ -111,6 +111,18 @@ _RARITY_ALIASES = {
     "purple": "epic",
     "gold": "mythic",
 }
+_CANONICAL_SLOTS = frozenset({"helmet", "chest", "gloves", "boots"})
+_SLOT_ALIASES = {
+    "helm": "helmet",
+    "hat": "helmet",
+    "head": "helmet",
+    "armor": "chest",
+    "shroud": "chest",
+    "gauntlet": "gloves",
+    "gauntlets": "gloves",
+    "bracers": "gloves",
+    "greaves": "boots",
+}
 
 
 def normalize_ui_rarity(rarity: str | None) -> str | None:
@@ -128,6 +140,21 @@ def normalize_ui_rarity(rarity: str | None) -> str | None:
     return key
 
 
+def normalize_ui_slot(slot: str | None) -> str | None:
+    """Map UI/OCR slot labels to a canonical store value."""
+    if slot is None:
+        return None
+    key = str(slot).strip().lower()
+    if not key:
+        return None
+    key = _SLOT_ALIASES.get(key, key)
+    if key not in _CANONICAL_SLOTS:
+        raise ValueError(
+            f"slot must be one of {sorted(_CANONICAL_SLOTS)}; got {slot!r}"
+        )
+    return key
+
+
 def update_piece_levels(
     store: GearStore,
     piece_id: str,
@@ -135,8 +162,9 @@ def update_piece_levels(
     enhancement_level: int | None | object = ...,
     mastery_level: int | None | object = ...,
     rarity: str | None | object = ...,
+    slot: str | None | object = ...,
 ) -> GearRecord:
-    """Update enhancement/mastery/rarity; recompute power; persist JSON + DB."""
+    """Update enhancement/mastery/rarity/slot; recompute power; persist JSON + DB."""
     pieces = {p.piece_id: p for p in store.all_pieces()}
     piece = pieces.get(piece_id)
     if piece is None:
@@ -164,6 +192,10 @@ def update_piece_levels(
     if rarity is not ...:
         updates["rarity"] = normalize_ui_rarity(
             None if rarity is None else str(rarity)
+        )
+    if slot is not ...:
+        updates["slot"] = normalize_ui_slot(
+            None if slot is None else str(slot)
         )
 
     if not updates:
@@ -442,6 +474,7 @@ def create_app(
         enh_arg: Any = ...
         mast_arg: Any = ...
         rarity_arg: Any = ...
+        slot_arg: Any = ...
         if raw.get("clear_enhancement"):
             enh_arg = None
         elif "enhancement_level" in raw:
@@ -454,6 +487,10 @@ def create_app(
             rarity_arg = None
         elif "rarity" in raw:
             rarity_arg = raw.get("rarity")
+        if raw.get("clear_slot"):
+            slot_arg = None
+        elif "slot" in raw:
+            slot_arg = raw.get("slot")
 
         try:
             updated = update_piece_levels(
@@ -462,6 +499,7 @@ def create_app(
                 enhancement_level=enh_arg,
                 mastery_level=mast_arg,
                 rarity=rarity_arg,
+                slot=slot_arg,
             )
         except KeyError as exc:
             raise HTTPException(
