@@ -329,5 +329,9 @@ def test_heroes_trust_helper_persists_and_scopes_by_inventory_kind(
             "saving heroes does not clobber the gear payload",
             "clear() removes only the requested kind",
             "save() rejects an unknown kind instead of silently writing garbage",
+            "load() rejects an unknown kind the same way save() does",
+            "clear() rejects an unknown kind the same way save() does",
+            "load() returns null instead of throwing on corrupt stored JSON",
+            "save() swallows a real sessionStorage failure instead of throwing",
         ],
     )

@@ -377,6 +377,48 @@ def test_flag_gear_rows_mastery_incompleteness_is_rarity_gated() -> None:
     assert flags["r"] == "incomplete"
 
 
+def test_flag_gear_rows_incomplete_wins_over_changed_for_a_previously_tracked_row() -> None:
+    """Precedence rule 2 (see trust.py's module docstring): a row present in
+    `before` whose signature differs *and* is missing data this scan reports
+    "incomplete", not "changed" — this is the case that matters most for a
+    trust loop: OCR read this piece fine last scan (enhancement_level=15)
+    and failed to read it this scan (enhancement_level=None), which is
+    exactly the regression the user is spot-checking for."""
+    before = [
+        GearRecord(piece_id="a", name="A", rarity="epic", enhancement_level=15, mastery_level=1)
+    ]
+    after = [
+        GearRecord(piece_id="a", name="A", rarity="epic", enhancement_level=None, mastery_level=1)
+    ]
+    flags = flag_gear_rows(before, after)
+    assert flags == {"a": "incomplete"}
+
+
+def test_flag_gear_rows_purple_is_epics_mastery_requiring_alias() -> None:
+    """normalize_rarity() lowercases/strips but does not canonicalize
+    aliases, and ks/heroes/gear_parse.py's own OCR rarity map keeps "purple"
+    distinct from "epic" (unlike "gold", which it already folds into
+    "mythic"). power.py gives "purple" the identical curve to "epic", so
+    real OCR gear can carry rarity="purple" and must still trigger the
+    mastery-completeness check."""
+    after = [
+        GearRecord(piece_id="p", name="P", rarity="purple", enhancement_level=1, mastery_level=None),
+    ]
+    flags = flag_gear_rows([], after)
+    assert flags["p"] == "incomplete"
+
+
+def test_flag_gear_rows_reuses_normalize_rarity_for_case_and_whitespace() -> None:
+    """The brief mandates reusing normalize_rarity() specifically so casing/
+    whitespace in OCR'd rarity text does not let a mastery-requiring piece
+    slip past the completeness check."""
+    after = [
+        GearRecord(piece_id="e", name="E", rarity=" Epic ", enhancement_level=1, mastery_level=None),
+    ]
+    flags = flag_gear_rows([], after)
+    assert flags["e"] == "incomplete"
+
+
 def test_flag_gear_rows_ignores_volatile_metadata_when_diffing_changed() -> None:
     """scraped_at/raw_text/detail_screenshot are rewritten by OCR on every
     rescan even when nothing meaningful moved; comparing them would mark
@@ -420,6 +462,16 @@ def test_flag_hero_rows_incomplete_when_stars_or_power_missing() -> None:
     flags = flag_hero_rows([], after)
     assert flags["NoStars"] == "incomplete"
     assert flags["NoPower"] == "incomplete"
+
+
+def test_flag_hero_rows_flags_a_complete_hero_absent_from_before_as_new() -> None:
+    """The docstring's "new means first-ever-seen" claim needs its own
+    positive case: both existing "absent from before" fixtures in this
+    suite are also missing stars/power, so they assert "incomplete" and
+    never exercise the plain "new" branch for a hero."""
+    after = [HeroRecord(name="Rookie", power=50_000, stars=1, scraped_at="t1")]
+    flags = flag_hero_rows([], after)
+    assert flags == {"Rookie": "new"}
 
 
 def test_summarize_flags_counts_tally_the_flags_map_exactly() -> None:

@@ -6,12 +6,26 @@ to point that spot-check at the rows worth looking at: which are brand new,
 which changed, and which OCR could not read completely.
 
 Precedence when a row matches more than one condition: **incomplete wins
-over new**. A row missing progression data needs the same manual check
-whether or not it is brand new, so folding that into a bare "new" flag would
-throw away the more actionable signal. "new" and "changed" can never
-collide on the same row by construction — a row is only "new" when its key
-is absent from `before` — so incomplete-over-new is the only precedence
-rule this module needs.
+over both new and changed**. A row missing progression data needs the same
+manual check regardless of whether it is brand new or was already tracked
+with different values last scan — that data-quality problem is the more
+actionable signal either way, so `_diff_rows` checks `incomplete_fn` before
+ever looking at `before`, and reports "incomplete" instead of letting it
+hide inside "new" or "changed". Concretely, both of these report
+"incomplete":
+
+- A row absent from `before` that is also missing data this scan (new +
+  incomplete).
+- A row present in `before` with a different signature that is also
+  missing data this scan (changed + incomplete) — the case that matters
+  most for a trust loop: OCR read this row fine last scan and failed to
+  read it this scan, which is exactly the regression the user is
+  spot-checking for.
+
+"new" and "changed" can never collide with *each other* on the same row by
+construction — a row is only "new" when its key is absent from `before` —
+so incomplete-over-both is a total precedence order, not a fix for one
+pairwise case among several.
 """
 
 from __future__ import annotations
@@ -23,7 +37,16 @@ from ks.heroes.gear_models import GearRecord
 from ks.heroes.models import HeroRecord
 from ks.heroes.ui.power import normalize_rarity
 
-_MASTERY_REQUIRED_RARITIES = {"epic", "mythic", "red"}
+# Rarities that always carry a mastery track and so require mastery_level
+# for completeness. normalize_rarity() only lowercases/strips — it does not
+# fold aliases to a canonical name — and ks/heroes/gear_parse.py's own OCR
+# rarity map keeps "purple" as a string distinct from "epic" (unlike
+# "gold", which that map already canonicalizes to "mythic" before a
+# GearRecord is ever built). ks/heroes/ui/power.py's _RARITY_LINEAR gives
+# "purple" the identical curve to "epic", so real OCR gear can reach this
+# check with rarity="purple" and must be recognized here explicitly, or
+# its missing mastery goes unflagged.
+_MASTERY_REQUIRED_RARITIES = {"epic", "purple", "mythic", "red"}
 
 _Row = TypeVar("_Row")
 
@@ -53,6 +76,11 @@ def _gear_signature(piece: GearRecord) -> tuple[object, ...]:
     parsed conquest/expedition numbers): those are OCR-derived from the
     same enhancement/mastery/power already compared here, so including
     them would only add noise from OCR misreads without a new signal.
+    Also excludes `inventory_page`/`inventory_index`: a piece moving slots
+    in the grid is not a progression change worth flagging on its own (and
+    piece_id already encodes position — see make_piece_id — so a real
+    position change surfaces as a new/vanished piece_id, not a "changed"
+    signature).
     """
     return (
         piece.name,
@@ -80,6 +108,8 @@ def _hero_signature(hero: HeroRecord) -> tuple[object, ...]:
     (OCR-derived detail parsed from the roster/skill screens) — power,
     level, and stars already capture "did this hero's progression move,"
     so folding in nested skill/stat text would only add OCR-misread noise.
+    Also excludes `roster_page`/`roster_index`: a hero moving position in
+    the roster grid is not itself a progression change worth flagging.
     """
     return (
         hero.power,
@@ -102,8 +132,16 @@ def _diff_rows(
 ) -> dict[str, str]:
     """Shared new/changed/incomplete diff, keyed by key_fn(record).
 
-    Rows unchanged in both content and completeness are omitted from the
-    result — presence in the map is itself the "look at this row" signal.
+    `incomplete_fn` is evaluated on the `after` record only — completeness
+    is never compared against `before` — so a row that was incomplete last
+    scan and is identically incomplete again this scan is flagged
+    "incomplete" every time, not just on the scan where data first went
+    missing. That repetition is intentional for a trust loop: an unresolved
+    data gap should keep asking to be looked at rather than going quiet
+    after one scan.
+
+    A row is omitted from the result only when it is complete this scan,
+    was present in `before`, and its signature is unchanged from then.
     """
     before_by_key = {key_fn(record): record for record in before}
     flags: dict[str, str] = {}
@@ -124,17 +162,19 @@ def flag_gear_rows(before: list[GearRecord], after: list[GearRecord]) -> dict[st
     """Diff two gear snapshots into a `piece_id -> flag` trust map.
 
     A piece is "incomplete" when `enhancement_level is None`, or when
-    `rarity` is epic/mythic/red and `mastery_level is None` — those
+    `rarity` is epic/purple/mythic/red and `mastery_level is None` — those
     rarities always carry a mastery track in this game, so a missing
     mastery there is an OCR miss, not "not started yet" (blue/green gear
     has no mastery track at all, so missing mastery there is expected).
+    `purple` is epic's OCR-visible alias, not a separate tier — see
+    `_MASTERY_REQUIRED_RARITIES` for why it is listed explicitly.
 
     A piece is "new" when its `piece_id` was not present in `before`, and
     "changed" when it was present but its name, troop_type, slot, rarity,
     enhancement_level, mastery_level, power, or equip state differs (see
     `_gear_signature` for exactly which fields and why).
 
-    See the module docstring for the new-vs-incomplete precedence rule.
+    See the module docstring for the incomplete-over-new/changed precedence rule.
     """
     return _diff_rows(
         before,
@@ -162,7 +202,7 @@ def flag_hero_rows(before: list[HeroRecord], after: list[HeroRecord]) -> dict[st
     rarity, troop_type, escorts, stars, or pellets differs (see
     `_hero_signature` for exactly which fields and why).
 
-    See the module docstring for the new-vs-incomplete precedence rule.
+    See the module docstring for the incomplete-over-new/changed precedence rule.
     """
     return _diff_rows(
         before,

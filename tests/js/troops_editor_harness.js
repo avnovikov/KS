@@ -971,6 +971,53 @@ function suiteHeroesTrust() {
     threw = true;
   }
   check("save() rejects an unknown kind instead of silently writing garbage", threw);
+
+  // load()/clear() validate `kind` the same way save() does — all three go
+  // through the same storageKey() guard, so a typo'd kind fails loud on any
+  // of them rather than only on save().
+  var loadThrew = false;
+  try {
+    HeroesTrust.load("bogus");
+  } catch (err) {
+    loadThrew = true;
+  }
+  check("load() rejects an unknown kind the same way save() does", loadThrew);
+
+  var clearThrew = false;
+  try {
+    HeroesTrust.clear("bogus");
+  } catch (err) {
+    clearThrew = true;
+  }
+  check("clear() rejects an unknown kind the same way save() does", clearThrew);
+
+  // Corrupt stored JSON (hand-edited, or left over from an older shape)
+  // must read back as "nothing usable", not throw.
+  globalThis.sessionStorage.setItem("heroesUiTrust:heroes", "{not valid json");
+  check(
+    "load() returns null instead of throwing on corrupt stored JSON",
+    HeroesTrust.load("heroes") === null
+  );
+
+  // A real storage failure (quota exceeded, disabled in private mode, ...)
+  // must not propagate out of save() — the specific guarantee app.js's
+  // docstring promises. The stub must actually throw, or this exercises
+  // nothing.
+  var realSetItem = globalThis.sessionStorage.setItem;
+  globalThis.sessionStorage.setItem = function () {
+    throw new Error("QuotaExceededError");
+  };
+  var saveThrewOnStorageFailure = false;
+  try {
+    HeroesTrust.save("gear", trust);
+  } catch (err) {
+    saveThrewOnStorageFailure = true;
+  }
+  globalThis.sessionStorage.setItem = realSetItem;
+  check(
+    "save() swallows a real sessionStorage failure instead of throwing",
+    !saveThrewOnStorageFailure
+  );
 }
 
 /* --- run ------------------------------------------------------------------- */
