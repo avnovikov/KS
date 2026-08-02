@@ -13,7 +13,7 @@ from ks.heroes.errors import DetailOpenError
 from ks.heroes.models import HeroRecord, SkillRecord
 from ks.heroes.name_ocr import resolve_hero_name
 from ks.heroes.name_shot import save_name_screenshot
-from ks.heroes.ocr_util import ocr_box_robust
+from ks.heroes.ocr_util import ocr_box_robust, region_text_lower, text_has_any
 from ks.heroes.parse import (
     clean_name,
     parse_int,
@@ -44,23 +44,19 @@ def is_hero_detail_screen(image: np.ndarray) -> bool:
     h, w = image.shape[:2]
     # Bottom tabs: Stats / Skills / Gear are unique to detail (1080x1920).
     tab_y = max(0, h - 120)
-    tabs = ocr_box_robust(
-        image,
-        (100, tab_y, min(880, w - 100), min(110, h - tab_y)),
-        psm=6,
-    ).lower()
-    if "skill" in tabs or "gear" in tabs or "stat" in tabs:
+    tabs = region_text_lower(
+        image, (100, tab_y, min(880, w - 100), min(110, h - tab_y))
+    )
+    if text_has_any(tabs, ("skill", "gear", "stat")):
         return True
     # Ascend / promotion overlay is still a hero context.
-    mid = ocr_box_robust(
+    mid = region_text_lower(
         image,
         (300, min(h - 280, h - 1), 480, 120),
         whitelist="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
         psm=7,
-    ).lower()
-    if "ascend" in mid or "upgrade" in mid or "pgrade" in mid:
-        return True
-    return False
+    )
+    return text_has_any(mid, ("ascend", "upgrade", "pgrade"))
 
 
 def dismiss_blocking_overlays(device: DeviceProtocol, cfg: HeroesConfig, *, sleep_fn) -> np.ndarray:
@@ -68,13 +64,13 @@ def dismiss_blocking_overlays(device: DeviceProtocol, cfg: HeroesConfig, *, slee
     img = _decode_screencap(device.screencap())
     h, w = img.shape[:2]
     for _ in range(3):
-        mid = ocr_box_robust(
+        mid = region_text_lower(
             img,
             (300, min(h - 280, h - 1), 480, 120),
             whitelist="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
             psm=7,
-        ).lower()
-        if "ascend" not in mid and "promotion" not in mid:
+        )
+        if not text_has_any(mid, ("ascend", "promotion")):
             break
         device.tap(cfg.nav.back.x, cfg.nav.back.y)
         _sleep_ms(cfg.delays.after_tap_ms, sleep_fn=sleep_fn)
@@ -139,6 +135,61 @@ class _HeroIdentity(NamedTuple):
     rarity_ui: str | None
 
 
+def _resolve_hero_name_and_rarity(
+    img,
+    cfg: HeroesConfig,
+    *,
+    ocr_fn: OcrFn | None,
+    names_dir: Path | None,
+) -> tuple[str | None, str, str | None, str | None]:
+    """OCR the hero name; also resolves rarity/color on the live vision path.
+
+    Returns (name, raw_name, rarity_ui, color). On the injected-``ocr_fn``
+    (test) path, ``rarity_ui``/``color`` are always None since only the name
+    box is OCR'd.
+    """
+    if ocr_fn is not None:
+        name = clean_name(ocr_fn(img, cfg.ocr.name.as_tuple()))
+        return name, name or "", None, None
+    return resolve_hero_name(
+        img,
+        cfg.ocr.name.as_tuple(),
+        rarity_box=cfg.ocr.rarity.as_tuple(),
+        templates_dir=names_dir,
+    )
+
+
+def _resolve_missing_name(
+    *,
+    power: int | None,
+    keep_name: str | None,
+    ocr_fn: OcrFn | None,
+    page: int,
+    index: int,
+) -> str | None:
+    """Resolve a placeholder name when name OCR found nothing.
+
+    Returns None when the caller should treat this as a scrape failure (only
+    reachable on the injected-``ocr_fn`` test path). On the live path
+    (``ocr_fn`` is None), raises ``DetailOpenError`` in that same situation
+    since the detail screen is already confirmed open and the collector still
+    needs to tap Back.
+    """
+    if power is None and not keep_name:
+        if ocr_fn is None:
+            raise DetailOpenError(
+                f"hero detail open but name/power OCR failed "
+                f"(page={page} index={index})"
+            )
+        return None
+    name = f"Hero_p{page}_i{index}"
+    print(
+        f"warn: placeholder hero name {name!r} "
+        f"(page={page} index={index}, power={power})"
+    )
+    return name
+
+
 def _resolve_hero_identity(
     img,
     cfg: HeroesConfig,
@@ -156,35 +207,17 @@ def _resolve_hero_identity(
     condition instead raises ``DetailOpenError``, since the detail screen is
     already confirmed open and the collector still needs to tap Back.
     """
-    name_fn = ocr_fn or None
-    rarity_ui: str | None = None
-    color: str | None = None
-    if name_fn is not None:
-        name = clean_name(name_fn(img, cfg.ocr.name.as_tuple()))
-        raw_name = name or ""
-    else:
-        name, raw_name, rarity_ui, color = resolve_hero_name(
-            img,
-            cfg.ocr.name.as_tuple(),
-            rarity_box=cfg.ocr.rarity.as_tuple(),
-            templates_dir=names_dir,
-        )
+    name, raw_name, rarity_ui, color = _resolve_hero_name_and_rarity(
+        img, cfg, ocr_fn=ocr_fn, names_dir=names_dir
+    )
     digits_fn = ocr_fn or _digits_ocr
     power = parse_power(digits_fn(img, cfg.ocr.power.as_tuple()))
     if name is None:
-        if power is None and not keep_name:
-            # Live path already confirmed detail; empty OCR must still close.
-            if ocr_fn is None:
-                raise DetailOpenError(
-                    f"hero detail open but name/power OCR failed "
-                    f"(page={page} index={index})"
-                )
-            return None
-        name = f"Hero_p{page}_i{index}"
-        print(
-            f"warn: placeholder hero name {name!r} "
-            f"(page={page} index={index}, power={power})"
+        name = _resolve_missing_name(
+            power=power, keep_name=keep_name, ocr_fn=ocr_fn, page=page, index=index
         )
+        if name is None:
+            return None
     if keep_name and keep_name.strip():
         name = keep_name.strip()
     if raw_name and name and clean_name(raw_name) != name:

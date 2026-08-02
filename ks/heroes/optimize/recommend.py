@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.gear_assign import (
@@ -14,10 +16,145 @@ from ks.heroes.optimize.troops import breakdown_for_totals
 from ks.heroes.optimize.types import (
     CatalogEntry,
     EventProfile,
+    ModeSolution,
     RecommendResult,
     Scenario,
     TroopsConfig,
 )
+
+
+def _select_modes(
+    scenarios: dict[str, Scenario], force_mode: str | None
+) -> dict[str, Scenario]:
+    """All scenario modes, or just ``force_mode`` if pinned to a single one."""
+    if force_mode is None:
+        return scenarios
+    if force_mode not in scenarios:
+        raise ValueError(f"unknown mode {force_mode!r}; have {sorted(scenarios)}")
+    return {force_mode: scenarios[force_mode]}
+
+
+def _retag_scenario(scenario: Scenario, mode: str) -> Scenario:
+    """Copy ``scenario`` with its ``mode`` field set to ``mode``."""
+    return Scenario(
+        mode=mode,
+        combat_rate=scenario.combat_rate,
+        minutes_held=scenario.minutes_held,
+        personal_rate=scenario.personal_rate,
+        p_first=scenario.p_first,
+        first_bonus=scenario.first_bonus,
+        loot_expected=scenario.loot_expected,
+        enemy_power_scale=scenario.enemy_power_scale,
+        formation_weights=scenario.formation_weights,
+        require_widget=scenario.require_widget,
+    )
+
+
+def _solve_all_modes(
+    heroes: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    troops: TroopsConfig,
+    modes: dict[str, Scenario],
+    *,
+    event: EventProfile | None,
+    troop_stats: TroopStatsTable | None,
+    truegold: int,
+    gear_bonus: dict[str, float] | None,
+    beartrap_buffs: BeartrapBuffs | None = None,
+) -> list[ModeSolution]:
+    return [
+        solve_mode(
+            heroes,
+            catalog,
+            troops,
+            _retag_scenario(scenario, mode),
+            event=event,
+            troop_stats=troop_stats,
+            truegold=truegold,
+            gear_bonus_by_troop=gear_bonus,
+            beartrap_buffs=beartrap_buffs,
+        )
+        for mode, scenario in modes.items()
+    ]
+
+
+def _pick_best_feasible(solutions: list[ModeSolution]) -> ModeSolution:
+    feasible = [s for s in solutions if s.status == "Optimal"]
+    if not feasible:
+        raise ValueError("no feasible mode solution for this roster/troops")
+    return max(feasible, key=lambda s: s.expected_personal_points)
+
+
+def _explain_hero_rows(
+    heroes: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    troops: TroopsConfig,
+    best_scenario: Scenario,
+    best: ModeSolution,
+    *,
+    event: EventProfile | None,
+    troop_stats: TroopStatsTable | None,
+    truegold: int,
+    gear_bonus: dict[str, float] | None,
+) -> tuple[dict[str, Any], ...]:
+    """Best-effort why-cards for the chosen lineup; degrade gracefully on failure."""
+    from ks.heroes.optimize.explain import explain_selected_heroes
+
+    try:
+        return explain_selected_heroes(
+            heroes,
+            catalog,
+            troops,
+            best_scenario,
+            best,
+            event=event,
+            troop_stats=troop_stats,
+            truegold=truegold,
+            gear_bonus_by_troop=gear_bonus,
+        )
+    except Exception:  # noqa: BLE001 — keep Optimal lineup if LOO/explain fails
+        return tuple(
+            {"name": name, "reason": "owned", "explain": None}
+            for name in best.hero_names
+        )
+
+
+def _build_alternatives(
+    solutions: list[ModeSolution], best: ModeSolution
+) -> tuple[dict[str, Any], ...]:
+    return tuple(
+        {
+            "mode": s.mode,
+            "expected_personal_points": s.expected_personal_points,
+            "heroes": list(s.hero_names),
+            "status": s.status,
+        }
+        for s in sorted(
+            solutions,
+            key=lambda s: s.expected_personal_points,
+            reverse=True,
+        )
+        if s.mode != best.mode
+    )
+
+
+def _build_gear_assignment(
+    heroes: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    gear: list[GearRecord] | None,
+    best: ModeSolution,
+    gear_profile: str,
+) -> dict[str, list[dict[str, Any]]] | None:
+    if not gear:
+        return None
+    assigned = assign_best_sets(
+        heroes,
+        catalog,
+        gear,
+        selected=list(best.hero_names),
+        profile=gear_profile,
+    )
+    return assignment_to_dict(assigned)
 
 
 def recommend(
@@ -36,109 +173,39 @@ def recommend(
 ) -> RecommendResult:
     if not scenarios:
         raise ValueError("scenarios must not be empty")
-    if force_mode is not None:
-        if force_mode not in scenarios:
-            raise ValueError(f"unknown mode {force_mode!r}; have {sorted(scenarios)}")
-        modes = {force_mode: scenarios[force_mode]}
-    else:
-        modes = scenarios
+    modes = _select_modes(scenarios, force_mode)
+    gear_bonus = gear_bonus_by_troop(gear, profile=gear_profile) if gear else None
 
-    gear_bonus = (
-        gear_bonus_by_troop(gear, profile=gear_profile) if gear else None
+    solutions = _solve_all_modes(
+        heroes,
+        catalog,
+        troops,
+        modes,
+        event=event,
+        troop_stats=troop_stats,
+        truegold=truegold,
+        gear_bonus=gear_bonus,
+        beartrap_buffs=beartrap_buffs,
     )
-
-    solutions = []
-    for mode, scenario in modes.items():
-        scenario = Scenario(
-            mode=mode,
-            combat_rate=scenario.combat_rate,
-            minutes_held=scenario.minutes_held,
-            personal_rate=scenario.personal_rate,
-            p_first=scenario.p_first,
-            first_bonus=scenario.first_bonus,
-            loot_expected=scenario.loot_expected,
-            enemy_power_scale=scenario.enemy_power_scale,
-            formation_weights=scenario.formation_weights,
-            require_widget=scenario.require_widget,
-        )
-        solutions.append(
-            solve_mode(
-                heroes,
-                catalog,
-                troops,
-                scenario,
-                event=event,
-                troop_stats=troop_stats,
-                truegold=truegold,
-                gear_bonus_by_troop=gear_bonus,
-                beartrap_buffs=beartrap_buffs,
-            )
-        )
-
-    feasible = [s for s in solutions if s.status == "Optimal"]
-    if not feasible:
-        raise ValueError("no feasible mode solution for this roster/troops")
-
-    best = max(feasible, key=lambda s: s.expected_personal_points)
+    best = _pick_best_feasible(solutions)
     total = sum(best.troops.values()) or 1
     ratios = {k: v / total for k, v in best.troops.items()}
-    best_scenario = modes[best.mode]
-    best_scenario = Scenario(
-        mode=best.mode,
-        combat_rate=best_scenario.combat_rate,
-        minutes_held=best_scenario.minutes_held,
-        personal_rate=best_scenario.personal_rate,
-        p_first=best_scenario.p_first,
-        first_bonus=best_scenario.first_bonus,
-        loot_expected=best_scenario.loot_expected,
-        enemy_power_scale=best_scenario.enemy_power_scale,
-        formation_weights=best_scenario.formation_weights,
-        require_widget=best_scenario.require_widget,
-    )
-    from ks.heroes.optimize.explain import explain_selected_heroes
+    best_scenario = _retag_scenario(modes[best.mode], best.mode)
 
-    try:
-        hero_rows = explain_selected_heroes(
-            heroes,
-            catalog,
-            troops,
-            best_scenario,
-            best,
-            event=event,
-            troop_stats=troop_stats,
-            truegold=truegold,
-            gear_bonus_by_troop=gear_bonus,
-        )
-    except Exception:  # noqa: BLE001 — keep Optimal lineup if LOO/explain fails
-        hero_rows = tuple(
-            {"name": name, "reason": "owned", "explain": None}
-            for name in best.hero_names
-        )
-    alternatives = tuple(
-        {
-            "mode": s.mode,
-            "expected_personal_points": s.expected_personal_points,
-            "heroes": list(s.hero_names),
-            "status": s.status,
-        }
-        for s in sorted(
-            solutions,
-            key=lambda s: s.expected_personal_points,
-            reverse=True,
-        )
-        if s.mode != best.mode
+    hero_rows = _explain_hero_rows(
+        heroes,
+        catalog,
+        troops,
+        best_scenario,
+        best,
+        event=event,
+        troop_stats=troop_stats,
+        truegold=truegold,
+        gear_bonus=gear_bonus,
     )
+    alternatives = _build_alternatives(solutions, best)
     by_level = breakdown_for_totals(troops, best.troops)
-    gear_assignment = None
-    if gear:
-        assigned = assign_best_sets(
-            heroes,
-            catalog,
-            gear,
-            selected=list(best.hero_names),
-            profile=gear_profile,
-        )
-        gear_assignment = assignment_to_dict(assigned)
+    gear_assignment = _build_gear_assignment(heroes, catalog, gear, best, gear_profile)
     return RecommendResult(
         recommended_mode=best.mode,
         heroes=hero_rows,

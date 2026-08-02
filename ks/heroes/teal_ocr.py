@@ -8,6 +8,8 @@ import cv2
 import numpy as np
 import pytesseract
 
+from ks.heroes.ocr_util import crop_bgr_box
+
 _PERCENT_OR_NUM = re.compile(r"(\d+(?:\.\d+)?)\s*%?")
 
 
@@ -27,31 +29,14 @@ def teal_highlight_mask(bgr: np.ndarray) -> np.ndarray:
     return cv2.bitwise_or(hsv_mask, bgr_mask)
 
 
-def extract_teal_current_percent(
-    image: np.ndarray,
-    box: tuple[int, int, int, int] | None = None,
-) -> float | None:
-    """OCR the teal/green current bonus percent inside ``image`` or ``box``.
+def _crop_to_box(
+    image: np.ndarray, box: tuple[int, int, int, int] | None
+) -> np.ndarray:
+    return crop_bgr_box(image, box, none_returns_full=True)
 
-    Returns a float like ``216.0`` for ``216%``, or None if nothing reliable.
-    """
-    if image.ndim not in (2, 3):
-        raise ValueError("image must be 2D or 3D")
-    if box is not None:
-        x, y, w, h = box
-        if w <= 0 or h <= 0:
-            raise ValueError(f"box w/h must be > 0; got {box}")
-        img_h, img_w = image.shape[:2]
-        if x < 0 or y < 0 or x + w > img_w or y + h > img_h:
-            raise ValueError(f"box {box} outside image bounds {image.shape[:2]}")
-        crop = image[y : y + h, x : x + w]
-    else:
-        crop = image
 
-    if crop.ndim == 2:
-        crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
-
-    mask = teal_highlight_mask(crop)
+def _denoise_teal_mask(mask: np.ndarray) -> np.ndarray:
+    """Drop connected components too small/thin to be digit strokes."""
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
     clean = np.zeros_like(mask)
     for i in range(1, num_labels):
@@ -59,12 +44,12 @@ def extract_teal_current_percent(
         height = int(stats[i, cv2.CC_STAT_HEIGHT])
         if 12 <= area <= 10_000 and height >= 5:
             clean[labels == i] = 255
-    if clean.sum() == 0:
-        return None
+    return clean
 
-    clean = cv2.dilate(clean, np.ones((2, 2), np.uint8), iterations=1)
-    up = cv2.resize(clean, None, fx=4, fy=4, interpolation=cv2.INTER_NEAREST)
 
+def _ocr_percent_candidates(mask: np.ndarray) -> list[float]:
+    """Run OCR across polarity/PSM variants, collecting plausible percents."""
+    up = cv2.resize(mask, None, fx=4, fy=4, interpolation=cv2.INTER_NEAREST)
     candidates: list[float] = []
     for variant in (up, 255 - up):
         for psm in (7, 8, 6):
@@ -78,6 +63,31 @@ def extract_teal_current_percent(
                 value = float(match.group(1))
                 if 1.0 <= value <= 400.0:
                     candidates.append(value)
+    return candidates
+
+
+def extract_teal_current_percent(
+    image: np.ndarray,
+    box: tuple[int, int, int, int] | None = None,
+) -> float | None:
+    """OCR the teal/green current bonus percent inside ``image`` or ``box``.
+
+    Returns a float like ``216.0`` for ``216%``, or None if nothing reliable.
+    """
+    if image.ndim not in (2, 3):
+        raise ValueError("image must be 2D or 3D")
+    crop = _crop_to_box(image, box)
+
+    if crop.ndim == 2:
+        crop = cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR)
+
+    mask = teal_highlight_mask(crop)
+    clean = _denoise_teal_mask(mask)
+    if clean.sum() == 0:
+        return None
+    clean = cv2.dilate(clean, np.ones((2, 2), np.uint8), iterations=1)
+
+    candidates = _ocr_percent_candidates(clean)
     if not candidates:
         return None
     # Most common reading wins (OCR often repeats the same %).

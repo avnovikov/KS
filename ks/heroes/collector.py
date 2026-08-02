@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import replace
-from typing import Callable
+from typing import Callable, TypeVar
 
 from ks.heroes.config import HeroesConfig
 from ks.heroes.models import HeroRecord
@@ -16,7 +16,10 @@ from ks.heroes.scrape import (
     is_hero_detail_screen,
     scrape_hero,
 )
+from ks.heroes.stars_vision import StarProgress, count_stars_pellets
 from ks.heroes.store import HeroStore
+
+_T = TypeVar("_T")
 
 
 def _sanitize_power(power: int | None, *, previous: int | None) -> int | None:
@@ -360,6 +363,134 @@ def _rematch_hero_name(
     return None
 
 
+def _try_capture_name_screenshot(
+    device: DeviceProtocol,
+    cfg: HeroesConfig,
+    store: HeroStore,
+    hero: HeroRecord,
+    sleep: Callable[[float], None],
+    *,
+    page: int,
+    attempt: int,
+) -> HeroRecord | None:
+    """One capture attempt on the (assumed open) detail screen.
+
+    Returns the updated, already-upserted record on success — or None when
+    the detail screen never opened (caller decides whether to retry).
+    """
+    img = decode_screencap(device.screencap())
+    img = dismiss_blocking_overlays(device, cfg, sleep_fn=sleep)
+    if not is_hero_detail_screen(img):
+        print(
+            f"warn: not detail for {hero.name} "
+            f"(page={page} idx={hero.roster_index} try={attempt + 1})"
+        )
+        return None
+
+    rel = save_name_screenshot(img, cfg.ocr.name, store.names_dir, hero.name)
+    if hero.name_screenshot and hero.name_screenshot != rel:
+        rename_name_screenshot(store.out_dir, hero.name_screenshot, hero.name)
+    new_hero = replace(hero, name_screenshot=rel)
+    store.upsert(new_hero)
+    return new_hero
+
+
+def _open_detail_with_retries(
+    device: DeviceProtocol,
+    cfg: HeroesConfig,
+    hero: HeroRecord,
+    sleep: Callable[[float], None],
+    *,
+    page: int,
+    fail_label: str,
+    attempt_fn: Callable[[int], _T | None],
+) -> _T | None:
+    """Open a hero detail screen and run ``attempt_fn``; up to 2 tries.
+
+    Returns the attempt result on success, or None if every attempt failed
+    (already logged). The roster is back in view either way.
+    """
+    cell = cfg.roster.cells[hero.roster_index]
+    for attempt in range(2):
+        device.tap(cell.x, cell.y)
+        sleep(cfg.delays.after_open_ms / 1000.0)
+        try:
+            result = attempt_fn(attempt)
+        except Exception as exc:  # noqa: BLE001
+            print(f"warn: {fail_label} failed for {hero.name}: {exc}")
+            result = None
+        _close_detail_screen(device, cfg, sleep)
+        if result is not None:
+            _wait_for_roster_screen(device, cfg, sleep)
+            return result
+    print(f"warn: gave up on {hero.name}")
+    return None
+
+
+def _for_each_roster_hero(
+    device: DeviceProtocol,
+    cfg: HeroesConfig,
+    store: HeroStore,
+    sleep: Callable[[float], None],
+    *,
+    visit: Callable[[HeroRecord, int], HeroRecord | None],
+) -> list[HeroRecord]:
+    """Walk stored heroes by roster page; collect records returned by ``visit``."""
+    heroes = store.all_heroes()
+    if not heroes:
+        return []
+
+    by_page = _group_by_roster_page(heroes)
+    pages = sorted(by_page)
+    current_page = pages[0]
+    updated: list[HeroRecord] = []
+
+    for page in pages:
+        current_page = _swipe_to_roster_page(device, cfg, sleep, current_page, page)
+
+        page_heroes = sorted(by_page.get(page, []), key=lambda h: h.roster_index)
+        for hero in page_heroes:
+            if hero.roster_index < 0 or hero.roster_index >= len(cfg.roster.cells):
+                print(
+                    f"warn: skip {hero.name}: roster_index={hero.roster_index} out of range"
+                )
+                continue
+            try:
+                _wait_for_roster_screen(device, cfg, sleep)
+            except Exception as exc:  # noqa: BLE001
+                print(f"warn: roster sync failed before {hero.name}: {exc}")
+                break
+
+            new_hero = visit(hero, page)
+            if new_hero is not None:
+                updated.append(new_hero)
+
+    return updated
+
+
+def _capture_name_screenshot_for_hero(
+    device: DeviceProtocol,
+    cfg: HeroesConfig,
+    store: HeroStore,
+    hero: HeroRecord,
+    sleep: Callable[[float], None],
+    *,
+    page: int,
+) -> HeroRecord | None:
+    """Open one hero's detail screen and save its top-center name crop; up to 2 attempts."""
+    return _open_detail_with_retries(
+        device,
+        cfg,
+        hero,
+        sleep,
+        page=page,
+        fail_label="name shot",
+        attempt_fn=lambda attempt: _try_capture_name_screenshot(
+            device, cfg, store, hero, sleep, page=page, attempt=attempt
+        ),
+    )
+
+
 def capture_name_screenshots(
     device: DeviceProtocol,
     cfg: HeroesConfig,
@@ -372,110 +503,84 @@ def capture_name_screenshots(
     Does not re-OCR names — keeps whatever is already in the store (manual fixes).
     Skips a slot when the detail screen does not open (avoids training on HUD crops).
     """
-    from ks.heroes.ocr_util import ocr_box_robust
-    from ks.heroes.scrape import dismiss_blocking_overlays, is_hero_detail_screen
-
     sleep = sleep_fn or time.sleep
-    heroes = store.all_heroes()
-    if not heroes:
-        return []
+    count = 0
 
-    def _on_roster(img) -> bool:
-        if is_hero_detail_screen(img):
-            return False
-        h, w = img.shape[:2]
-        # Broad bands — pointer-location overlay shifts OCR; keep matching loose.
-        top = ocr_box_robust(img, (80, 0, min(920, w - 80), 160), psm=6).lower()
-        bottom = ocr_box_robust(
-            img, (20, max(0, h - 280), min(1040, w - 20), min(280, h)), psm=6
-        ).lower()
-        blob = f"{top} {bottom}"
-        return (
-            "hero" in blob
-            or "recruit" in blob
-            or "drill" in blob
-            or "power" in top
+    def visit(hero: HeroRecord, page: int) -> HeroRecord | None:
+        nonlocal count
+        new_hero = _capture_name_screenshot_for_hero(
+            device, cfg, store, hero, sleep, page=page
         )
+        if new_hero is not None:
+            count += 1
+            print(f"name shot [{count}] {hero.name} → {new_hero.name_screenshot}")
+        return new_hero
 
-    def _ensure_roster() -> None:
-        for _ in range(4):
-            img = decode_screencap(device.screencap())
-            if _on_roster(img):
-                return
-            device.tap(cfg.nav.back.x, cfg.nav.back.y)
-            sleep(cfg.delays.after_tap_ms / 1000.0)
-        raise RuntimeError("could not return to heroes roster")
+    return _for_each_roster_hero(device, cfg, store, sleep, visit=visit)
 
-    by_page: dict[int, list[HeroRecord]] = {}
-    for hero in heroes:
-        by_page.setdefault(hero.roster_page, []).append(hero)
 
-    pages = sorted(by_page)
-    # Assume the device is already on the first page that has heroes (no lead-in swipes).
-    current_page = pages[0]
-    updated: list[HeroRecord] = []
+def _try_capture_star_progress(
+    device: DeviceProtocol,
+    cfg: HeroesConfig,
+    store: HeroStore,
+    hero: HeroRecord,
+    sleep: Callable[[float], None],
+    *,
+    page: int,
+    attempt: int,
+) -> tuple[HeroRecord, StarProgress] | None:
+    """One capture attempt on the (assumed open) detail screen.
 
-    for page in pages:
-        while current_page < page:
-            swipe = cfg.roster.page_swipe
-            device.swipe(swipe.x1, swipe.y1, swipe.x2, swipe.y2, swipe.duration_ms)
-            sleep(cfg.delays.after_open_ms / 1000.0)
-            current_page += 1
+    Returns (updated_hero, progress) on success — already upserted into
+    ``store`` — or None when the detail screen never opened (caller decides
+    whether to retry).
+    """
+    img = decode_screencap(device.screencap())
+    img = dismiss_blocking_overlays(device, cfg, sleep_fn=sleep)
+    if not is_hero_detail_screen(img):
+        print(
+            f"warn: not detail for {hero.name} "
+            f"(page={page} idx={hero.roster_index} try={attempt + 1})"
+        )
+        return None
 
-        page_heroes = sorted(by_page.get(page, []), key=lambda h: h.roster_index)
-        for hero in page_heroes:
-            if hero.roster_index < 0 or hero.roster_index >= len(cfg.roster.cells):
-                print(
-                    f"warn: skip {hero.name}: roster_index={hero.roster_index} out of range"
-                )
-                continue
-            try:
-                _ensure_roster()
-            except Exception as exc:  # noqa: BLE001
-                print(f"warn: roster sync failed before {hero.name}: {exc}")
-                break
+    progress = count_stars_pellets(img, cfg.ocr.stars)
+    new_hero = replace(hero, stars=progress.stars, pellets=progress.pellets)
+    store.upsert(new_hero)
+    return new_hero, progress
 
-            cell = cfg.roster.cells[hero.roster_index]
-            tap_y = cell.y
-            opened = False
-            for attempt in range(2):
-                device.tap(cell.x, tap_y)
-                sleep(cfg.delays.after_open_ms / 1000.0)
-                try:
-                    img = decode_screencap(device.screencap())
-                    img = dismiss_blocking_overlays(device, cfg, sleep_fn=sleep)
-                    if not is_hero_detail_screen(img):
-                        print(
-                            f"warn: not detail for {hero.name} "
-                            f"(page={page} idx={hero.roster_index} try={attempt+1})"
-                        )
-                        device.tap(cfg.nav.back.x, cfg.nav.back.y)
-                        sleep(cfg.delays.after_tap_ms / 1000.0)
-                        continue
-                    rel = save_name_screenshot(
-                        img, cfg.ocr.name, store.names_dir, hero.name
-                    )
-                    if hero.name_screenshot and hero.name_screenshot != rel:
-                        rename_name_screenshot(
-                            store.out_dir, hero.name_screenshot, hero.name
-                        )
-                    new_hero = replace(hero, name_screenshot=rel)
-                    store.upsert(new_hero)
-                    updated.append(new_hero)
-                    print(f"name shot [{len(updated)}] {hero.name} → {rel}")
-                    opened = True
-                    device.tap(cfg.nav.back.x, cfg.nav.back.y)
-                    sleep(cfg.delays.after_tap_ms / 1000.0)
-                    _ensure_roster()
-                    break
-                except Exception as exc:  # noqa: BLE001
-                    print(f"warn: name shot failed for {hero.name}: {exc}")
-                    device.tap(cfg.nav.back.x, cfg.nav.back.y)
-                    sleep(cfg.delays.after_tap_ms / 1000.0)
-            if not opened:
-                print(f"warn: gave up on {hero.name}")
 
-    return updated
+def _capture_star_progress_for_hero(
+    device: DeviceProtocol,
+    cfg: HeroesConfig,
+    store: HeroStore,
+    hero: HeroRecord,
+    sleep: Callable[[float], None],
+    *,
+    page: int,
+) -> tuple[HeroRecord, StarProgress] | None:
+    """Open one hero's detail screen and refresh star progress; up to 2 attempts."""
+    return _open_detail_with_retries(
+        device,
+        cfg,
+        hero,
+        sleep,
+        page=page,
+        fail_label="stars",
+        attempt_fn=lambda attempt: _try_capture_star_progress(
+            device, cfg, store, hero, sleep, page=page, attempt=attempt
+        ),
+    )
+
+
+def _log_star_progress_update(
+    hero: HeroRecord, progress: StarProgress, count: int
+) -> None:
+    print(
+        f"stars [{count}] {hero.name}: "
+        f"{progress.stars}* + {progress.pellets} pellets "
+        f"(slots={progress.per_slot})"
+    )
 
 
 def capture_star_progress(
@@ -486,111 +591,25 @@ def capture_star_progress(
     sleep_fn: Callable[[float], None] | None = None,
 ) -> list[HeroRecord]:
     """Open each stored hero; update ``stars`` / ``pellets`` from the star strip."""
-    from ks.heroes.ocr_util import ocr_box_robust
-    from ks.heroes.scrape import dismiss_blocking_overlays, is_hero_detail_screen
-    from ks.heroes.stars_vision import count_stars_pellets
-
     if cfg.ocr.stars is None:
         raise ValueError("ocr.stars box is required for star capture")
 
     sleep = sleep_fn or time.sleep
-    heroes = store.all_heroes()
-    if not heroes:
-        return []
+    count = 0
 
-    def _on_roster(img) -> bool:
-        if is_hero_detail_screen(img):
-            return False
-        h, w = img.shape[:2]
-        top = ocr_box_robust(img, (80, 0, min(920, w - 80), 160), psm=6).lower()
-        bottom = ocr_box_robust(
-            img, (20, max(0, h - 280), min(1040, w - 20), min(280, h)), psm=6
-        ).lower()
-        blob = f"{top} {bottom}"
-        return (
-            "hero" in blob
-            or "recruit" in blob
-            or "drill" in blob
-            or "power" in top
+    def visit(hero: HeroRecord, page: int) -> HeroRecord | None:
+        nonlocal count
+        result = _capture_star_progress_for_hero(
+            device, cfg, store, hero, sleep, page=page
         )
+        if result is None:
+            return None
+        new_hero, progress = result
+        count += 1
+        _log_star_progress_update(hero, progress, count)
+        return new_hero
 
-    def _ensure_roster() -> None:
-        for _ in range(4):
-            img = decode_screencap(device.screencap())
-            if _on_roster(img):
-                return
-            device.tap(cfg.nav.back.x, cfg.nav.back.y)
-            sleep(cfg.delays.after_tap_ms / 1000.0)
-        raise RuntimeError("could not return to heroes roster")
-
-    by_page: dict[int, list[HeroRecord]] = {}
-    for hero in heroes:
-        by_page.setdefault(hero.roster_page, []).append(hero)
-
-    pages = sorted(by_page)
-    current_page = pages[0]
-    updated: list[HeroRecord] = []
-
-    for page in pages:
-        while current_page < page:
-            swipe = cfg.roster.page_swipe
-            device.swipe(swipe.x1, swipe.y1, swipe.x2, swipe.y2, swipe.duration_ms)
-            sleep(cfg.delays.after_open_ms / 1000.0)
-            current_page += 1
-
-        page_heroes = sorted(by_page.get(page, []), key=lambda h: h.roster_index)
-        for hero in page_heroes:
-            if hero.roster_index < 0 or hero.roster_index >= len(cfg.roster.cells):
-                print(
-                    f"warn: skip {hero.name}: roster_index={hero.roster_index} out of range"
-                )
-                continue
-            try:
-                _ensure_roster()
-            except Exception as exc:  # noqa: BLE001
-                print(f"warn: roster sync failed before {hero.name}: {exc}")
-                break
-
-            cell = cfg.roster.cells[hero.roster_index]
-            opened = False
-            for attempt in range(2):
-                device.tap(cell.x, cell.y)
-                sleep(cfg.delays.after_open_ms / 1000.0)
-                try:
-                    img = decode_screencap(device.screencap())
-                    img = dismiss_blocking_overlays(device, cfg, sleep_fn=sleep)
-                    if not is_hero_detail_screen(img):
-                        print(
-                            f"warn: not detail for {hero.name} "
-                            f"(page={page} idx={hero.roster_index} try={attempt+1})"
-                        )
-                        device.tap(cfg.nav.back.x, cfg.nav.back.y)
-                        sleep(cfg.delays.after_tap_ms / 1000.0)
-                        continue
-                    progress = count_stars_pellets(img, cfg.ocr.stars)
-                    new_hero = replace(
-                        hero, stars=progress.stars, pellets=progress.pellets
-                    )
-                    store.upsert(new_hero)
-                    updated.append(new_hero)
-                    print(
-                        f"stars [{len(updated)}] {hero.name}: "
-                        f"{progress.stars}* + {progress.pellets} pellets "
-                        f"(slots={progress.per_slot})"
-                    )
-                    opened = True
-                    device.tap(cfg.nav.back.x, cfg.nav.back.y)
-                    sleep(cfg.delays.after_tap_ms / 1000.0)
-                    _ensure_roster()
-                    break
-                except Exception as exc:  # noqa: BLE001
-                    print(f"warn: stars failed for {hero.name}: {exc}")
-                    device.tap(cfg.nav.back.x, cfg.nav.back.y)
-                    sleep(cfg.delays.after_tap_ms / 1000.0)
-            if not opened:
-                print(f"warn: gave up on {hero.name}")
-
-    return updated
+    return _for_each_roster_hero(device, cfg, store, sleep, visit=visit)
 
 
 def _looks_like_hero_roster_screen(img) -> bool:
@@ -709,26 +728,18 @@ def _capture_power_stats_for_hero(
     *,
     page: int,
 ) -> tuple[HeroRecord, int | None] | None:
-    """Open one hero's detail screen and refresh power/stats; up to 2 attempts.
-
-    Returns (updated_hero, sanitized_power) on success, or None if every
-    attempt failed (already logged). The roster is back in view either way.
-    """
-    cell = cfg.roster.cells[hero.roster_index]
-    for attempt in range(2):
-        device.tap(cell.x, cell.y)
-        sleep(cfg.delays.after_open_ms / 1000.0)
-        try:
-            result = _try_read_power_stats(device, cfg, store, hero, sleep, page=page, attempt=attempt)
-        except Exception as exc:  # noqa: BLE001
-            print(f"warn: power/stats failed for {hero.name}: {exc}")
-            result = None
-        _close_detail_screen(device, cfg, sleep)
-        if result is not None:
-            _wait_for_roster_screen(device, cfg, sleep)
-            return result
-    print(f"warn: gave up on {hero.name}")
-    return None
+    """Open one hero's detail screen and refresh power/stats; up to 2 attempts."""
+    return _open_detail_with_retries(
+        device,
+        cfg,
+        hero,
+        sleep,
+        page=page,
+        fail_label="power/stats",
+        attempt_fn=lambda attempt: _try_read_power_stats(
+            device, cfg, store, hero, sleep, page=page, attempt=attempt
+        ),
+    )
 
 
 def capture_power_stats(
@@ -743,35 +754,18 @@ def capture_power_stats(
     Leaves level / stars / pellets / skills / rarity / troop untouched.
     """
     sleep = sleep_fn or time.sleep
-    heroes = store.all_heroes()
-    if not heroes:
-        return []
+    count = 0
 
-    by_page = _group_by_roster_page(heroes)
-    pages = sorted(by_page)
-    current_page = pages[0]
-    updated: list[HeroRecord] = []
+    def visit(hero: HeroRecord, page: int) -> HeroRecord | None:
+        nonlocal count
+        result = _capture_power_stats_for_hero(
+            device, cfg, store, hero, sleep, page=page
+        )
+        if result is None:
+            return None
+        new_hero, power = result
+        count += 1
+        _log_power_stats_update(hero, new_hero, power, count)
+        return new_hero
 
-    for page in pages:
-        current_page = _swipe_to_roster_page(device, cfg, sleep, current_page, page)
-
-        page_heroes = sorted(by_page.get(page, []), key=lambda h: h.roster_index)
-        for hero in page_heroes:
-            if hero.roster_index < 0 or hero.roster_index >= len(cfg.roster.cells):
-                print(
-                    f"warn: skip {hero.name}: roster_index={hero.roster_index} out of range"
-                )
-                continue
-            try:
-                _wait_for_roster_screen(device, cfg, sleep)
-            except Exception as exc:  # noqa: BLE001
-                print(f"warn: roster sync failed before {hero.name}: {exc}")
-                break
-
-            result = _capture_power_stats_for_hero(device, cfg, store, hero, sleep, page=page)
-            if result is not None:
-                new_hero, power = result
-                updated.append(new_hero)
-                _log_power_stats_update(hero, new_hero, power, len(updated))
-
-    return updated
+    return _for_each_roster_hero(device, cfg, store, sleep, visit=visit)

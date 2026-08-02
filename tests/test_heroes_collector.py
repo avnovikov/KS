@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import cv2
 import numpy as np
+import pytest
 
 from ks.device.fake import FakeDevice
-from ks.heroes.collector import collect_heroes
+from ks.heroes.collector import capture_name_screenshots, capture_star_progress, collect_heroes
 from ks.heroes.config import load_heroes_config
 from ks.heroes.models import HeroRecord
+from ks.heroes.scrape import decode_screencap
 from ks.heroes.store import HeroStore
 
 
@@ -30,6 +34,114 @@ def _png() -> bytes:
     ok, buf = cv2.imencode(".png", np.zeros((1920, 1080, 3), dtype=np.uint8))
     assert ok
     return buf.tobytes()
+
+
+class NavigatingDevice(FakeDevice):
+    """Fake device with a simple roster/detail state machine driven by taps.
+
+    Used to exercise ``capture_name_screenshots`` / ``capture_star_progress``,
+    which (unlike ``collect_heroes``) drive screen-open detection through the
+    live ``is_hero_detail_screen`` / roster-lookalike helpers rather than an
+    injectable ``ocr_fn``.
+    """
+
+    def __init__(self, cfg, png_bytes: bytes) -> None:
+        super().__init__(png_bytes=png_bytes)
+        self.cfg = cfg
+        self.state = "roster"
+
+    def tap(self, x: int, y: int) -> None:
+        super().tap(x, y)
+        if (x, y) == (self.cfg.nav.back.x, self.cfg.nav.back.y):
+            self.state = "roster"
+        else:
+            self.state = "detail"
+
+
+def _patch_roster_detail_detection(monkeypatch, device: NavigatingDevice) -> None:
+    """Route the collector's screen-classification helpers through ``device.state``."""
+    monkeypatch.setattr(
+        "ks.heroes.collector.is_hero_detail_screen", lambda img: device.state == "detail"
+    )
+    monkeypatch.setattr(
+        "ks.heroes.collector._looks_like_hero_roster_screen",
+        lambda img: device.state == "roster",
+    )
+    monkeypatch.setattr(
+        "ks.heroes.collector.dismiss_blocking_overlays",
+        lambda device, cfg, sleep_fn: decode_screencap(device.screencap()),
+    )
+
+
+def test_capture_name_screenshots_saves_and_updates_store(tmp_path, monkeypatch):
+    cfg = load_heroes_config()
+    store = HeroStore(tmp_path)
+    store.upsert(HeroRecord(name="Diana", roster_page=0, roster_index=0, scraped_at="t0"))
+    store.upsert(HeroRecord(name="Edwin", roster_page=0, roster_index=1, scraped_at="t0"))
+
+    device = NavigatingDevice(cfg, png_bytes=_png())
+    _patch_roster_detail_detection(monkeypatch, device)
+
+    updated = capture_name_screenshots(device, cfg, store, sleep_fn=lambda _s: None)
+
+    assert [h.name for h in updated] == ["Diana", "Edwin"]
+    stored_by_name = {h.name: h for h in store.all_heroes()}
+    for hero in updated:
+        assert hero.name_screenshot == f"names/{hero.name}.png"
+        assert (store.out_dir / hero.name_screenshot).is_file()
+        assert stored_by_name[hero.name].name_screenshot == hero.name_screenshot
+    assert device.state == "roster"
+
+
+def test_capture_name_screenshots_returns_empty_for_empty_store(tmp_path):
+    cfg = load_heroes_config()
+    store = HeroStore(tmp_path)
+    device = NavigatingDevice(cfg, png_bytes=_png())
+    assert capture_name_screenshots(device, cfg, store, sleep_fn=lambda _s: None) == []
+    assert device.taps == []
+
+
+def test_capture_name_screenshots_skips_out_of_range_roster_index(tmp_path, monkeypatch):
+    cfg = load_heroes_config()
+    store = HeroStore(tmp_path)
+    store.upsert(
+        HeroRecord(name="Ghost", roster_page=0, roster_index=999, scraped_at="t0")
+    )
+    device = NavigatingDevice(cfg, png_bytes=_png())
+    _patch_roster_detail_detection(monkeypatch, device)
+
+    updated = capture_name_screenshots(device, cfg, store, sleep_fn=lambda _s: None)
+    assert updated == []
+    assert device.taps == []
+
+
+def test_capture_star_progress_updates_stars_and_pellets(tmp_path, monkeypatch):
+    cfg = load_heroes_config()
+    assert cfg.ocr.stars is not None
+    store = HeroStore(tmp_path)
+    store.upsert(HeroRecord(name="Fahd", roster_page=0, roster_index=0, scraped_at="t0"))
+
+    device = NavigatingDevice(cfg, png_bytes=_png())
+    _patch_roster_detail_detection(monkeypatch, device)
+
+    updated = capture_star_progress(device, cfg, store, sleep_fn=lambda _s: None)
+
+    assert [h.name for h in updated] == ["Fahd"]
+    # Blank frame → vision finds no yellow star pixels.
+    assert updated[0].stars == 0
+    assert updated[0].pellets == 0
+    assert store.all_heroes()[0].stars == 0
+    assert device.state == "roster"
+
+
+def test_capture_star_progress_requires_stars_box(tmp_path):
+    cfg = load_heroes_config()
+    cfg_without_stars = replace(cfg, ocr=replace(cfg.ocr, stars=None))
+    device = FakeDevice(png_bytes=_png())
+    store = HeroStore(tmp_path)
+
+    with pytest.raises(ValueError, match="ocr.stars"):
+        capture_star_progress(device, cfg_without_stars, store, sleep_fn=lambda _s: None)
 
 
 def test_collect_heroes_pages_then_stops(tmp_path):

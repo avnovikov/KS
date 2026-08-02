@@ -96,6 +96,41 @@ def _hero_tags(hero_name: str, roles: dict[str, Any]) -> set[str]:
     return {str(t) for t in (meta.get("tags") or meta.get("arena_tags") or [])}
 
 
+def _arena_value_for(
+    hero: HeroRecord, entry: CatalogEntry | None, meta: dict[str, Any]
+) -> float:
+    """Catalog arena_value wins; fall back to per-hero role metadata, then a default."""
+    if entry is not None and entry.arena_value is not None:
+        return float(entry.arena_value)
+    return float(meta.get("arena_value") or 40.0)
+
+
+def _rarity_bonus(entry: CatalogEntry | None, hero: HeroRecord) -> float:
+    rarity = ((entry.rarity if entry else hero.rarity) or "").lower()
+    if rarity in {"legendary", "mythic"}:
+        return 8.0
+    if rarity == "epic":
+        return 4.0
+    return 0.0
+
+
+def _defense_tag_multiplier(hero_name: str, roles: dict[str, Any]) -> float:
+    """Combined offline-defense multiplier from tank/heal/team_def/glass-dps tags."""
+    place = roles.get("defense_placement") or roles.get("placement") or {}
+    tags = _hero_tags(hero_name, roles)
+    multiplier = 1.0
+    if "tank" in tags:
+        multiplier *= float(place.get("tank_tag_bonus", 1.15))
+    if "heal" in tags:
+        multiplier *= float(place.get("heal_tag_bonus", 1.25))
+    if "team_def" in tags:
+        multiplier *= float(place.get("team_def_tag_bonus", 1.1))
+    # Pure glass DPS is slightly less valuable offline than on attack.
+    if "dps" in tags and "tank" not in tags and "heal" not in tags:
+        multiplier *= float(place.get("glass_dps_penalty", 0.92))
+    return multiplier
+
+
 def _hero_base_score(
     hero: HeroRecord,
     entry: CatalogEntry | None,
@@ -106,34 +141,19 @@ def _hero_base_score(
     side: str,
 ) -> float:
     meta = _meta_for(hero.name, roles)
-    if entry is not None and entry.arena_value is not None:
-        arena_value = float(entry.arena_value)
-    else:
-        arena_value = float(meta.get("arena_value") or 40.0)
+    arena_value = _arena_value_for(hero, entry, meta)
     star = star_progress_factor(hero.stars, hero.pellets)
     power = effective_power if effective_power is not None else hero.power
     power_term = (float(power) / 1_000_000.0) if power else 0.0
-    rarity_bonus = 0.0
-    rarity = (entry.rarity if entry else hero.rarity) or ""
-    rarity = rarity.lower()
-    if rarity in {"legendary", "mythic"}:
-        rarity_bonus = 8.0
-    elif rarity == "epic":
-        rarity_bonus = 4.0
-    base = arena_value * star + 40.0 * power_term + gear_bonus + rarity_bonus
+    base = (
+        arena_value * star
+        + 40.0 * power_term
+        + gear_bonus
+        + _rarity_bonus(entry, hero)
+    )
 
     if side == "defense":
-        place = roles.get("defense_placement") or roles.get("placement") or {}
-        tags = _hero_tags(hero.name, roles)
-        if "tank" in tags:
-            base *= float(place.get("tank_tag_bonus", 1.15))
-        if "heal" in tags:
-            base *= float(place.get("heal_tag_bonus", 1.25))
-        if "team_def" in tags:
-            base *= float(place.get("team_def_tag_bonus", 1.1))
-        # Pure glass DPS is slightly less valuable offline than on attack.
-        if "dps" in tags and "tank" not in tags and "heal" not in tags:
-            base *= float(place.get("glass_dps_penalty", 0.92))
+        base *= _defense_tag_multiplier(hero.name, roles)
     return base
 
 

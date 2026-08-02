@@ -15,7 +15,7 @@ from ks.heroes.errors import DetailOpenError
 from ks.heroes.gear_config import GearConfig
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.gear_parse import parse_gear_detail
-from ks.heroes.ocr_util import ocr_box_robust
+from ks.heroes.ocr_util import ocr_box_robust, region_text_lower, text_has_any
 from ks.heroes.scrape import decode_screencap
 
 
@@ -93,20 +93,74 @@ def is_gear_detail_open(image: np.ndarray, *, ocr_fn: OcrFn | None = None) -> bo
     ocr = ocr_fn or _default_ocr
     h, w = image.shape[:2]
     # Title + identity strip (OCR on "Gear Details" alone is unreliable).
-    top = ocr(image, (80, 240, min(920, w - 80), min(220, h - 240))).lower()
+    top = region_text_lower(image, (80, 240, min(920, w - 80), min(220, h - 240)), ocr_fn=ocr)
     compact = top.replace(" ", "").replace("\n", "")
     if "geardetail" in compact:
         return True
-    if ("unequip" in top or "nequip" in top) and any(
-        r in top for r in ("mythic", "epic", "rare", "gold", "purple")
+    if text_has_any(top, ("unequip", "nequip")) and text_has_any(
+        top, ("mythic", "epic", "rare", "gold", "purple")
     ):
         return True
-    body = ocr(image, (80, 300, min(920, w - 80), min(500, h - 300))).lower()
-    if "conquest" in body or "expedition" in body:
+    body = region_text_lower(
+        image, (80, 300, min(920, w - 80), min(500, h - 300)), ocr_fn=ocr
+    )
+    if text_has_any(body, ("conquest", "expedition")):
         return True
-    if "hero attack" in body or "hero health" in body:
+    if text_has_any(body, ("hero attack", "hero health")):
         return True
     return False
+
+
+def _ocr_gear_detail_text(
+    img: np.ndarray,
+    cfg: GearConfig,
+    ocr: OcrFn,
+    ocr_fn: OcrFn | None,
+) -> str:
+    """Gather OCR text from the open Gear Details modal.
+
+    Focused crops first so name/rarity/power beat noisy full-panel OCR.
+    Enhancement must be read from the detail-modal icon badge (not the
+    expedition ``+N.NN%`` line); the full panel text is appended last as a
+    fallback source for the parser.
+    """
+    texts: list[str] = []
+    for box, use_digits in (
+        (cfg.ocr.name, False),
+        (cfg.ocr.rarity, False),
+        (cfg.ocr.power, True),
+        (cfg.ocr.enhancement, True),
+        (cfg.ocr.mastery, True),
+    ):
+        if box is None:
+            continue
+        try:
+            fn = _digits_ocr if use_digits and ocr_fn is None else ocr
+            texts.append(fn(img, box.as_tuple()))
+        except ValueError:
+            continue
+    badge = _ocr_detail_enhancement_badge(img, ocr_fn=ocr_fn)
+    if badge is not None:
+        texts.insert(0, f"+{badge}")
+    texts.append(ocr(img, cfg.ocr.detail_panel.as_tuple()))
+    return "\n".join(t for t in texts if t).strip()
+
+
+def _save_gear_detail_screenshot(
+    img: np.ndarray,
+    details_dir: Path | None,
+    cfg: GearConfig,
+    piece_id: str,
+) -> str | None:
+    """Write the detail-screen PNG under ``details_dir``; returns its relative path."""
+    if details_dir is None or not cfg.save_screenshots:
+        return None
+    details_dir.mkdir(parents=True, exist_ok=True)
+    out_path = details_dir / f"{piece_id}.png"
+    if not cv2.imwrite(str(out_path), img):
+        print(f"warn: failed to write gear detail screenshot {out_path}")
+        return None
+    return f"details/{piece_id}.png"
 
 
 def scrape_gear_piece(
@@ -127,29 +181,7 @@ def scrape_gear_piece(
     if not is_gear_detail_open(img, ocr_fn=ocr):
         return None
 
-    # Focused crops first so name/rarity/power beat noisy full-panel OCR.
-    # Enhancement must be read in the detail-modal icon-badge phase (not expedition %).
-    texts: list[str] = []
-    for box, use_digits in (
-        (cfg.ocr.name, False),
-        (cfg.ocr.rarity, False),
-        (cfg.ocr.power, True),
-        (cfg.ocr.enhancement, True),
-        (cfg.ocr.mastery, True),
-    ):
-        if box is None:
-            continue
-        try:
-            fn = _digits_ocr if use_digits and ocr_fn is None else ocr
-            texts.append(fn(img, box.as_tuple()))
-        except ValueError:
-            continue
-    badge = _ocr_detail_enhancement_badge(img, ocr_fn=ocr_fn)
-    if badge is not None:
-        texts.insert(0, f"+{badge}")
-    texts.append(ocr(img, cfg.ocr.detail_panel.as_tuple()))
-
-    combined = "\n".join(t for t in texts if t).strip()
+    combined = _ocr_gear_detail_text(img, cfg, ocr, ocr_fn)
     if not combined:
         raise DetailOpenError(
             f"gear detail open but OCR empty (page={page} index={index})"
@@ -157,17 +189,7 @@ def scrape_gear_piece(
 
     piece = parse_gear_detail(combined, page=page, index=index)
     scraped_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    detail_shot: str | None = None
-    if details_dir is not None and cfg.save_screenshots:
-        details_dir.mkdir(parents=True, exist_ok=True)
-        out_path = details_dir / f"{piece.piece_id}.png"
-        ok = cv2.imwrite(str(out_path), img)
-        if not ok:
-            print(f"warn: failed to write gear detail screenshot {out_path}")
-            detail_shot = None
-        else:
-            detail_shot = f"details/{piece.piece_id}.png"
+    detail_shot = _save_gear_detail_screenshot(img, details_dir, cfg, piece.piece_id)
 
     return GearRecord(
         piece_id=piece.piece_id,

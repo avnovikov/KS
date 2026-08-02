@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 import pytesseract
 
+from ks.heroes.ocr_util import crop_bgr_box
 from ks.heroes.optimize.catalog import load_catalog
 from ks.heroes.optimize.types import CatalogEntry
 from ks.heroes.parse import clean_name, parse_rarity
@@ -39,6 +40,7 @@ _RARITY_TO_COLOR = {
     "epic": "purple",
     "rare": "blue",
 }
+_NAME_OCR_WHITELIST = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz- &"
 
 
 @lru_cache(maxsize=2)
@@ -65,6 +67,30 @@ def load_known_hero_names(
     return tuple(sorted(catalog.keys()))
 
 
+def _normalize_rarity_filter(rarity: str | None, color: str | None) -> str | None:
+    """Catalog rarity key from a UI rarity hint, or from card color as a fallback."""
+    if rarity:
+        return _UI_TO_CATALOG_RARITY.get(rarity.upper(), rarity.lower())
+    color_norm = color.lower() if color else None
+    if color_norm:
+        # Map color → rarity when OCR missed SSR/SR/R.
+        for rar, col in _RARITY_TO_COLOR.items():
+            if col == color_norm:
+                return rar
+    return None
+
+
+def _normalize_troop_filter(troop: str | None) -> str | None:
+    troop_norm = troop.lower() if troop else None
+    if troop_norm in {"archers", "bow"}:
+        return "archer"
+    if troop_norm in {"inf", "shield"}:
+        return "infantry"
+    if troop_norm in {"cav", "horse"}:
+        return "cavalry"
+    return troop_norm
+
+
 def names_for_filters(
     catalog: dict[str, CatalogEntry],
     *,
@@ -73,32 +99,15 @@ def names_for_filters(
     color: str | None = None,
 ) -> tuple[str, ...]:
     """Subset catalog names by rarity / troop / card color."""
-    rarity_norm = None
-    if rarity:
-        rarity_norm = _UI_TO_CATALOG_RARITY.get(rarity.upper(), rarity.lower())
-    color_norm = color.lower() if color else None
-    if color_norm and rarity_norm is None:
-        # Map color → rarity when OCR missed SSR/SR/R.
-        for rar, col in _RARITY_TO_COLOR.items():
-            if col == color_norm:
-                rarity_norm = rar
-                break
+    rarity_norm = _normalize_rarity_filter(rarity, color)
+    troop_norm = _normalize_troop_filter(troop)
 
-    troop_norm = troop.lower() if troop else None
-    if troop_norm in {"archers", "bow"}:
-        troop_norm = "archer"
-    if troop_norm in {"inf", "shield"}:
-        troop_norm = "infantry"
-    if troop_norm in {"cav", "horse"}:
-        troop_norm = "cavalry"
-
-    names: list[str] = []
-    for name, entry in catalog.items():
-        if rarity_norm and (entry.rarity or "").lower() != rarity_norm:
-            continue
-        if troop_norm and (entry.troop or "").lower() != troop_norm:
-            continue
-        names.append(name)
+    names = [
+        name
+        for name, entry in catalog.items()
+        if (not rarity_norm or (entry.rarity or "").lower() == rarity_norm)
+        and (not troop_norm or (entry.troop or "").lower() == troop_norm)
+    ]
     return tuple(sorted(names))
 
 
@@ -155,23 +164,14 @@ def _bright_name_mask(bgr: np.ndarray) -> np.ndarray:
     return cv2.bitwise_or(th, whiteish)
 
 
-def ocr_top_center_name(
-    image: np.ndarray,
-    box: tuple[int, int, int, int] | None = None,
-) -> str:
-    """OCR the top-center hero title; returns best raw string (may be noisy)."""
-    if image.ndim != 3:
-        raise ValueError("image must be BGR")
-    h, w = image.shape[:2]
-    if box is None:
-        box = (300, 26, 480, 64)
-    x, y, bw, bh = box
-    if bw <= 0 or bh <= 0:
-        raise ValueError(f"invalid box {box}")
-    if x < 0 or y < 0 or x + bw > w or y + bh > h:
-        raise ValueError(f"box {box} outside image")
+def _crop_name_box(
+    image: np.ndarray, box: tuple[int, int, int, int] | None
+) -> np.ndarray:
+    return crop_bgr_box(image, box, default=(300, 26, 480, 64))
 
-    crop = image[y : y + bh, x : x + bw]
+
+def _upscaled_name_variants(crop: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Bright-text mask (both polarities) plus a plain upscaled grayscale crop."""
     mask = _bright_name_mask(crop)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
     up_mask = cv2.resize(mask, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_NEAREST)
@@ -182,35 +182,46 @@ def ocr_top_center_name(
         fy=3.0,
         interpolation=cv2.INTER_CUBIC,
     )
+    return up_mask, 255 - up_mask, up_gray
 
+
+def _name_ocr_candidates(variants: tuple[np.ndarray, ...]) -> list[str]:
     candidates: list[str] = []
-    for im in (up_mask, 255 - up_mask, up_gray):
+    for im in variants:
         for psm in (7, 8, 13):
             text = pytesseract.image_to_string(im, config=f"--psm {psm}").strip()
             if text:
                 candidates.append(text)
             wl = pytesseract.image_to_string(
                 im,
-                config=(
-                    f"--psm {psm} "
-                    "-c tessedit_char_whitelist="
-                    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz- &"
-                ),
+                config=f"--psm {psm} -c tessedit_char_whitelist={_NAME_OCR_WHITELIST}",
             ).strip()
             if wl:
                 candidates.append(wl)
+    return candidates
+
+
+def _best_name_candidate(candidates: list[str]) -> str:
+    """Prefer more letters, then fewer words, then longer text."""
     if not candidates:
         return ""
-    scored = sorted(
+    return max(
         candidates,
-        key=lambda t: (
-            sum(ch.isalpha() for ch in t),
-            -len(t.split()),
-            len(t),
-        ),
-        reverse=True,
+        key=lambda t: (sum(ch.isalpha() for ch in t), -len(t.split()), len(t)),
     )
-    return scored[0]
+
+
+def ocr_top_center_name(
+    image: np.ndarray,
+    box: tuple[int, int, int, int] | None = None,
+) -> str:
+    """OCR the top-center hero title; returns best raw string (may be noisy)."""
+    if image.ndim != 3:
+        raise ValueError("image must be BGR")
+    crop = _crop_name_box(image, box)
+    variants = _upscaled_name_variants(crop)
+    candidates = _name_ocr_candidates(variants)
+    return _best_name_candidate(candidates)
 
 
 def _ocr_name_variants(probe: str) -> list[str]:
@@ -227,41 +238,37 @@ def _ocr_name_variants(probe: str) -> list[str]:
     return [v for v in variants if len(v.replace(" ", "")) >= 2]
 
 
-def match_known_hero_name(
-    raw: str,
-    known: tuple[str, ...] | list[str],
-    *,
-    cutoff: float = 0.62,
-) -> str | None:
-    """Fuzzy-match OCR text to a known hero display name."""
-    if not isinstance(raw, str):
-        raise ValueError(f"raw must be str; got {type(raw).__name__}")
-    if not known:
-        return None
+def _match_cleaned_name(cleaned: str, known: tuple[str, ...], lower_map: dict[str, str]) -> str | None:
+    """Exact or substring match against the cleaned (letters-only) OCR name."""
+    if cleaned.lower() in lower_map:
+        return lower_map[cleaned.lower()]
+    for name in known:
+        if name.lower() in cleaned.lower() and abs(len(name) - len(cleaned)) <= 2:
+            return name
+    return None
 
-    cleaned = clean_name(raw)
-    lower_map = {n.lower(): n for n in known}
 
-    if cleaned:
-        if cleaned.lower() in lower_map:
-            return lower_map[cleaned.lower()]
-        for name in known:
-            if name.lower() in cleaned.lower() and abs(len(name) - len(cleaned)) <= 2:
-                return name
-
-    probes = [p for p in _ocr_name_variants(cleaned or raw) if len(p.replace(" ", "")) >= 3]
-    if not probes:
-        return None
-
+def _match_probe_exact(probes: list[str], lower_map: dict[str, str]) -> str | None:
+    """Exact match of any OCR-typo probe against known names, space-insensitive."""
+    compact_map = {k.replace(" ", ""): v for k, v in lower_map.items()}
     for probe in probes:
         if probe in lower_map:
             return lower_map[probe]
         compact = probe.replace(" ", "")
-        if compact in {k.replace(" ", "") for k in lower_map}:
-            for k, v in lower_map.items():
-                if k.replace(" ", "") == compact:
-                    return v
+        if compact in compact_map:
+            return compact_map[compact]
+    return None
 
+
+def _match_probe_fuzzy(
+    probes: list[str], known: tuple[str, ...], *, cutoff: float
+) -> str | None:
+    """Best SequenceMatcher score across probes, with a confidence guard.
+
+    Requires a clear winner: either close to `cutoff` isn't enough on its
+    own — a narrow lead over the runner-up is only trusted above 0.85/0.9
+    to avoid picking an arbitrary near-tie.
+    """
     fuzzy_probes = [p for p in probes if len(p.replace(" ", "")) >= 4]
     if not fuzzy_probes:
         return None
@@ -278,10 +285,94 @@ def match_known_hero_name(
     second = scored[1][0] if len(scored) > 1 else 0.0
     if best_score < cutoff:
         return None
-    if best_score - second < 0.08 and best_score < 0.85:
-        if best_score < 0.9:
-            return None
+    if best_score - second < 0.08 and best_score < 0.85 and best_score < 0.9:
+        return None
     return best_name
+
+
+def match_known_hero_name(
+    raw: str,
+    known: tuple[str, ...] | list[str],
+    *,
+    cutoff: float = 0.62,
+) -> str | None:
+    """Fuzzy-match OCR text to a known hero display name."""
+    if not isinstance(raw, str):
+        raise ValueError(f"raw must be str; got {type(raw).__name__}")
+    if not known:
+        return None
+    known = tuple(known)
+
+    cleaned = clean_name(raw)
+    lower_map = {n.lower(): n for n in known}
+
+    if cleaned:
+        matched = _match_cleaned_name(cleaned, known, lower_map)
+        if matched is not None:
+            return matched
+
+    probes = [p for p in _ocr_name_variants(cleaned or raw) if len(p.replace(" ", "")) >= 3]
+    if not probes:
+        return None
+
+    matched = _match_probe_exact(probes, lower_map)
+    if matched is not None:
+        return matched
+
+    return _match_probe_fuzzy(probes, known, cutoff=cutoff)
+
+
+def _resolve_rarity_ui(
+    image: np.ndarray,
+    rarity_hint: str | None,
+    rarity_box: tuple[int, int, int, int] | None,
+) -> str | None:
+    if rarity_hint is not None or rarity_box is None:
+        return rarity_hint
+    x, y, w, h = rarity_box
+    crop = image[y : y + h, x : x + w]
+    return parse_rarity(pytesseract.image_to_string(crop, config="--psm 7"))
+
+
+def _match_via_template(
+    image: np.ndarray,
+    box: tuple[int, int, int, int],
+    *,
+    rarity_box: tuple[int, int, int, int] | None,
+    rarity_hint: str | None,
+    templates_dir: Path | str,
+) -> tuple[str, str, str | None, str | None] | None:
+    """Match against labeled name-crop templates; None if no template hit."""
+    from ks.heroes.name_templates import load_name_templates, match_name_template
+
+    templates = load_name_templates(Path(templates_dir))
+    tmpl_name, _score = match_name_template(image, box, templates)
+    if tmpl_name is None:
+        return None
+
+    raw = ocr_top_center_name(image, box)
+    rarity_ui = _resolve_rarity_ui(image, rarity_hint, rarity_box)
+    color = detect_rarity_color(image, rarity_box or (20, 90, 200, 120))
+    return tmpl_name, raw or tmpl_name, rarity_ui, color
+
+
+def _catalog_names_for_match(
+    cat: dict[str, CatalogEntry],
+    *,
+    rarity_ui: str | None,
+    color: str | None,
+    troop: str | None,
+) -> tuple[tuple[str, ...], str | None]:
+    """Narrow catalog names by rarity/troop/color, falling back to all names.
+
+    Blue UI chrome false-positives often; only trust orange/purple card
+    colors when SSR/SR OCR is missing. Returns ``(known_names, color_filter)``.
+    """
+    color_filter = color if (rarity_ui is None and color in {"orange", "purple"}) else None
+    known = names_for_filters(cat, rarity=rarity_ui, troop=troop, color=color_filter)
+    if not known:
+        known = tuple(sorted(cat.keys()))
+    return known, color_filter
 
 
 def resolve_hero_name(
@@ -303,44 +394,24 @@ def resolve_hero_name(
 
     # Template match against captured name crops (trained labels).
     if templates_dir is not None:
-        from ks.heroes.name_templates import load_name_templates, match_name_template
-
-        templates = load_name_templates(Path(templates_dir))
-        tmpl_name, _score = match_name_template(image, box, templates)
-        if tmpl_name is not None:
-            raw = ocr_top_center_name(image, box)
-            rarity_ui = rarity_hint
-            if rarity_ui is None and rarity_box is not None:
-                x, y, w, h = rarity_box
-                crop = image[y : y + h, x : x + w]
-                rarity_ui = parse_rarity(
-                    pytesseract.image_to_string(crop, config="--psm 7")
-                )
-            color = detect_rarity_color(image, rarity_box or (20, 90, 200, 120))
-            return tmpl_name, raw or tmpl_name, rarity_ui, color
+        tmpl_result = _match_via_template(
+            image,
+            box,
+            rarity_box=rarity_box,
+            rarity_hint=rarity_hint,
+            templates_dir=templates_dir,
+        )
+        if tmpl_result is not None:
+            return tmpl_result
 
     raw = ocr_top_center_name(image, box)
-
-    rarity_ui = rarity_hint
-    if rarity_ui is None and rarity_box is not None:
-        x, y, w, h = rarity_box
-        crop = image[y : y + h, x : x + w]
-        rarity_ui = parse_rarity(
-            pytesseract.image_to_string(crop, config="--psm 7")
-        )
-
+    rarity_ui = _resolve_rarity_ui(image, rarity_hint, rarity_box)
     color = detect_rarity_color(image, rarity_box or (20, 90, 200, 120))
     troop = troop_hint or detect_troop_hint(image)
 
-    # Blue UI chrome false-positives often; only trust orange/purple card colors
-    # when SSR/SR OCR is missing.
-    color_filter = color if (rarity_ui is None and color in {"orange", "purple"}) else None
-
-    known = names_for_filters(
-        cat, rarity=rarity_ui, troop=troop, color=color_filter
+    known, color_filter = _catalog_names_for_match(
+        cat, rarity_ui=rarity_ui, color=color, troop=troop
     )
-    if not known:
-        known = tuple(sorted(cat.keys()))
 
     matched = match_known_hero_name(raw, known)
     if matched is None and (rarity_ui or color_filter or troop):
