@@ -253,6 +253,9 @@ def solve_combat_formation(
 
     ``side`` is passed to scoring helpers; Arena uses "attack"/"defense".
     When omitted, scoring defaults to "attack" behaviour.
+
+    ``base_score_fn`` is called as ``fn(hero, entry, roles, *, effective_power, gear_bonus)``.
+    ``placement_mult_fn`` is called as ``fn(troop, slot, hero_name, roles)``.
     """
     effective_side = side or "attack"
     usable = [h for h in heroes if h.name in catalog]

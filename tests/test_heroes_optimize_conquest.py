@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -85,7 +86,7 @@ def test_higher_ultimate_preferred_when_otherwise_equal() -> None:
             arena_role="front_tank", arena_value=85, arena_tags=("tank",),
         ),
         "Helga": CatalogEntry(
-            name="Helga", troop="infantry", rarity="legendary",
+            name="Helga", troop="infantry", rarity="epic",
             arena_role="front_fighter", arena_value=85, arena_tags=("tank",),
         ),
         "Jabel": CatalogEntry(
@@ -118,7 +119,7 @@ def test_higher_ultimate_preferred_when_otherwise_equal() -> None:
     assert "Howard" in front
 
 
-def test_cli_conquest_argparse_smoke(tmp_path: pytest.TempPathFactory) -> None:
+def test_cli_conquest_argparse_smoke(tmp_path: Path) -> None:
     """CLI parser accepts conquest subcommand with required --heroes flag."""
     from ks.heroes.cli import build_parser
 
