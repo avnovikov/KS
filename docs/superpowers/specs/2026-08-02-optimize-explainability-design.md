@@ -26,7 +26,8 @@ For each selected hero in Sword/Bear modes and Arena sides, show:
 }
 ```
 
-Arena uses `baseline_score` / `score_without` / `marginal_score` and includes `slot`.
+Arena attaches the same shape under `explanations[name]` (not `heroes[].explain`),
+uses `baseline_score` / `score_without` / `marginal_score`, and includes `slot`.
 
 ## UI
 In the existing gear popup, under each hero name: fits_because bullets + “Removing costs ~X pts” (or “critical — no feasible lineup”).

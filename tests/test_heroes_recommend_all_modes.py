@@ -85,3 +85,54 @@ def test_recommend_all_modes_returns_each_mode() -> None:
         assert result.recommended_mode == mode
         assert result.expected_personal_points > 0
         assert len(result.heroes) == 3
+
+
+def test_recommend_all_modes_keeps_feasible_when_one_mode_fails() -> None:
+    """Attack-only roster: garrison infeasible, other modes still returned."""
+    heroes = [
+        _hero("Amadeus"),
+        _hero("Jabel"),
+        _hero("Chenko"),
+        _hero("Howard"),
+    ]
+    catalog = {
+        "Amadeus": _cat("Amadeus", "infantry", "attack", "rally_attack", 30),
+        "Jabel": _cat("Jabel", "cavalry", "attack", "rally_attack", 25),
+        "Chenko": _cat("Chenko", "archer", "none", "attack_up", 15),
+        "Howard": _cat("Howard", "cavalry", "none", "damage_taken_down", 20),
+    }
+    troops = TroopsConfig(infantry=80, cavalry=40, archers=40, march_capacity=150)
+    scenarios = {
+        "garrison": Scenario(
+            mode="garrison",
+            combat_rate=40,
+            minutes_held=40,
+            personal_rate=600,
+            enemy_power_scale=100000,
+            require_widget="defense",
+            formation_weights={"infantry": 1.2, "cavalry": 0.6, "archers": 0.8},
+        ),
+        "rally_lead": Scenario(
+            mode="rally_lead",
+            combat_rate=80,
+            minutes_held=0,
+            personal_rate=0,
+            p_first=0.2,
+            first_bonus=500,
+            enemy_power_scale=100000,
+            require_widget="attack",
+            formation_weights={"infantry": 0.3, "cavalry": 0.6, "archers": 1.3},
+        ),
+        "solo": Scenario(
+            mode="solo",
+            combat_rate=30,
+            minutes_held=0,
+            personal_rate=0,
+            enemy_power_scale=50000,
+            formation_weights={"infantry": 0.8, "cavalry": 0.8, "archers": 0.8},
+        ),
+    }
+    results = recommend_all_modes(heroes, catalog, troops, scenarios)
+    assert "garrison" not in results
+    assert "rally_lead" in results
+    assert "solo" in results

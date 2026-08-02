@@ -5,7 +5,7 @@ Add `/optimize` to the existing FastAPI UI so a player can see recommended
 formations and points for:
 
 - **Swordland** — every mode (garrison, rally_lead, joiner, solo) with points
-- **Bear Trap** — every mode with points
+- **Bear Trap** — starter (`rally_lead`) + joiner with points (damage proxy)
 - **Arena** — attack and defense (5 heroes, 2F+3B)
 
 ## Inputs

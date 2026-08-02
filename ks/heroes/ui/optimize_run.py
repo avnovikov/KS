@@ -10,7 +10,7 @@ from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.arena import load_arena_roles, optimize_arena
 from ks.heroes.optimize.catalog import load_catalog
 from ks.heroes.optimize.events import load_event_profile
-from ks.heroes.optimize.recommend import recommend_all_modes
+from ks.heroes.optimize.recommend import recommend
 from ks.heroes.optimize.scenarios import load_scenarios
 from ks.heroes.optimize.troop_stats import load_troop_stats
 from ks.heroes.optimize.troops import load_troops_config
@@ -38,22 +38,37 @@ def _event_bundle(
         troops_path.read_text(encoding="utf-8")
     ) or {}
     truegold = int(raw_troops.get("truegold", troop_stats.default_truegold))
-    results = recommend_all_modes(
-        heroes,
-        catalog,
-        troops,
-        scenarios,
-        event=event,
-        troop_stats=troop_stats,
-        truegold=truegold,
-        gear=gear,
-        gear_profile=gear_profile,
-    )
-    return {
+    modes: dict[str, Any] = {}
+    mode_errors: dict[str, str] = {}
+    for mode in scenarios:
+        try:
+            result = recommend(
+                heroes,
+                catalog,
+                troops,
+                scenarios,
+                force_mode=mode,
+                event=event,
+                troop_stats=troop_stats,
+                truegold=truegold,
+                gear=gear,
+                gear_profile=gear_profile,
+            )
+            modes[mode] = result.to_dict()
+        except ValueError as exc:
+            mode_errors[mode] = str(exc)
+    if not modes and mode_errors:
+        raise ValueError(
+            "; ".join(f"{m}: {err}" for m, err in mode_errors.items())
+        )
+    out: dict[str, Any] = {
         "label": label,
         "event": event.name,
-        "modes": {mode: result.to_dict() for mode, result in results.items()},
+        "modes": modes,
     }
+    if mode_errors:
+        out["mode_errors"] = mode_errors
+    return out
 
 
 def run_optimize_bundle(

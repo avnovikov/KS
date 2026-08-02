@@ -156,22 +156,35 @@ def recommend_all_modes(
     gear: list[GearRecord] | None = None,
     gear_profile: str = "early_game_growth",
 ) -> dict[str, RecommendResult]:
-    """Run recommend once per scenario mode (full per-mode points/formation)."""
+    """Run recommend once per scenario mode (full per-mode points/formation).
+
+    Soft-fails per mode: an infeasible mode is omitted so other modes still
+    return. Raises only if every mode fails.
+    """
     if not scenarios:
         raise ValueError("scenarios must not be empty")
-    return {
-        mode: recommend(
-            heroes,
-            catalog,
-            troops,
-            scenarios,
-            force_mode=mode,
-            event=event,
-            troop_stats=troop_stats,
-            truegold=truegold,
-            gear=gear,
-            gear_profile=gear_profile,
+    out: dict[str, RecommendResult] = {}
+    errors: dict[str, str] = {}
+    for mode in scenarios:
+        try:
+            out[mode] = recommend(
+                heroes,
+                catalog,
+                troops,
+                scenarios,
+                force_mode=mode,
+                event=event,
+                troop_stats=troop_stats,
+                truegold=truegold,
+                gear=gear,
+                gear_profile=gear_profile,
+            )
+        except ValueError as exc:
+            errors[mode] = str(exc)
+    if not out:
+        detail = "; ".join(f"{m}: {err}" for m, err in errors.items())
+        raise ValueError(
+            f"no feasible mode solution for this roster/troops ({detail})"
         )
-        for mode in scenarios
-    }
+    return out
 
