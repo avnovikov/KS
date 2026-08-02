@@ -259,7 +259,7 @@
       <h1>Event lineups</h1>
       <div class="meta">
         <a href="/optimize" style="color:var(--accent);text-decoration:none">← Optimize hub</a>
-        · Swordland + Bear Trap + Arena from current roster
+        · Swordland + Bear Trap + Arena + Conquest from current roster
         {% if heroes_dir %} · {{ heroes_dir }}{% endif %}
       </div>
       {% set active = "optimize" %}
@@ -294,6 +294,14 @@
         <button type="button" class="secondary" data-regen="arena">Regenerate</button>
       </div>
       <div class="mode-grid" id="arena-sides"></div>
+    </section>
+
+    <section class="block" id="conquest-block">
+      <div class="block-head">
+        <h2>Conquest</h2>
+        <button type="button" class="secondary" data-regen="conquest">Regenerate</button>
+      </div>
+      <div class="mode-grid" id="conquest-formation"></div>
     </section>
   </main>
 
@@ -502,41 +510,51 @@
         el.appendChild(note);
       }
     }
+    function renderFormationCard(title, modalTitle, row) {
+      const ok = row.status === "Optimal";
+      const card = document.createElement(ok ? "button" : "div");
+      if (ok) card.type = "button";
+      card.className = "card";
+      const form = row.formation || {};
+      const slots = ["F1", "F2", "B1", "B2", "B3"]
+        .map((s) => {
+          const name = form[s] || "—";
+          return `<span class="slot"><span class="k">${esc(s)}</span>${esc(name)}</span>`;
+        })
+        .join("");
+      card.innerHTML =
+        `<h3>${esc(title)}</h3>` +
+        `<div class="points">score ${esc(fmtScore(row.score))}</div>` +
+        `<p class="formation">status: ${esc(row.status || "—")}</p>` +
+        (ok ? `<div class="slot-row">${slots}</div>` : "") +
+        (ok
+          ? `<p class="card-hint">Click for why + gear (helm · gloves · body · boots)</p>`
+          : `<p class="heroes">${esc(row.error || "No optimal formation")}</p>`);
+      if (ok) {
+        card.addEventListener("click", () => {
+          openGearModal(modalTitle, `score ${fmtScore(row.score)}`, row);
+        });
+      }
+      return card;
+    }
     function renderArena(el, arena) {
       el.innerHTML = "";
       for (const side of ["attack", "defense"]) {
         const row = (arena || {})[side] || {};
-        const ok = row.status === "Optimal";
-        const card = document.createElement(ok ? "button" : "div");
-        if (ok) card.type = "button";
-        card.className = "card";
-        const form = row.formation || {};
-        const slots = ["F1", "F2", "B1", "B2", "B3"]
-          .map((s) => {
-            const name = form[s] || "—";
-            return `<span class="slot"><span class="k">${esc(s)}</span>${esc(name)}</span>`;
-          })
-          .join("");
-        card.innerHTML =
-          `<h3>${esc(side)}</h3>` +
-          `<div class="points">score ${esc(fmtScore(row.score))}</div>` +
-          `<p class="formation">status: ${esc(row.status || "—")}</p>` +
-          (ok ? `<div class="slot-row">${slots}</div>` : "") +
-          (ok
-            ? `<p class="card-hint">Click for why + gear (helm · gloves · body · boots)</p>`
-            : `<p class="heroes">${esc(row.error || "No optimal formation")}</p>`);
-        if (ok) {
-          card.addEventListener("click", () => {
-            openGearModal(`Arena · ${side}`, `score ${fmtScore(row.score)}`, row);
-          });
-        }
-        el.appendChild(card);
+        el.appendChild(renderFormationCard(side, `Arena · ${side}`, row));
       }
+    }
+    function renderConquest(el, conquest) {
+      el.innerHTML = "";
+      el.appendChild(
+        renderFormationCard("formation", "Conquest", conquest || {})
+      );
     }
     function applyAll(data) {
       renderModes(document.getElementById("sword-modes"), data.sword, "Swordland");
       renderModes(document.getElementById("bear-modes"), data.bear, "Bear Trap");
       renderArena(document.getElementById("arena-sides"), data.arena);
+      renderConquest(document.getElementById("conquest-formation"), data.conquest);
     }
     async function loadOptimize() {
       const status = document.getElementById("status");
