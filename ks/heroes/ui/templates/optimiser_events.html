@@ -28,8 +28,13 @@
 <p class="status-line" id="lineup-status" role="status">Solving lineups…</p>
 
 <div class="mode-chips" id="mode-chips" role="group" aria-label="Modes"></div>
-<p class="mode-note" id="mode-note" hidden></p>
-<p class="banner-err" id="section-error" hidden></p>
+{# The two regions optimiser_events.js rewrites at runtime. Both are
+   un-hidden before their text is written, exactly as app.js's toast is — but
+   without a role that ceremony announces nothing, so they carry one: polite
+   for the "skipped as infeasible" note, assertive for a section that failed
+   outright, matching #lineup-status and the troops editor's banner-err. #}
+<p class="mode-note" id="mode-note" role="status" hidden></p>
+<p class="banner-err" id="section-error" role="alert" hidden></p>
 
 <section class="panel board" id="board"></section>
 

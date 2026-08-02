@@ -22,6 +22,11 @@
   // carried a five-character one. See app.js for why there is now one.
   var esc = window.escapeHtml;
 
+  // …and the shared origin check, which this file was the one page script not
+  // to apply. `hero.icon_url` here is the same field the board runs through
+  // safeUrl before it builds a portrait, arriving from the same store.
+  var safeUrl = window.safeUrl;
+
   function fmt(value) {
     return value === null || value === undefined || value === "" ? "—" : String(value);
   }
@@ -81,9 +86,12 @@
 
   function renderHeroDetail(hero) {
     if (iconEl) {
-      iconEl.src = hero.icon_url || "";
+      // The *checked* URL decides both the src and whether the <img> is shown
+      // at all, so a rejected one leaves no broken frame behind.
+      var iconSrc = safeUrl(hero.icon_url);
+      iconEl.src = iconSrc;
       iconEl.className = "rarity-" + rarityClass(hero.rarity);
-      iconEl.style.display = hero.icon_url ? "block" : "none";
+      iconEl.style.display = iconSrc ? "block" : "none";
     }
     if (titleEl) titleEl.textContent = hero.name || "Hero";
     if (subEl) {

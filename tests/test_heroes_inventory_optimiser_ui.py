@@ -157,6 +157,28 @@ def test_shell_pages_render_and_are_no_store(tmp_path: Path, path: str) -> None:
     assert r.headers["cache-control"] == "no-store"
 
 
+@pytest.mark.parametrize("path", SHELL_PAGES)
+def test_every_shell_page_server_renders_one_page_title(
+    tmp_path: Path, path: str
+) -> None:
+    """A regression this branch actually shipped: the rewrite of
+    /inventory/gear and /inventory/heroes dropped the `<h1>KS Inventory</h1>`
+    the deleted templates carried and started straight in on `.page-meta`.
+    The gear page rendered a document with no heading of *any* level, and the
+    heroes page's only one was the `<h2>` inside the detail dialog.
+
+    Parametrised over every screen rather than asserted per page, because the
+    two that lost it were exactly the two nothing checked. `.page-title`
+    specifically, not a bare `<h1>`: app.css states the convention ("Screen
+    heading. Server-rendered, so the document has one before any client-side
+    render lands") and the class is what makes the six screens look alike.
+    Exactly one, so a page cannot answer the check with a second heading
+    competing for the document's title.
+    """
+    body = _client(tmp_path).get(path).text
+    assert body.count('<h1 class="page-title">') == 1, path
+
+
 # --- chrome --------------------------------------------------------------
 
 
@@ -833,6 +855,24 @@ def test_events_page_has_a_heading_before_the_solve_returns(
     ).text
     assert '"h1"' not in script, "the board must not inject a competing h1"
     assert 'appendText("h2", "board-title"' in script
+
+
+def test_the_two_regions_the_board_rewrites_are_live_regions(
+    tmp_path: Path,
+) -> None:
+    """`#mode-note` and `#section-error` are the only nodes on this page whose
+    text is replaced after load, and optimiser_events.js performs the
+    un-hide-*before*-writing ceremony on both, citing app.js's toast for why.
+    With no role that ceremony announced nothing: the un-hide is what makes a
+    live region's later mutation observable, and neither element was one.
+
+    polite for the skipped-modes note, assertive for a section that failed —
+    the split #lineup-status (role="status") and the troops editor's
+    banner-err (role="alert") already use.
+    """
+    body = _events_client(tmp_path).get("/optimiser/events").text
+    assert '<p class="mode-note" id="mode-note" role="status" hidden>' in body
+    assert '<p class="banner-err" id="section-error" role="alert" hidden>' in body
 
 
 def test_event_lineups_styles_are_phone_first(tmp_path: Path) -> None:

@@ -243,3 +243,18 @@ def test_planner_js_every_behavioural_check(js_run: dict) -> None:
     as the sentence it is asserting; `tests/js/optimiser_gear_xp_harness.js`
     holds the scenario each belongs to."""
     assert not _failures(js_run), "\n".join(_failures(js_run))
+
+
+def test_the_planners_grouped_numbers_pin_their_locale(js_run: dict) -> None:
+    """`groupInt` and `fmtUtility` are two of the four `toLocaleString` call
+    sites in this UI, and only the troops editor's was defended: delocalising
+    them killed 0 of 97 checks, because the host's own locale is en-US and the
+    exact strings asserted elsewhere came out identical. The harness swaps
+    `Number.prototype.toLocaleString` for a sentinel that fires when the
+    locale argument is omitted, so the check is about what the source passes.
+    """
+    name = "the planner pins its grouping instead of following the viewer's locale"
+    present = {c["name"] for c in js_run["checks"]}
+    assert name in present, "harness no longer runs the locale suite"
+    assert not _failures(js_run, [name]), "\n".join(_failures(js_run, [name]))
+    assert "LOCALE-DEFAULT" not in js_run["data"]["locale_rendered"]

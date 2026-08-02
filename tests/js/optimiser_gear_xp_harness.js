@@ -1211,6 +1211,52 @@ async function suiteInjection() {
   );
 }
 
+/* Every grouped number this page prints is pinned to en-US, so the same
+   1,200 XP does not render "1.200" for one user and "1 200" for another while
+   the troops editor and the lineup board beside it stay on commas. The exact
+   strings asserted elsewhere in this file cannot see the difference — the
+   host's own locale is usually en-US, so a bare toLocaleString() produces the
+   same commas. So toLocaleString is swapped for a sentinel that fires when
+   the locale argument is omitted, the technique
+   tests/js/troops_editor_harness.js was using alone. */
+async function suiteLocale() {
+  var d = makePage({ result: goodResult() });
+  await boot(d);
+
+  var original = Number.prototype.toLocaleString;
+  Number.prototype.toLocaleString = function (locale) {
+    if (locale === undefined) return "LOCALE-DEFAULT";
+    return original.call(this, locale);
+  };
+  try {
+    fillBag(d);
+    d.submit();
+    await settle();
+    // groupInt writes the XP on each step row; fmtUtility writes the
+    // baseline/best/delta triple on the line above them.
+    var shown =
+      d.deltaText() +
+      " | " +
+      d
+        .steps()
+        .map(function (s) {
+          return s.meta;
+        })
+        .join(" | ");
+    record("locale_rendered", shown);
+    // Holds on any engine: the sentinel only proves that *some* locale was
+    // passed, which is the fix. Whether the result is comma-grouped depends
+    // on the engine having Intl.
+    check(
+      "the planner pins its grouping instead of following the viewer's locale",
+      shown.indexOf("LOCALE-DEFAULT") === -1,
+      shown
+    );
+  } finally {
+    Number.prototype.toLocaleString = original;
+  }
+}
+
 /* --- run -------------------------------------------------------------------- */
 
 /* Each suite is caught on its own: a scenario that throws must not take the
@@ -1232,6 +1278,7 @@ async function suiteInjection() {
     suiteBusyLockout,
     suiteWithoutGear,
     suiteInjection,
+    suiteLocale,
   ];
   var threw = [];
   for (var i = 0; i < suites.length; i++) {

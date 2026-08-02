@@ -176,11 +176,16 @@ function makeDom(opts) {
 
   /* --- controllable clock ------------------------------------------------- */
 
+  /* The delay is kept, not just the callback — the same fix
+     tests/js/inventory_harness.js already carries. With it discarded,
+     DEBOUNCE_MS could be set to 1 or to 60000 and every check in this file
+     still passed, so the interval the brief specifies was asserted by
+     nothing. */
   var pending = {};
   var nextTimer = 1;
-  globalThis.setTimeout = function (fn) {
+  globalThis.setTimeout = function (fn, delay) {
     var id = nextTimer++;
-    pending[id] = fn;
+    pending[id] = { fn: fn, delay: delay };
     return id;
   };
   globalThis.clearTimeout = function (id) {
@@ -316,11 +321,17 @@ function makeDom(opts) {
     runTimers: function () {
       var ids = Object.keys(pending);
       ids.forEach(function (id) {
-        var fn = pending[id];
+        var timer = pending[id];
         delete pending[id];
-        fn();
+        timer.fn();
       });
       return ids.length;
+    },
+    /** Delays of every timer currently scheduled, in creation order. */
+    pendingDelays: function () {
+      return Object.keys(pending).map(function (id) {
+        return pending[id].delay;
+      });
     },
     replyWith: function (res) {
       nextResponse = res;
@@ -397,6 +408,13 @@ async function suiteSaving() {
     "typing schedules a save instead of sending one",
     d.puts.length === 0 && d.timerCount() === 1,
     "puts=" + d.puts.length + " timers=" + d.timerCount()
+  );
+  // Nothing has saved yet, so the debounce is the only timer outstanding.
+  record("debounce_delays", d.pendingDelays().join(","));
+  check(
+    "and schedules it at the 600ms the brief specifies",
+    d.pendingDelays().length === 1 && d.pendingDelays()[0] === 600,
+    d.pendingDelays().join(",")
   );
   check(
     "the total updates live while typing",

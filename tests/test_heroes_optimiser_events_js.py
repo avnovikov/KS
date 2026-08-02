@@ -190,6 +190,44 @@ def test_the_board_declares_no_second_showtoast_or_escaper(tmp_path: Path) -> No
         assert "window.bindDialogDismiss(" in source
         assert 'ev.key === "Escape"' not in source
 
+    # `safeUrl` was the odd one out: the only one of these four that is purely
+    # a security control, and the only one still private to a single page
+    # script. hero_detail.js did `iconEl.src = hero.icon_url || ""` on the
+    # same field the board runs through safeUrl, from the same store, with no
+    # check at all — so the branch's one unguarded URL sink was the file that
+    # could not see the guard. Pinned on the assignment itself: a revert to
+    # the raw field is what this has to catch, and hero_detail.js has no
+    # engine harness to catch it at runtime.
+    assert app_js.count("function safeUrl(") == 1
+    for name, source in (("board", board), ("hero_detail", hero_detail)):
+        assert "function safeUrl(" not in source, f"{name} redefined safeUrl"
+        assert "window.safeUrl" in source, f"{name} does not use the shared safeUrl"
+    assert "var iconSrc = safeUrl(hero.icon_url);" in hero_detail
+    assert "iconEl.src = iconSrc;" in hero_detail
+    assert "hero.icon_url ||" not in hero_detail
+
+
+def test_both_optimiser_pages_read_one_error_envelope(tmp_path: Path) -> None:
+    """The Gear XP planner unwrapped FastAPI's `{"detail": ...}`; the board
+    did `res.text()` and showed the body raw. One reading now, in app.js,
+    including the part that is easy to lose — a validation 422 puts a *list*
+    of objects in `detail`, and "[object Object]" is worse than useless.
+    """
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.ui.app import create_app
+
+    client = TestClient(create_app(gear_dir=None, heroes_dir=tmp_path))
+    app_js = client.get("/static/app.js").text
+    assert app_js.count("function detailOf(") == 1
+    assert 'typeof detail === "string"' in app_js
+
+    for name in ("optimiser_events.js", "optimiser_gear_xp.js"):
+        src = client.get(f"/static/{name}").text
+        assert "window.detailOf(" in src, name
+        assert 'typeof detail === "string"' not in src, f"{name} re-reads the envelope"
+
 
 # --- behaviour ---------------------------------------------------------------
 
@@ -389,6 +427,8 @@ def test_everything_from_the_api_is_escaped_before_it_becomes_markup(
             "and an absolute off-site URL, since every icon the app makes is a path",
             "a same-origin path that would close the src attribute is escaped, not waved through",
             "so no onerror handler ever reaches the markup",
+            "an entity-spelled quote in a URL cannot re-open the attribute it sits in",
+            "and a bare & in a name is escaped rather than starting an entity",
         ],
     )
     # Spelled out here as well, so the escaping cannot regress to "the string
@@ -408,6 +448,15 @@ def test_everything_from_the_api_is_escaped_before_it_becomes_markup(
     assert 'src="/x.png&quot; onerror=&quot;alert(1)"' in gear, gear
     assert 'onerror="' not in gear, gear
     assert "evil.example" not in gear, gear
+
+    # `&` is the fifth replacement and the only one nothing defended:
+    # dropping it from app.js's esc killed 0 of 454 checks. It is also what
+    # re-enables the other four — an attacker who cannot write `"` writes
+    # `&quot;`, and the browser decodes it back to a quote while parsing the
+    # attribute. So the ampersand has to survive as `&amp;`.
+    amp = js_run["data"]["ampersand_gear_html"]
+    assert 'src="/x.png&amp;quot; onerror=&amp;quot;alert(1)"' in amp, amp
+    assert "&quot; onerror=" not in amp, amp
 
 
 def test_a_failed_section_is_named_rather_than_blanking_the_page(
@@ -459,10 +508,20 @@ def test_warnings_and_skipped_modes_are_surfaced_separately(js_run: dict) -> Non
 
 
 def test_a_failed_request_is_reported_and_retryable(js_run: dict) -> None:
+    """The board was the one of five fetch callers that did `res.text()` and
+    put the body on screen unread, and the harness fixture hid it by replying
+    with a bare string where FastAPI sends `{"detail": "..."}`. Latent rather
+    than live — an unhandled exception answers in plain text, and the
+    JSON-envelope 404 only fires when heroes are unconfigured, in which case
+    the page 404s too — but user-visible the first time /api/optimize grows an
+    HTTPException, which the two rescan endpoints already have.
+    """
     _assert_ran(
         js_run,
         [
             "a failed request surfaces the server's reason",
+            "unwrapped from the JSON envelope, not printed as the raw body",
+            "a non-string detail is never printed as [object Object]",
             "as an error",
             "and raises it through the shared toast",
             "the board is left empty rather than half-drawn",
@@ -522,6 +581,41 @@ def test_portrait_slugs_agree_with_the_python_that_named_the_files(
     assert len(urls) >= 7, urls
     for name, url in urls.items():
         assert url == f"/static/heroes/{hero_slug(name)}.webp", name
+
+
+def test_tab_newline_and_cr_cannot_smuggle_an_off_site_portrait(
+    js_run: dict,
+) -> None:
+    """`safeUrl` rejected `//host/x` and its backslash spelling but admitted
+    `/<tab>/host/x`. Browsers strip ASCII tab, LF and CR from a URL *before*
+    parsing it, so what is actually fetched is `//host/x` — the exact case the
+    function exists to refuse. Reproduced under jsc before the fix: all three
+    spellings came back unchanged.
+    """
+    _assert_ran(
+        js_run,
+        [
+            "a protocol-relative URL hidden behind a tab is refused",
+            "a protocol-relative URL hidden behind a newline is refused",
+            "a protocol-relative URL hidden behind a carriage return is refused",
+            "while an ordinary same-origin path with no separator is still served",
+        ],
+    )
+
+
+def test_the_boards_grouped_numbers_pin_their_locale(js_run: dict) -> None:
+    """`fmtPoints` is one of four `toLocaleString` call sites in this UI and
+    only the troops editor's was defended: delocalising this one killed 0 of
+    138 checks. The harness swaps `Number.prototype.toLocaleString` for a
+    sentinel that fires when the locale argument is omitted, so the check is
+    about what the *source* passes rather than about the host's own locale
+    happening to be en-US.
+    """
+    _assert_ran(
+        js_run,
+        ["the board pins its grouping instead of following the viewer's locale"],
+    )
+    assert "LOCALE-DEFAULT" not in js_run["data"]["locale_rendered"]
 
 
 def test_degenerate_bundles_do_not_render_a_broken_board(js_run: dict) -> None:

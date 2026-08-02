@@ -125,6 +125,18 @@ def test_troops_editor_js_runs_under_a_real_engine(js_run: dict) -> None:
     assert not _failures(js_run, ["harness ran to completion"])
 
 
+def test_the_debounce_is_actually_600ms(js_run: dict) -> None:
+    """The harness's fake clock discarded `setTimeout`'s delay, so the
+    interval this editor debounces on was asserted by nothing: `DEBOUNCE_MS`
+    could be dropped to 1 (a PUT per keystroke) or raised to 60 seconds and
+    every check stayed green. The clock records the delay now — the same fix
+    tests/js/inventory_harness.js already carried — and this pins the number
+    on both sides, in JS and here.
+    """
+    _assert_ran(js_run, ["and schedules it at the 600ms the brief specifies"])
+    assert js_run["data"]["debounce_delays"] == "600"
+
+
 def test_troops_editor_js_save_state_machine(js_run: dict) -> None:
     """Every behavioural check in the harness, reported together."""
     failures = _failures(js_run)

@@ -43,15 +43,23 @@
 })();
 
 /**
- * Publishes window.escapeHtml and window.bindDialogDismiss — the two things
- * every page that builds markup or opens a dialog needs.
+ * Publishes window.escapeHtml, window.safeUrl and window.bindDialogDismiss —
+ * what every page that builds markup, points an <img> somewhere, or opens a
+ * dialog needs.
  *
- * WHY shared: both already existed twice, and the escaping copies had
- * diverged. hero_detail.js escaped four characters; the event lineups board
- * escaped five (it also handles `'`, which matters the moment a value lands
- * in a single-quoted attribute). Two spellings of one *security* helper is
- * worse than two spellings of a formatter: a fix to either would never reach
- * the other, and nothing pointed either at its twin. The strict version won.
+ * WHY shared: the first two already existed twice, and the escaping copies
+ * had diverged. hero_detail.js escaped four characters; the event lineups
+ * board escaped five (it also handles `'`, which matters the moment a value
+ * lands in a single-quoted attribute). Two spellings of one *security* helper
+ * is worse than two spellings of a formatter: a fix to either would never
+ * reach the other, and nothing pointed either at its twin. The strict version
+ * won.
+ *
+ * safeUrl joined them for the same reason, one wave later: it was the only
+ * one of these that is purely a security control and the only one still
+ * private to a single page script — so the board checked its icon URLs and
+ * hero_detail.js, doing the structurally identical thing with the same field,
+ * did not.
  */
 (function () {
   "use strict";
@@ -74,6 +82,44 @@
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
+  }
+
+  /**
+   * A same-origin path, or "" for anything else.
+   *
+   * Every URL that reaches this is a path: ensure_all_icons emits
+   * /gear-icons/<id>.png, hero portraits are /static/heroes/<slug>.webp. So
+   * refusing everything else costs nothing and leaves a rule that can be
+   * stated in one line — which an earlier version could not: it rejected
+   * "//host/x" as off-site while allowing "https://host/x", which is off-site
+   * too.
+   *
+   * Both "//host/x" and "/\host/x" start with "/" and are why this is not
+   * just `charAt(0) === "/"`: WHATWG parses a backslash in the authority of a
+   * special scheme exactly like a slash, so both are protocol-relative URLs
+   * wearing a path's clothes.
+   *
+   * The tab/LF/CR check is the same case one spelling further out. A browser
+   * strips every ASCII tab, LF and CR from a URL *before* parsing it, so
+   * "/\t/evil.example/x.png" is fetched as "//evil.example/x.png" — the exact
+   * thing the line below rejects, smuggled past a `charAt(1)` that sees a tab
+   * instead of a slash. Refusing the characters outright is safe: no icon
+   * path this app generates contains one.
+   *
+   * This is an origin check, not an escaping one. What it returns still has
+   * to be escaped before it reaches an attribute — see the board's
+   * renderGearGrid.
+   *
+   * @param {*} u the candidate URL; falsy values yield ""
+   * @returns {string} the same string if it is a plain same-origin path, else ""
+   */
+  function safeUrl(u) {
+    if (!u) return "";
+    var s = String(u);
+    if (/[\t\n\r]/.test(s)) return "";
+    if (s.charAt(0) !== "/") return "";
+    if (s.charAt(1) === "/" || s.charAt(1) === "\\") return "";
+    return s;
   }
 
   /**
@@ -104,7 +150,40 @@
   }
 
   window.escapeHtml = esc;
+  window.safeUrl = safeUrl;
   window.bindDialogDismiss = bindDialogDismiss;
+})();
+
+/**
+ * Publishes window.detailOf — the one reading of FastAPI's error envelope.
+ *
+ * WHY shared: the JSON endpoints answer a failure with {"detail": "..."} and
+ * the two optimiser screens both have to turn that into a line of prose. The
+ * Gear XP planner unwrapped it; the lineup board did `res.text()` and put the
+ * raw body on screen, so the first HTTPException /api/optimize ever raises
+ * would have shown the user `{"detail":"..."}` braces and all. One rule now,
+ * including the part that is easy to miss: FastAPI's *validation* 422s put a
+ * list of objects in `detail`, and "[object Object]" is worse than useless.
+ */
+(function () {
+  "use strict";
+
+  /**
+   * The server's own message when it sent a usable one.
+   *
+   * @param {*} data the parsed JSON body, or null when the body was not JSON
+   *        (an unhandled exception answers with plain "Internal Server Error")
+   * @param {string} fallback what to show otherwise — the caller's own
+   *        phrasing, since only it knows which request failed
+   * @returns {string} a line fit to put in front of a user
+   */
+  function detailOf(data, fallback) {
+    var detail = data && data.detail;
+    if (typeof detail === "string" && detail) return detail;
+    return String(fallback);
+  }
+
+  window.detailOf = detailOf;
 })();
 
 /**

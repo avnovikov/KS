@@ -70,29 +70,12 @@
   /** app.js's shared escaper — see there for why it is not defined here. */
   var esc = window.escapeHtml;
 
-  /** A same-origin path, or "" for anything else.
-   *
-   *  Every URL that reaches this is a path: ensure_all_icons emits
-   *  /gear-icons/<id>.png, hero portraits are /static/heroes/<slug>.webp. So
-   *  refusing everything else costs nothing and leaves a rule that can be
-   *  stated in one line — which the previous version could not: it rejected
-   *  "//host/x" as off-site while allowing "https://host/x", which is off-site
-   *  too.
-   *
-   *  Both "//host/x" and "/\host/x" start with "/" and are why this is not
-   *  just `charAt(0) === "/"`: WHATWG parses a backslash in the authority of a
-   *  special scheme exactly like a slash, so both are protocol-relative URLs
-   *  wearing a path's clothes.
-   *
-   *  This is an origin check, not an escaping one. What it returns is still
-   *  escaped before it reaches an attribute — see renderGearGrid. */
-  function safeUrl(u) {
-    if (!u) return "";
-    var s = String(u);
-    if (s.charAt(0) !== "/") return "";
-    if (s.charAt(1) === "/" || s.charAt(1) === "\\") return "";
-    return s;
-  }
+  /** app.js's shared origin check — see there for the rule and why it is not
+   *  defined here. This file used to own it, which left hero_detail.js doing
+   *  the structurally identical thing to the same `icon_url` field with no
+   *  check at all. What it returns is still escaped before it reaches an
+   *  attribute — see renderGearGrid. */
+  var safeUrl = window.safeUrl;
 
   /** Comma-grouped integer. Pinned to en-US like every other grouped number
    *  in this UI (troops.js's totals, the Gear XP planner's XP and level
@@ -568,7 +551,21 @@
     try {
       var res = await fetch("/api/optimize", { cache: "no-store" });
       var text = await res.text();
-      if (!res.ok) throw new Error(text || res.statusText);
+      if (!res.ok) {
+        // FastAPI answers an HTTPException with {"detail": "..."}, which is
+        // what the user should read; an *unhandled* exception answers with
+        // plain "Internal Server Error", which is the fallback below. Showing
+        // the body raw put the JSON braces on screen the moment this endpoint
+        // grew its first HTTPException — the two rescan endpoints already
+        // have one.
+        var failed = null;
+        try {
+          failed = JSON.parse(text);
+        } catch (_) {
+          failed = null;
+        }
+        throw new Error(window.detailOf(failed, text || res.statusText));
+      }
       bundle = JSON.parse(text);
       render();
       applyStatus(bundle);

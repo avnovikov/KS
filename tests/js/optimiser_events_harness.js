@@ -1009,6 +1009,32 @@ async function suiteEscaping() {
     gear.indexOf('onerror="alert') === -1,
     gear
   );
+
+  /* The `&` in esc(). Dropping it from app.js killed no check anywhere, and
+     it is the one replacement whose absence *re-enables* the other four: an
+     attacker who cannot write `"` writes `&quot;` instead, and a browser
+     decodes that back to a quote when it parses the attribute. Same
+     same-origin path as the case above, spelled the other way, so it is the
+     escape and nothing else that is being tested. */
+  var bundle3 = goodBundle();
+  bundle3.sword.modes.garrison.gear_assignment.Hilde = [
+    { slot: "helmet", name: "Ampersand & Co", icon_url: "/x.png&quot; onerror=&quot;alert(1)" },
+  ];
+  var d3 = makePage({ bundle: bundle3 });
+  await boot(d3);
+  d3.slot("Hilde").el.fire("click");
+  var amp = d3.modalBody.innerHTML;
+  record("ampersand_gear_html", amp);
+  check(
+    "an entity-spelled quote in a URL cannot re-open the attribute it sits in",
+    amp.indexOf('src="/x.png&amp;quot; onerror=&amp;quot;alert(1)"') !== -1,
+    amp
+  );
+  check(
+    "and a bare & in a name is escaped rather than starting an entity",
+    amp.indexOf("Ampersand &amp; Co") !== -1,
+    amp
+  );
 }
 
 async function suiteLeaveOneOutBranches() {
@@ -1147,18 +1173,46 @@ async function suiteWarningsAndSkippedModes() {
 }
 
 async function suiteRequestFailure() {
-  var d = makePage({ status: 404, body: "heroes inventory not configured" });
+  /* The envelope FastAPI actually sends. This fixture used to hand back the
+     bare string, which made "surfaces the server's reason" pass against a
+     page that showed whatever bytes arrived — braces and all, the moment
+     /api/optimize raised its first HTTPException. */
+  var d = makePage({
+    status: 404,
+    body: JSON.stringify({ detail: "heroes inventory not configured" }),
+  });
   await boot(d);
 
   check("a failed request surfaces the server's reason", d.statusEl.textContent === "heroes inventory not configured", d.statusEl.textContent);
+  check(
+    "unwrapped from the JSON envelope, not printed as the raw body",
+    d.statusEl.textContent.indexOf("detail") === -1 &&
+      d.statusEl.textContent.indexOf("{") === -1,
+    d.statusEl.textContent
+  );
   check("as an error", d.statusEl.classList.contains("err"), d.statusEl.className);
   check("and raises it through the shared toast", d.toasts.length === 1 && d.toasts[0].ok === false, JSON.stringify(d.toasts));
   check("the board is left empty rather than half-drawn", d.rows().length === 0, "rows=" + d.rows().length);
 
+  // FastAPI's *validation* errors put a list of objects in `detail`, which is
+  // the half of the envelope rule that is easy to lose.
+  d.queueReply({
+    status: 422,
+    statusText: "Unprocessable Entity",
+    body: JSON.stringify({ detail: [{ loc: ["body", "x"], msg: "nope" }] }),
+  });
+  d.regenBtn.fire("click");
+  await settle();
+  check(
+    "a non-string detail is never printed as [object Object]",
+    d.statusEl.textContent.indexOf("object Object") === -1,
+    d.statusEl.textContent
+  );
+
   d.queueReply({ bundle: goodBundle() });
   d.regenBtn.fire("click");
   await settle();
-  check("Regenerate retries", d.calls.length === 2, "calls=" + d.calls.length);
+  check("Regenerate retries", d.calls.length === 3, "calls=" + d.calls.length);
   check("and a later success replaces the error", d.boardTitle() === "Swordland · garrison", d.boardTitle());
   check("clearing the status", d.statusEl.classList.contains("ok"), d.statusEl.className);
 }
@@ -1311,6 +1365,77 @@ async function suiteApiPortraits() {
   );
 }
 
+/* A browser strips every ASCII tab, LF and CR out of a URL *before* it parses
+   it, so "/<tab>/evil.example/x.png" is fetched as "//evil.example/x.png" —
+   the protocol-relative URL safeUrl exists to refuse, smuggled past a
+   charAt(1) that sees a tab where the slash will be. Same class as the
+   backslash spelling the function already closed, one layer further out. */
+async function suiteWhitespaceSmuggledOrigins() {
+  var SMUGGLED = [
+    ["a tab", "/\t/evil.example/x.png"],
+    ["a newline", "/\n/evil.example/x.png"],
+    ["a carriage return", "/\r/evil.example/x.png"],
+  ];
+  for (var i = 0; i < SMUGGLED.length; i++) {
+    var label = SMUGGLED[i][0];
+    var url = SMUGGLED[i][1];
+    var bundle = goodBundle();
+    bundle.sword.modes.garrison.heroes[0].icon_url = url;
+    var d = makePage({ bundle: bundle });
+    await boot(d);
+    check(
+      "a protocol-relative URL hidden behind " + label + " is refused",
+      d.slot("Hilde").imgSrc === "/static/heroes/hilde.webp",
+      d.slot("Hilde").imgSrc
+    );
+  }
+
+  // Control: the same path without the separator is exactly what safeUrl is
+  // meant to allow, so the check above cannot be passing by rejecting
+  // everything.
+  var ok = goodBundle();
+  ok.sword.modes.garrison.heroes[0].icon_url = "/evil.example/x.png";
+  var dOk = makePage({ bundle: ok });
+  await boot(dOk);
+  check(
+    "while an ordinary same-origin path with no separator is still served",
+    dOk.slot("Hilde").imgSrc === "/evil.example/x.png",
+    dOk.slot("Hilde").imgSrc
+  );
+}
+
+/* Every grouped number on this board is pinned to en-US, so the same 1,200
+   points does not render "1.200" for one user and "1 200" for another while
+   the Gear XP planner beside it stays on commas. toLocaleString is swapped
+   for a sentinel that fires when the locale argument is omitted — the same
+   technique tests/js/troops_editor_harness.js uses, which was defending one
+   of the four call sites in this UI. */
+async function suiteLocale() {
+  var original = Number.prototype.toLocaleString;
+  Number.prototype.toLocaleString = function (locale) {
+    if (locale === undefined) return "LOCALE-DEFAULT";
+    return original.call(this, locale);
+  };
+  try {
+    var d = makePage({ bundle: goodBundle() });
+    await boot(d);
+    // fmtPoints reaches the screen twice over: the chip's score line and the
+    // board's points/troops/breakdown meta.
+    var shown = d.chipText(0) + " | " + d.boardMeta();
+    record("locale_rendered", shown);
+    // Holds on any engine: the sentinel only proves that *some* locale was
+    // passed, which is the fix. Whether the result is comma-grouped depends
+    // on the engine having Intl, which the Python side checks separately.
+    check(
+      "the board pins its grouping instead of following the viewer's locale",
+      shown.indexOf("LOCALE-DEFAULT") === -1,
+      shown
+    );
+  } finally {
+    Number.prototype.toLocaleString = original;
+  }
+}
+
 /* --- run -------------------------------------------------------------------- */
 
 /* Each suite is caught on its own: a scenario that throws must not take the
@@ -1333,6 +1458,8 @@ async function suiteApiPortraits() {
     suiteMissingFormationSlot,
     suiteSlugContract,
     suiteApiPortraits,
+    suiteWhitespaceSmuggledOrigins,
+    suiteLocale,
   ];
   var threw = [];
   for (var i = 0; i < suites.length; i++) {

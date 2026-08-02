@@ -330,13 +330,13 @@
 
   /* --- running -------------------------------------------------------------- */
 
-  /** The server's own message when it has one. FastAPI's validation 422s put
-   *  a list of objects in `detail`, which is worse than useless on screen. */
+  /** app.js's shared reading of FastAPI's error envelope, with this page's
+   *  own phrasing for the case where there is nothing usable in it. It lives
+   *  there because the lineup board needs the same unwrapping and was doing
+   *  without. */
   function detailOf(data, res) {
-    var detail = data && data.detail;
-    if (typeof detail === "string" && detail) return detail;
     var status = res.status + (res.statusText ? " " + res.statusText : "");
-    return "spend search failed (" + status + ")";
+    return window.detailOf(data, "spend search failed (" + status + ")");
   }
 
   /** {ok, body} or {ok: false, message} — every blank/invalid box is decided
