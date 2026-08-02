@@ -99,14 +99,44 @@ def sync_piece_power(piece: GearRecord) -> GearRecord:
     return replace(piece, power=power)
 
 
+_CANONICAL_RARITIES = frozenset(
+    {"grey", "green", "blue", "epic", "mythic", "red"}
+)
+_RARITY_ALIASES = {
+    "gray": "grey",
+    "common": "grey",
+    "white": "grey",
+    "uncommon": "green",
+    "rare": "blue",
+    "purple": "epic",
+    "gold": "mythic",
+}
+
+
+def normalize_ui_rarity(rarity: str | None) -> str | None:
+    """Map UI/OCR rarity labels to a canonical store value."""
+    if rarity is None:
+        return None
+    key = str(rarity).strip().lower()
+    if not key:
+        return None
+    key = _RARITY_ALIASES.get(key, key)
+    if key not in _CANONICAL_RARITIES:
+        raise ValueError(
+            f"rarity must be one of {sorted(_CANONICAL_RARITIES)}; got {rarity!r}"
+        )
+    return key
+
+
 def update_piece_levels(
     store: GearStore,
     piece_id: str,
     *,
     enhancement_level: int | None | object = ...,
     mastery_level: int | None | object = ...,
+    rarity: str | None | object = ...,
 ) -> GearRecord:
-    """Update enhancement and/or mastery; recompute power; persist JSON + DB."""
+    """Update enhancement/mastery/rarity; recompute power; persist JSON + DB."""
     pieces = {p.piece_id: p for p in store.all_pieces()}
     piece = pieces.get(piece_id)
     if piece is None:
@@ -131,14 +161,16 @@ def update_piece_levels(
             updates["mastery_level"] = level
         else:
             updates["mastery_level"] = None
+    if rarity is not ...:
+        updates["rarity"] = normalize_ui_rarity(
+            None if rarity is None else str(rarity)
+        )
 
     if not updates:
         return piece
-    updated = replace(piece, **updates)
-    updated = sync_piece_power(updated)
+    updated = sync_piece_power(replace(piece, **updates))
     overwrite = frozenset(updates.keys()) | {"power"}
-    store.upsert(updated, overwrite=overwrite)
-    return updated
+    return store.upsert(updated, overwrite=overwrite)
 
 
 def sync_all_powers(store: GearStore) -> int:
@@ -409,6 +441,7 @@ def create_app(
 
         enh_arg: Any = ...
         mast_arg: Any = ...
+        rarity_arg: Any = ...
         if raw.get("clear_enhancement"):
             enh_arg = None
         elif "enhancement_level" in raw:
@@ -417,6 +450,10 @@ def create_app(
             mast_arg = None
         elif "mastery_level" in raw:
             mast_arg = raw.get("mastery_level")
+        if raw.get("clear_rarity"):
+            rarity_arg = None
+        elif "rarity" in raw:
+            rarity_arg = raw.get("rarity")
 
         try:
             updated = update_piece_levels(
@@ -424,6 +461,7 @@ def create_app(
                 piece_id,
                 enhancement_level=enh_arg,
                 mastery_level=mast_arg,
+                rarity=rarity_arg,
             )
         except KeyError as exc:
             raise HTTPException(

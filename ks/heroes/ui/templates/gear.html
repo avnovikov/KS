@@ -99,6 +99,53 @@
     .rarity.blue, .rarity.rare { color: #85c1e9; }
     .rarity.green, .rarity.uncommon { color: #82e0aa; }
     .rarity.grey, .rarity.gray, .rarity.common, .rarity.white { color: #9aa0a6; }
+    select.rarity-select {
+      padding: 0.25rem 0.45rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: capitalize;
+      min-width: 5.5rem;
+    }
+    select.rarity-select.rarity-grey {
+      color: #c5c9ce;
+      border-color: #9aa0a6;
+      background: rgba(154, 160, 166, 0.18);
+    }
+    select.rarity-select.rarity-green {
+      color: #82e0aa;
+      border-color: #58d68d;
+      background: rgba(130, 224, 170, 0.16);
+    }
+    select.rarity-select.rarity-blue {
+      color: #85c1e9;
+      border-color: #5dade2;
+      background: rgba(133, 193, 233, 0.16);
+    }
+    select.rarity-select.rarity-epic {
+      color: #c39bd3;
+      border-color: #af7ac5;
+      background: rgba(195, 155, 211, 0.16);
+    }
+    select.rarity-select.rarity-mythic {
+      color: #f0c674;
+      border-color: #f5b041;
+      background: rgba(240, 198, 116, 0.16);
+    }
+    select.rarity-select.rarity-red {
+      color: #f1959b;
+      border-color: #ec7063;
+      background: rgba(241, 149, 155, 0.16);
+    }
+    select.rarity-select option.grey { color: #9aa0a6; }
+    select.rarity-select option.green { color: #82e0aa; }
+    select.rarity-select option.blue { color: #85c1e9; }
+    select.rarity-select option.epic { color: #c39bd3; }
+    select.rarity-select option.mythic { color: #f0c674; }
+    select.rarity-select option.red { color: #f1959b; }
     .name-cell {
       display: flex;
       align-items: center;
@@ -201,7 +248,22 @@
           </td>
           <td>{{ p.troop_type or "—" }}</td>
           <td>{{ p.slot or "—" }}</td>
-          <td class="rarity {{ (p.rarity or '')|lower }}">{{ p.rarity or "—" }}</td>
+          <td>
+            {% set r = (p.rarity or '')|lower %}
+            {% set r_norm = 'grey' if r in ['gray','common','white']
+                 else 'green' if r == 'uncommon'
+                 else 'blue' if r == 'rare'
+                 else 'epic' if r == 'purple'
+                 else 'mythic' if r == 'gold'
+                 else r %}
+            <select name="rarity" class="rarity-select{% if r_norm %} rarity-{{ r_norm }}{% endif %}">
+              <option value="" {% if not r_norm %}selected{% endif %}>—</option>
+              {% for opt in ['grey', 'green', 'blue', 'epic', 'mythic', 'red'] %}
+              <option value="{{ opt }}" class="{{ opt }}"
+                {% if r_norm == opt %}selected{% endif %}>{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </td>
           <td>
             <input type="number" min="0" max="200" name="enhancement"
                    value="{{ p.enhancement_level if p.enhancement_level is not none else '' }}" />
@@ -389,33 +451,9 @@
     document.querySelectorAll("button.save").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const row = btn.closest("tr");
-        const id = row.dataset.pieceId;
-        const enh = row.querySelector('input[name="enhancement"]').value;
-        const mast = row.querySelector('input[name="mastery"]').value;
-        const body = {};
-        if (enh === "") body.clear_enhancement = true;
-        else body.enhancement_level = Number(enh);
-        if (mast === "") body.clear_mastery = true;
-        else body.mastery_level = Number(mast);
         btn.disabled = true;
         try {
-          const res = await fetch(`/api/gear/${encodeURIComponent(id)}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(data.detail || res.statusText);
-          const powerCell = row.querySelector(".power-cell");
-          if (powerCell && data.piece && data.piece.power != null) {
-            powerCell.textContent = Number(data.piece.power).toLocaleString();
-            row.dataset.power = String(data.piece.power);
-          }
-          if (data.piece) {
-            row.dataset.enhancement =
-              data.piece.enhancement_level == null ? "" : String(data.piece.enhancement_level);
-          }
-          showToast(`Saved ${data.piece?.name || id} · power ${data.piece?.power ?? "—"}`, true);
+          await saveGearRow(row);
         } catch (err) {
           showToast(String(err.message || err), false);
         } finally {
@@ -447,19 +485,87 @@
       });
     });
 
-    // Live power preview: update power cell when enhancement/mastery inputs change.
+    const RARITY_CLASSES = ["rarity-grey", "rarity-green", "rarity-blue", "rarity-epic", "rarity-mythic", "rarity-red"];
+    function paintRaritySelect(sel) {
+      if (!sel) return;
+      RARITY_CLASSES.forEach((c) => sel.classList.remove(c));
+      if (sel.value) sel.classList.add(`rarity-${sel.value}`);
+    }
+
+    async function saveGearRow(row, { rarityOnly = false } = {}) {
+      const id = row.dataset.pieceId;
+      const enh = row.querySelector('input[name="enhancement"]').value;
+      const mast = row.querySelector('input[name="mastery"]').value;
+      const raritySel = row.querySelector('select[name="rarity"]');
+      const rarity = raritySel ? raritySel.value : "";
+      const body = {};
+      if (!rarityOnly) {
+        if (enh === "") body.clear_enhancement = true;
+        else body.enhancement_level = Number(enh);
+        if (mast === "") body.clear_mastery = true;
+        else body.mastery_level = Number(mast);
+      }
+      if (rarity === "") body.clear_rarity = true;
+      else body.rarity = rarity;
+      const res = await fetch(`/api/gear/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      const powerCell = row.querySelector(".power-cell");
+      if (powerCell && data.piece && data.piece.power != null) {
+        powerCell.textContent = Number(data.piece.power).toLocaleString();
+        row.dataset.power = String(data.piece.power);
+      }
+      if (data.piece) {
+        row.dataset.enhancement =
+          data.piece.enhancement_level == null ? "" : String(data.piece.enhancement_level);
+        row.dataset.rarity = (data.piece.rarity || "").toLowerCase();
+        if (raritySel) {
+          raritySel.value = (data.piece.rarity || "").toLowerCase();
+          paintRaritySelect(raritySel);
+        }
+      }
+      showToast(`Saved ${data.piece?.name || id} · ${data.piece?.rarity || "—"} · power ${data.piece?.power ?? "—"}`, true);
+      return data;
+    }
+
+    // Live power preview: update power cell when rarity/enhancement/mastery change.
+    // Rarity changes auto-persist rarity only so level edits stay on Save.
     document.querySelectorAll("#gear-table tbody tr").forEach((row) => {
-      const rarity = row.dataset.rarity;
+      const raritySel = row.querySelector('select[name="rarity"]');
       const enhInput = row.querySelector('input[name="enhancement"]');
       const mastInput = row.querySelector('input[name="mastery"]');
       const powerCell = row.querySelector(".power-cell");
       if (!enhInput || !mastInput || !powerCell) return;
       function updateLivePower() {
+        const rarity = (raritySel && raritySel.value) || row.dataset.rarity || "";
         const est = estimatePower(rarity, enhInput.value, mastInput.value);
         if (est != null) powerCell.textContent = est.toLocaleString();
       }
       enhInput.addEventListener("input", updateLivePower);
       mastInput.addEventListener("input", updateLivePower);
+      if (raritySel) {
+        paintRaritySelect(raritySel);
+        raritySel.addEventListener("change", async () => {
+          paintRaritySelect(raritySel);
+          updateLivePower();
+          raritySel.disabled = true;
+          try {
+            await saveGearRow(row, { rarityOnly: true });
+          } catch (err) {
+            showToast(String(err.message || err), false);
+            // Revert select to last saved rarity on failure.
+            raritySel.value = row.dataset.rarity || "";
+            paintRaritySelect(raritySel);
+            updateLivePower();
+          } finally {
+            raritySel.disabled = false;
+          }
+        });
+      }
     });
   </script>
 </body>

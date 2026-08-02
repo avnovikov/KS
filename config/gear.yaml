@@ -13,8 +13,9 @@ save_screenshots: true
 
 grid:
   # 4 columns × 6 rows — rows 1-5 are the main inventory; row 6 (y≈1720) catches
-  # grey common pieces that appear at the bottom of a longer backpack inventory.
-  max_pages: 3
+  # grey common pieces that appear at the bottom. Single page only (no swipe:
+  # paging re-opened overlapping cells and double-scanned everything).
+  max_pages: 1
   # 4 columns × 6 rows of backpack gear tiles
   cells:
     - {x: 135, y: 400}
