@@ -9,6 +9,7 @@ from ks.heroes.optimize.gear_assign import (
     assignment_to_dict,
     gear_bonus_by_troop,
 )
+from ks.heroes.optimize.bear_damage import BeartrapBuffs
 from ks.heroes.optimize.model import solve_mode
 from ks.heroes.optimize.troop_stats import TroopStatsTable
 from ks.heroes.optimize.troops import breakdown_for_totals
@@ -59,6 +60,7 @@ def _solve_all_modes(
     troop_stats: TroopStatsTable | None,
     truegold: int,
     gear_bonus: dict[str, float] | None,
+    beartrap_buffs: BeartrapBuffs | None = None,
 ) -> list[ModeSolution]:
     return [
         solve_mode(
@@ -70,6 +72,7 @@ def _solve_all_modes(
             troop_stats=troop_stats,
             truegold=truegold,
             gear_bonus_by_troop=gear_bonus,
+            beartrap_buffs=beartrap_buffs,
         )
         for mode, scenario in modes.items()
     ]
@@ -166,6 +169,7 @@ def recommend(
     truegold: int = 0,
     gear: list[GearRecord] | None = None,
     gear_profile: str = "early_game_growth",
+    beartrap_buffs: BeartrapBuffs | None = None,
 ) -> RecommendResult:
     if not scenarios:
         raise ValueError("scenarios must not be empty")
@@ -181,9 +185,9 @@ def recommend(
         troop_stats=troop_stats,
         truegold=truegold,
         gear_bonus=gear_bonus,
+        beartrap_buffs=beartrap_buffs,
     )
     best = _pick_best_feasible(solutions)
-
     total = sum(best.troops.values()) or 1
     ratios = {k: v / total for k, v in best.troops.items()}
     best_scenario = _retag_scenario(modes[best.mode], best.mode)
