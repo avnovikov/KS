@@ -411,8 +411,26 @@ function makePage(spec) {
     rescanBtn: rescanBtn,
     bannerEl: bannerEl,
     bannerLog: bannerLog,
+    /** The banner as the user reads it: "" when it is not on screen.
+     *
+     *  Fine for asserting a banner is *present* and says the right thing —
+     *  `banner() !== "x"` needs both halves — but useless for asserting it
+     *  went away: `banner() === ""` is a disjunction, satisfied by `hidden`
+     *  alone or by empty text alone. Deleting `banner.hidden = true` from
+     *  renderBanner left 122/122 green, and that is the load-bearing half:
+     *  without it "Mark all reviewed" leaves an empty trust banner stuck on
+     *  the page. The clear path asserts the two separately. */
     banner: function () {
       return bannerEl.hidden ? "" : summaryEl.textContent;
+    },
+    bannerHidden: function () {
+      return bannerEl.hidden === true;
+    },
+    bannerText: function () {
+      return summaryEl.textContent;
+    },
+    bannerState: function () {
+      return "hidden=" + bannerEl.hidden + " text=" + summaryEl.textContent;
     },
     countText: function () {
       return countEl.textContent;
@@ -1218,7 +1236,11 @@ async function suiteTrust() {
     d.stored("gear") === null,
     JSON.stringify(d.stored("gear"))
   );
-  check("and the banner goes away", d.banner() === "", d.banner());
+  check(
+    "and the banner goes away",
+    d.bannerHidden() && d.bannerText() === "",
+    d.bannerState()
+  );
 }
 
 async function suiteMarkAllReviewed() {
@@ -1239,7 +1261,11 @@ async function suiteMarkAllReviewed() {
       d.row("cell2").dataset.trust === undefined
   );
   check("and the stored payload", d.stored("gear") === null, JSON.stringify(d.stored("gear")));
-  check("and hides the banner", d.banner() === "", d.banner());
+  check(
+    "and hides the banner",
+    d.bannerHidden() && d.bannerText() === "",
+    d.bannerState()
+  );
   check("without sending anything to the API", d.calls.length === 0, "calls=" + d.calls.length);
 }
 

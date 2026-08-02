@@ -396,6 +396,22 @@ function makePage(spec) {
     sheetOpen: function () {
       return !modal.hidden && modal.classList.contains("open");
     },
+    /** The closing direction, asserted on both properties.
+     *
+     *  `sheetOpen()` is a conjunction, so `sheetOpen() === false` is
+     *  satisfied by either half alone and pins neither. Opening is fine —
+     *  a conjunction asserted true needs both — but closing was not:
+     *  deleting `modal.classList.remove("open")` from closeHeroSheet left
+     *  147/147 green. That is the dangerous half, because app.css's
+     *  `.modal-backdrop.open { display: flex }` (0,2,0) outranks the UA's
+     *  `[hidden] { display: none }` (0,1,0) — the sheet would have stayed
+     *  on screen permanently with every "closes it" check passing. */
+    sheetClosed: function () {
+      return modal.hidden === true && !modal.classList.contains("open");
+    },
+    sheetState: function () {
+      return "hidden=" + modal.hidden + " class=" + modal.className;
+    },
   };
 }
 
@@ -816,7 +832,7 @@ async function suiteHeroSheet() {
   var d = makePage({ bundle: goodBundle() });
   await boot(d);
 
-  check("the sheet starts closed", d.sheetOpen() === false, "hidden=" + d.modal.hidden);
+  check("the sheet starts closed", d.sheetClosed() === true, d.sheetState());
   d.slot("Hilde").el.fire("click");
   check("tapping a hero opens it", d.sheetOpen() === true, "hidden=" + d.modal.hidden + " " + d.modal.className);
   check("titled with the hero", d.modalTitle.textContent === "Hilde", d.modalTitle.textContent);
@@ -832,7 +848,16 @@ async function suiteHeroSheet() {
   );
   var body = d.modalBody.innerHTML;
   record("sheet_body", body);
-  check("the why block explains the role", body.indexOf("defense_widget".replace("_", " ")) !== -1, body.slice(0, 200));
+  /* Bound to the .why-role element, not to the whole modal body. The needle
+     used to be the bare words "defense widget", which the fixture *also*
+     produces as an <li> from fits_because ("Satisfies required defense
+     widget") — so the paragraph this check names was asserted by nothing and
+     deleting the `explain.role` line from renderWhy left 138/138 green. */
+  check(
+    "the why block explains the role",
+    body.indexOf('<p class="why-role">defense widget</p>') !== -1,
+    body.slice(0, 200)
+  );
   check(
     "and lists why the solver picked this hero",
     body.indexOf("Satisfies required defense widget") !== -1,
@@ -860,7 +885,7 @@ async function suiteHeroSheet() {
   );
 
   d.modalClose.fire("click");
-  check("Close closes it", d.sheetOpen() === false, "hidden=" + d.modal.hidden);
+  check("Close closes it", d.sheetClosed() === true, d.sheetState());
 
   d.slot("Howard").el.fire("click");
   check("a second hero reopens it with their own detail", d.modalTitle.textContent === "Howard", d.modalTitle.textContent);
@@ -870,13 +895,13 @@ async function suiteHeroSheet() {
     String((d.modalBody.innerHTML.match(/Empty/g) || []).length)
   );
   d.pressEscape();
-  check("Escape closes it", d.sheetOpen() === false, "hidden=" + d.modal.hidden);
+  check("Escape closes it", d.sheetClosed() === true, d.sheetState());
 
   d.slot("Saul").el.fire("click");
   d.clickInsideModal();
   check("a tap inside the sheet does not dismiss it", d.sheetOpen() === true, "hidden=" + d.modal.hidden);
   d.clickBackdrop();
-  check("a tap on the backdrop does", d.sheetOpen() === false, "hidden=" + d.modal.hidden);
+  check("a tap on the backdrop does", d.sheetClosed() === true, d.sheetState());
 
   d.eventButton("arena").fire("click");
   d.slot("Helga").el.fire("click");
@@ -1120,7 +1145,11 @@ async function suitePartialFailure() {
     d.boardTitle() === "Bear Trap · solo" && d.rows().length === 1,
     d.boardTitle()
   );
-  check("and their banner is cleared", d.sectionErrEl.hidden === true, d.sectionErrEl.textContent);
+  check(
+    "and their banner is cleared",
+    d.sectionErrEl.hidden === true && d.sectionErrEl.textContent === "",
+    "hidden=" + d.sectionErrEl.hidden + " text=" + d.sectionErrEl.textContent
+  );
 }
 
 async function suiteArenaSideFailure() {
@@ -1169,7 +1198,11 @@ async function suiteWarningsAndSkippedModes() {
     d.noteEl.textContent
   );
   d.eventButton("bear").fire("click");
-  check("and the note clears on an event that skipped nothing", d.noteEl.hidden === true, d.noteEl.textContent);
+  check(
+    "and the note clears on an event that skipped nothing",
+    d.noteEl.hidden === true && d.noteEl.textContent === "",
+    "hidden=" + d.noteEl.hidden + " text=" + d.noteEl.textContent
+  );
 }
 
 async function suiteRequestFailure() {
