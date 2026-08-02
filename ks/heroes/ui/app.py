@@ -26,7 +26,6 @@ from ks.heroes.ui.icons import ensure_all_icons
 from ks.heroes.ui.power import compute_gear_power
 from ks.heroes.ui.rescan import rescan_gear_from_ocr
 from ks.heroes.ui.troop_store import TroopStore
-from ks.heroes.ui.troops_form import troops_form_model
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -397,31 +396,11 @@ def create_app(
 
     @app.get("/inventory/troops", response_class=HTMLResponse)
     def inventory_troops_page(request: Request) -> HTMLResponse:
-        """Server-render the troops editor from the store.
-
-        Unlike GET /api/troops, an unreadable or invalid document must not
-        take the *page* down: the editor is where a user repairs it (a
-        complete PUT is self-healing over corrupt YAML), so a load failure
-        renders the form with whatever was readable plus a banner carrying
-        the validator's message. Validation runs through _troop_totals, the
-        same path the API uses, so page and API never disagree about what
-        counts as broken.
-        """
-        raw: dict[str, Any] = {}
-        load_error: str | None = None
-        try:
-            raw = troop_store.load_raw()
-            _troop_totals(raw)
-        except (yaml.YAMLError, ValueError, TypeError) as exc:
-            load_error = str(exc)
         return _shell_page(
             request,
             "inventory_troops.html",
             primary="inventory",
             subtab="troops",
-            form=troops_form_model(raw),
-            troops_path=str(troop_store.path),
-            load_error=load_error,
         )
 
     @app.get("/optimiser/events", response_class=HTMLResponse)
@@ -793,56 +772,6 @@ def create_app(
             result = allocate_fodder_xp(
                 gear_pieces,
                 bag,
-                utility_fn,
-                event=event,
-            )
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return result.to_dict()
-
-    @app.post("/api/optimize/hero-levels")
-    def api_optimize_hero_levels(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        """Allocate Hero EXP to maximize event utility (propose only)."""
-        _heroes_path, hero_store_local = _require_heroes()
-        from ks.heroes.optimize.spend_hero_xp import (
-            allocate_hero_exp,
-            build_hero_event_utility,
-        )
-
-        event = str(body.get("event") or "swordland").strip().lower()
-        mode = body.get("mode")
-        mode_s = str(mode).strip() if mode else None
-        try:
-            hero_exp = int(body.get("hero_exp", 0))
-        except (TypeError, ValueError) as exc:
-            raise HTTPException(
-                status_code=400, detail="invalid hero_exp"
-            ) from exc
-        if hero_exp < 0:
-            raise HTTPException(
-                status_code=400, detail="hero_exp must be non-negative"
-            )
-
-        hero_store_local.reload()
-        heroes = hero_store_local.all_heroes()
-        if not heroes:
-            raise HTTPException(status_code=400, detail="hero roster is empty")
-
-        gear_pieces: list[Any] | None = None
-        if gear_store is not None:
-            gear_store.reload()
-            gear_pieces = gear_store.all_pieces() or None
-
-        try:
-            utility_fn = build_hero_event_utility(
-                event,
-                gear_pieces,
-                mode=mode_s,
-                troops_path=app.state.troops_path,
-            )
-            result = allocate_hero_exp(
-                heroes,
-                hero_exp,
                 utility_fn,
                 event=event,
             )
