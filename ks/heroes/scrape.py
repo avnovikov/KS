@@ -386,9 +386,11 @@ def scrape_hero(
         try:
             from ks.heroes.power_i_capture import capture_power_i_breakdown
 
-            breakdown = capture_power_i_breakdown(device, cfg, sleep_fn=sleep)
-            if breakdown is not None:
-                on_power_breakdown(breakdown)
+            captured = capture_power_i_breakdown(
+                device, cfg, sleep_fn=sleep, names_dir=names_dir
+            )
+            if captured is not None:
+                on_power_breakdown(captured)
         except Exception as exc:  # noqa: BLE001 — rescan must continue
             print(f"warn: Power-i capture failed for {identity.name!r}: {exc}")
 

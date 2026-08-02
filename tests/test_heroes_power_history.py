@@ -97,6 +97,22 @@ def test_append_when_level_bucket_changes(tmp_path: Path) -> None:
     assert points[1].level == 58
 
 
+def test_naked_or_total_minus_gear() -> None:
+    from ks.heroes.power_breakdown import PowerBreakdown
+
+    b = PowerBreakdown(
+        hero_power=400_150,
+        from_level=109_300,
+        from_stars=226_200,
+        from_skills=34_650,
+        gear_strength=30_000,
+    )
+    assert b.naked == 370_150
+    assert b.naked_or_total_minus_gear() == 370_150
+    geared_only = PowerBreakdown(hero_power=400_150, gear_strength=30_000)
+    assert geared_only.naked_or_total_minus_gear() == 370_150
+
+
 def test_identity_ignores_scraped_at_only_change(tmp_path: Path) -> None:
     hist = tmp_path / "power_history"
     bd = parse_power_breakdown(
