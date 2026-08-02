@@ -131,10 +131,20 @@ def test_attach_gear_icon_urls_patches_arena_and_events() -> None:
                 }
             },
         },
+        "conquest": {
+            "gear_assignment": {
+                "Marlin": [{"slot": "helmet", "piece_id": "p4", "name": "M"}]
+            }
+        },
     }
     attach_gear_icon_urls(
         bundle,
-        {"p1": "/icons/a.svg", "p2": "/icons/b.svg", "p3": "/icons/c.svg"},
+        {
+            "p1": "/icons/a.svg",
+            "p2": "/icons/b.svg",
+            "p3": "/icons/c.svg",
+            "p4": "/icons/d.svg",
+        },
     )
     assert (
         bundle["sword"]["modes"]["garrison"]["gear_assignment"]["Helga"][0]["icon_url"]
@@ -144,6 +154,9 @@ def test_attach_gear_icon_urls_patches_arena_and_events() -> None:
     assert (
         bundle["arena"]["defense"]["gear_assignment"]["Howard"][0]["icon_url"]
         == "/icons/c.svg"
+    )
+    assert (
+        bundle["conquest"]["gear_assignment"]["Marlin"][0]["icon_url"] == "/icons/d.svg"
     )
 
 

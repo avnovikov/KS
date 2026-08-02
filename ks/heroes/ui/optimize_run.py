@@ -1,4 +1,4 @@
-"""Run sword/bear/arena optimize bundles for the UI."""
+"""Run sword/bear/arena/conquest optimize bundles for the UI."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from ks.heroes.gear_models import GearRecord
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.arena import load_arena_roles, optimize_arena
 from ks.heroes.optimize.catalog import load_catalog
+from ks.heroes.optimize.combat_formation import load_combat_roles
+from ks.heroes.optimize.conquest import optimize_conquest
 from ks.heroes.optimize.events import load_event_profile
 from ks.heroes.optimize.recommend import recommend
 from ks.heroes.optimize.scenarios import load_scenarios
@@ -88,14 +90,16 @@ def run_optimize_bundle(
     gear_profile_events: str = "early_game_growth",
     gear_profile_arena: str = "early_game_combat",
 ) -> dict[str, Any]:
-    """Compute sword + bear mode tables and arena attack/defense."""
+    """Compute sword + bear mode tables, arena attack/defense, and conquest."""
     root = (config_root or REPO_ROOT).expanduser().resolve()
     catalog_path = root / "config" / "hero_catalog.yaml"
     troops_path = root / "config" / "troops.yaml"
     troop_stats_path = root / "config" / "troop_stats.yaml"
     roles_path = root / "config" / "arena_roles.yaml"
+    conquest_roles_path = root / "config" / "conquest_roles.yaml"
     catalog = load_catalog(None, catalog_path)
     roles = load_arena_roles(roles_path, catalog=catalog)
+    conquest_roles = load_combat_roles(conquest_roles_path, catalog=catalog)
 
     errors: dict[str, str] = {}
     warnings: list[str] = []
@@ -181,6 +185,41 @@ def run_optimize_bundle(
                 "error": errors[f"arena_{side}"],
             }
     out["arena"] = arena
+
+    try:
+        conquest_result = optimize_conquest(
+            heroes,
+            catalog,
+            conquest_roles,
+            gear=gear,
+            gear_profile=gear_profile_arena,
+        )
+        out["conquest"] = conquest_result.to_dict()
+        if conquest_result.status != "Optimal":
+            errors["conquest"] = f"status={conquest_result.status}"
+    except _DOMAIN_ERRORS as exc:
+        errors["conquest"] = str(exc)
+        out["conquest"] = {
+            "mode": "conquest",
+            "status": "Error",
+            "formation": {},
+            "heroes": [],
+            "score": None,
+            "reasons": {},
+            "error": str(exc),
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("conquest optimize failed")
+        errors["conquest"] = f"internal error: {exc}"
+        out["conquest"] = {
+            "mode": "conquest",
+            "status": "Error",
+            "formation": {},
+            "heroes": [],
+            "score": None,
+            "reasons": {},
+            "error": errors["conquest"],
+        }
     return out
 
 
@@ -207,3 +246,6 @@ def attach_gear_icon_urls(
     for side_row in arena.values():
         if isinstance(side_row, dict):
             _patch_assignment(side_row.get("gear_assignment"))
+    conquest = bundle.get("conquest")
+    if isinstance(conquest, dict):
+        _patch_assignment(conquest.get("gear_assignment"))

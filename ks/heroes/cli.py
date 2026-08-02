@@ -333,6 +333,53 @@ def build_parser() -> argparse.ArgumentParser:
         help="Write arena recommendation JSON here.",
     )
 
+    conquest = sub.add_parser(
+        "conquest",
+        help="Pick Conquest formation (5 heroes, 2F+3B).",
+    )
+    conquest.add_argument(
+        "--heroes",
+        type=Path,
+        required=True,
+        help="Path to heroes.json from collect.",
+    )
+    conquest.add_argument(
+        "--catalog",
+        type=Path,
+        default=ROOT / "config" / "hero_catalog.yaml",
+        help="Widget/effect overlay YAML.",
+    )
+    conquest.add_argument(
+        "--pro-cache",
+        type=Path,
+        default=ROOT / "artifacts" / "heroes" / "catalog_cache" / "kingshotpro_heroes.json",
+        help="Cached KingshotPro heroes.json (optional if missing).",
+    )
+    conquest.add_argument(
+        "--roles",
+        type=Path,
+        default=ROOT / "config" / "conquest_roles.yaml",
+        help="Conquest placement weights YAML.",
+    )
+    conquest.add_argument(
+        "--gear",
+        type=Path,
+        default=None,
+        help="Gear inventory JSON or collect dir (assigns best set per troop class).",
+    )
+    conquest.add_argument(
+        "--gear-profile",
+        type=str,
+        default="early_game_combat",
+        help="hero_gear_optimizer build profile (default: early_game_combat).",
+    )
+    conquest.add_argument(
+        "--out",
+        type=Path,
+        default=ROOT / "artifacts" / "heroes" / "conquest_result.json",
+        help="Write conquest recommendation JSON here.",
+    )
+
     ui = sub.add_parser(
         "ui",
         help="Local FastAPI UI for gear and/or heroes roster edits.",
@@ -770,6 +817,63 @@ def _cmd_arena(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_conquest(args: argparse.Namespace) -> int:
+    from ks.heroes.optimize.catalog import load_catalog
+    from ks.heroes.optimize.combat_formation import load_combat_roles
+    from ks.heroes.optimize.conquest import optimize_conquest
+
+    try:
+        heroes = _load_heroes_json(args.heroes)
+        pro_path = args.pro_cache
+        if not pro_path.exists():
+            pro_path.parent.mkdir(parents=True, exist_ok=True)
+            pro_path.write_text('{"heroes": []}\n', encoding="utf-8")
+        catalog = load_catalog(pro_path, args.catalog)
+        roles = load_combat_roles(args.roles, catalog=catalog)
+        gear_pieces = None
+        if args.gear is not None:
+            from ks.heroes.optimize.gear_assign import load_gear_pieces
+
+            gear_pieces = load_gear_pieces(args.gear)
+        result = optimize_conquest(
+            heroes,
+            catalog,
+            roles,
+            gear=gear_pieces,
+            gear_profile=args.gear_profile,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if result.status != "Optimal":
+        print(f"Error: conquest solve status={result.status}", file=sys.stderr)
+        return 1
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(json.dumps(result.to_dict(), indent=2) + "\n", encoding="utf-8")
+    print(f"score: {result.score:.1f}")
+    print("conquest formation (2 front / 3 back):")
+    for slot in ("F1", "F2", "B1", "B2", "B3"):
+        name = result.formation.get(slot, "?")
+        reason = result.reasons.get(name, "")
+        print(f"  {slot}: {name}" + (f"  ({reason})" if reason else ""))
+    if result.gear_assignment:
+        print("gear:")
+        for name, rows in result.gear_assignment.items():
+            if not rows:
+                print(f"  {name}: (no pieces for class)")
+                continue
+            bits = [
+                f"{r['slot']}={r.get('name') or r['piece_id']}"
+                f"+{r.get('enhancement_level') or 0}"
+                for r in rows
+            ]
+            print(f"  {name}: {', '.join(bits)}")
+    print(f"wrote: {args.out}")
+    return 0
+
+
 def _cmd_ui(args: argparse.Namespace) -> int:
     from ks.heroes.ui import run_ui
 
@@ -846,6 +950,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_recommend(args)
     if args.command == "arena":
         return _cmd_arena(args)
+    if args.command == "conquest":
+        return _cmd_conquest(args)
     if args.command == "ui":
         return _cmd_ui(args)
     parser.error(f"unknown command {args.command!r}")
