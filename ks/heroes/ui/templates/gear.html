@@ -454,6 +454,8 @@
         btn.disabled = true;
         try {
           await saveGearRow(row);
+        } catch (err) {
+          showToast(String(err.message || err), false);
         } finally {
           btn.disabled = false;
         }
@@ -490,17 +492,19 @@
       if (sel.value) sel.classList.add(`rarity-${sel.value}`);
     }
 
-    async function saveGearRow(row) {
+    async function saveGearRow(row, { rarityOnly = false } = {}) {
       const id = row.dataset.pieceId;
       const enh = row.querySelector('input[name="enhancement"]').value;
       const mast = row.querySelector('input[name="mastery"]').value;
       const raritySel = row.querySelector('select[name="rarity"]');
       const rarity = raritySel ? raritySel.value : "";
       const body = {};
-      if (enh === "") body.clear_enhancement = true;
-      else body.enhancement_level = Number(enh);
-      if (mast === "") body.clear_mastery = true;
-      else body.mastery_level = Number(mast);
+      if (!rarityOnly) {
+        if (enh === "") body.clear_enhancement = true;
+        else body.enhancement_level = Number(enh);
+        if (mast === "") body.clear_mastery = true;
+        else body.mastery_level = Number(mast);
+      }
       if (rarity === "") body.clear_rarity = true;
       else body.rarity = rarity;
       const res = await fetch(`/api/gear/${encodeURIComponent(id)}`, {
@@ -529,7 +533,7 @@
     }
 
     // Live power preview: update power cell when rarity/enhancement/mastery change.
-    // Rarity changes auto-persist so color edits are not lost on refresh.
+    // Rarity changes auto-persist rarity only so level edits stay on Save.
     document.querySelectorAll("#gear-table tbody tr").forEach((row) => {
       const raritySel = row.querySelector('select[name="rarity"]');
       const enhInput = row.querySelector('input[name="enhancement"]');
@@ -550,7 +554,7 @@
           updateLivePower();
           raritySel.disabled = true;
           try {
-            await saveGearRow(row);
+            await saveGearRow(row, { rarityOnly: true });
           } catch (err) {
             showToast(String(err.message || err), false);
             // Revert select to last saved rarity on failure.

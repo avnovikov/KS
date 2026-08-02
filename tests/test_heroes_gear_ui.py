@@ -100,8 +100,25 @@ def test_fastapi_clear_enhancement_and_mastery(tmp_path: Path) -> None:
     assert saved is not None
     assert saved.enhancement_level is None
     assert saved.mastery_level is None
-    # No rarity+enhancement → power left as last stored value
+    # Cleared enhancement → sync_piece_power skips recompute; power stays last stored value
     assert piece["power"] == 152100
+
+
+def test_fastapi_clear_rarity_persists(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.ui.app import create_app
+
+    store = _seed(tmp_path)
+    client = TestClient(create_app(tmp_path))
+    res = client.patch("/api/gear/cell0", json={"clear_rarity": True})
+    assert res.status_code == 200
+    assert res.json()["piece"]["rarity"] is None
+    store.reload()
+    saved = store.get("cell0")
+    assert saved is not None
+    assert saved.rarity is None
 
 
 def test_patch_rarity_persists_and_locks_vs_ocr(tmp_path: Path) -> None:

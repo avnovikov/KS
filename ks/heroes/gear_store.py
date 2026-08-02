@@ -121,7 +121,7 @@ class GearStore:
         """Merge and persist piece; return the final stored record.
 
         When a prior record exists, locked fields (enhancement_level,
-        mastery_level) are preserved unless included in ``overwrite``.
+        mastery_level, rarity) are preserved unless included in ``overwrite``.
         Other _PRESERVE_IF_NONE fields fall back to the prior value when the
         incoming field is None.
         """

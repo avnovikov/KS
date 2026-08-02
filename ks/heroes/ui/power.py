@@ -111,7 +111,7 @@ def estimate_enhancement_from_power(
 
 
 # Canonical rarity names (one per colour) for power-curve lookup and UI legend.
-_CANONICAL_RARITY = ["grey", "green", "blue", "epic", "mythic"]
+_CANONICAL_RARITY = ["grey", "green", "blue", "epic", "mythic", "red"]
 
 
 def rarity_power_curves(max_enhancement: int = 80) -> dict[str, list[float]]:
