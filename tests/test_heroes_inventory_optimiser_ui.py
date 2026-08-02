@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytest.importorskip("fastapi")
 
@@ -356,14 +357,25 @@ def test_troop_store_ensure_exists_does_not_clobber_edits(
     assert store.load_raw()["march_capacity"] == 12345
 
 
-def test_troop_store_save_raw_rejects_missing_type_key(
+def test_troop_store_save_raw_still_validates_merged_result(
     tmp_path: Path, repo_troops: Path
 ) -> None:
+    """save_raw() now merges the PUT body into the existing document (see
+    Important 3), so omitting a key from the body is not itself an error —
+    it inherits the existing value. But the *merged* result must still be
+    validated: if the on-disk document is itself incomplete (e.g. an old or
+    hand-corrupted file missing a type key entirely), save_raw() must still
+    surface that as ValueError rather than silently persisting it forever.
+    """
     dest = tmp_path / "troops.yaml"
     store = TroopStore(dest, seed_from=repo_troops)
     store.ensure_exists()
+    incomplete = store.load_raw()
+    del incomplete["archers"]
+    dest.write_text(yaml.safe_dump(incomplete, sort_keys=False), encoding="utf-8")
+
     with pytest.raises(ValueError, match="archers"):
-        store.save_raw({"march_capacity": 100, "infantry": 0, "cavalry": 0})
+        store.save_raw({"march_capacity": 100})
 
 
 def test_troop_store_save_raw_preserves_truegold_which_validation_ignores(
@@ -380,6 +392,93 @@ def test_troop_store_save_raw_preserves_truegold_which_validation_ignores(
     raw["truegold"] = 4
     store.save_raw(raw)
     assert store.load_raw()["truegold"] == 4
+
+
+def test_troop_store_save_raw_merge_preserves_omitted_truegold(
+    tmp_path: Path, repo_troops: Path
+) -> None:
+    """Important 3: a PUT body that omits truegold must not delete it — a
+    partial save_raw() call is a top-level merge, not an overwrite. Losing
+    truegold here would silently reintroduce the "truegold comes from
+    somewhere other than the UI" failure this task existed to eliminate.
+    """
+    dest = tmp_path / "troops.yaml"
+    store = TroopStore(dest, seed_from=repo_troops)
+    store.ensure_exists()
+    raw = store.load_raw()
+    raw["truegold"] = 4
+    store.save_raw(raw)
+
+    partial = store.load_raw()
+    del partial["truegold"]
+    saved = store.save_raw(partial)
+
+    assert saved["truegold"] == 4
+    assert store.load_raw()["truegold"] == 4
+
+
+def test_troop_store_save_raw_present_type_block_replaces_whole_block(
+    tmp_path: Path, repo_troops: Path
+) -> None:
+    """A type block that IS present in the body replaces the whole block —
+    tiers are not deep-merged — so a client clearing a tier to 0 can send
+    the full replacement block and have old tiers actually disappear.
+    """
+    dest = tmp_path / "troops.yaml"
+    store = TroopStore(dest, seed_from=repo_troops)
+    store.ensure_exists()
+    before = store.load_raw()
+    assert before["infantry"][3] == 1015  # seeded tier present
+
+    saved = store.save_raw({**before, "infantry": {6: 10}})
+
+    assert saved["infantry"] == {6: 10}
+    assert store.load_raw()["infantry"] == {6: 10}
+
+
+def test_troop_store_save_raw_wraps_typeerror_from_null_march_capacity(
+    tmp_path: Path, repo_troops: Path
+) -> None:
+    """Important 1: troops_config_from_dict raises TypeError (int(None)) for
+    a null march_capacity, not ValueError. save_raw() must catch that and
+    re-raise as ValueError so non-HTTP callers (and the route's 422 mapping)
+    see a consistent exception type for any invalid shape.
+    """
+    dest = tmp_path / "troops.yaml"
+    store = TroopStore(dest, seed_from=repo_troops)
+    store.ensure_exists()
+    raw = store.load_raw()
+    raw["march_capacity"] = None
+    with pytest.raises(ValueError):
+        store.save_raw(raw)
+
+
+def test_troop_store_ensure_exists_falls_back_to_empty_when_no_seed_configured(
+    tmp_path: Path,
+) -> None:
+    """Minor 10: the no-seed-configured case (seed_from=None) must keep
+    working exactly as before — only a *configured* seed_from pointing at a
+    missing file should fail loudly.
+    """
+    dest = tmp_path / "troops.yaml"
+    store = TroopStore(dest)
+    store.ensure_exists()
+    assert store.load_raw()["march_capacity"] == 0
+
+
+def test_troop_store_ensure_exists_raises_when_seed_from_missing(
+    tmp_path: Path,
+) -> None:
+    """Minor 10: a configured seed_from that does not exist (e.g. a wrong
+    repo-root guess when installed as a package) must fail loudly naming the
+    path it looked for, instead of silently seeding an all-zero army.
+    """
+    dest = tmp_path / "troops.yaml"
+    missing_seed = tmp_path / "does-not-exist.yaml"
+    store = TroopStore(dest, seed_from=missing_seed)
+    with pytest.raises(FileNotFoundError, match=re.escape(str(missing_seed))):
+        store.ensure_exists()
+    assert not dest.exists()
 
 
 # --- /api/troops -------------------------------------------------------
@@ -433,6 +532,105 @@ def test_put_troops_persists_and_get_reflects_update(tmp_path: Path) -> None:
     again = c.get("/api/troops").json()
     assert again["troops"]["truegold"] == 3
     assert again["totals"]["march_capacity"] == 90000
+
+
+def test_put_troops_null_march_capacity_returns_422(tmp_path: Path) -> None:
+    """Important 1: troops_config_from_dict raises TypeError (int(None)) for
+    a null march_capacity — the exact shape a blank numeric input in Task
+    3's form serializes to. This must map to 422, not a bare 500.
+    """
+    c = _client(tmp_path, with_gear=False)
+    body = c.get("/api/troops").json()["troops"]
+    body["march_capacity"] = None
+    r = c.put("/api/troops", json=body)
+    assert r.status_code == 422
+    assert r.json()["detail"]
+
+
+def test_put_troops_null_tier_count_returns_422(tmp_path: Path) -> None:
+    """Important 1: a null tier count also raises TypeError under the hood
+    (int(None) inside _parse_type_block), must also map to 422."""
+    c = _client(tmp_path, with_gear=False)
+    body = c.get("/api/troops").json()["troops"]
+    body["infantry"] = {"1": None}
+    r = c.put("/api/troops", json=body)
+    assert r.status_code == 422
+    assert r.json()["detail"]
+
+
+def test_put_troops_object_valued_march_capacity_returns_422(tmp_path: Path) -> None:
+    """Important 1: an object-valued march_capacity (int(dict) -> TypeError)
+    must also map to 422, not 500."""
+    c = _client(tmp_path, with_gear=False)
+    body = c.get("/api/troops").json()["troops"]
+    body["march_capacity"] = {"oops": "not a number"}
+    r = c.put("/api/troops", json=body)
+    assert r.status_code == 422
+    assert r.json()["detail"]
+
+
+def test_get_troops_returns_422_on_corrupt_yaml(tmp_path: Path) -> None:
+    """Important 2: corrupt on-disk YAML (e.g. from a hand edit, or an
+    interrupted non-atomic write_text) must surface as 422 with the parse
+    error, not a blank 500 — GET should be at least as diagnosable as PUT.
+    """
+    c = _client(tmp_path, with_gear=False)
+    assert c.get("/api/troops").status_code == 200  # seeds the file first
+    (tmp_path / "heroes" / "troops.yaml").write_text(
+        "march_capacity: [unterminated\n", encoding="utf-8"
+    )
+    r = c.get("/api/troops")
+    assert r.status_code == 422
+    assert r.json()["detail"]
+
+
+def test_get_troops_returns_422_on_invalid_content(tmp_path: Path) -> None:
+    """Important 2: valid YAML that fails troops validation (missing a
+    required key) must also surface as 422 with the validator's message —
+    the same content PUT already rejects with a readable 422, not a blank
+    500 on the read side.
+    """
+    c = _client(tmp_path, with_gear=False)
+    assert c.get("/api/troops").status_code == 200  # seeds the file first
+    (tmp_path / "heroes" / "troops.yaml").write_text(
+        yaml.safe_dump({"march_capacity": 100, "infantry": 0, "cavalry": 0}),
+        encoding="utf-8",
+    )
+    r = c.get("/api/troops")
+    assert r.status_code == 422
+    assert "archers" in r.json()["detail"]
+
+
+def test_put_troops_without_truegold_preserves_existing_value(tmp_path: Path) -> None:
+    """Important 3: PUT is a top-level merge — a body that omits truegold
+    must not delete it (confirmed bug: truegold=0 went GONE after a partial
+    PUT before this fix)."""
+    c = _client(tmp_path, with_gear=False)
+    troops = c.get("/api/troops").json()["troops"]
+    troops["truegold"] = 4
+    assert c.put("/api/troops", json=troops).status_code == 200
+
+    partial = dict(troops)
+    del partial["truegold"]
+    r = c.put("/api/troops", json=partial)
+    assert r.status_code == 200
+    assert r.json()["troops"]["truegold"] == 4
+    assert c.get("/api/troops").json()["troops"]["truegold"] == 4
+
+
+def test_put_troops_present_tier_block_replaces_whole_block(tmp_path: Path) -> None:
+    """Important 3: a type block present in the body replaces the whole
+    block rather than deep-merging tier by tier, so a client can clear a
+    tier by omitting it from the replacement block."""
+    c = _client(tmp_path, with_gear=False)
+    troops = c.get("/api/troops").json()["troops"]
+    assert troops["infantry"]["3"] == 1015  # seeded tier present
+
+    body = {**troops, "infantry": {"6": 10}}
+    r = c.put("/api/troops", json=body)
+    assert r.status_code == 200
+    assert r.json()["troops"]["infantry"] == {"6": 10}
+    assert c.get("/api/troops").json()["troops"]["infantry"] == {"6": 10}
 
 
 def test_troops_file_lives_in_heroes_dir_when_both_configured(tmp_path: Path) -> None:
@@ -520,3 +718,94 @@ def test_gear_xp_api_uses_edited_troops_not_repo_file(tmp_path: Path) -> None:
     updated_utility = updated.json()["baseline_utility"]
 
     assert updated_utility != baseline_utility
+
+
+def test_gear_xp_api_uses_edited_march_capacity_and_tier_counts_not_repo_file(
+    tmp_path: Path,
+) -> None:
+    """Minor 4: the two tests above only ever mutate truegold, so they stay
+    green even if `load_troops_config(resolved_troops_path)` in
+    spend_xp.build_event_utility were reverted to
+    `load_troops_config(root / "config" / "troops.yaml")` — that revert
+    leaves the separate truegold read (which already uses resolved_troops_
+    path) wired correctly, so only march_capacity/tier counts would silently
+    keep coming from the repo file. This test edits capacity and a tier
+    count instead, and checks against an independently computed expected
+    value (not a bare !=): the same recommend_all_modes() call
+    build_event_utility makes internally, but fed troops loaded explicitly
+    from the edited file — so a revert that reads the wrong file produces a
+    detectably wrong number, not just "a different" one.
+    """
+    heroes_dir = tmp_path / "heroes"
+    heroes_dir.mkdir()
+    _seed_catalog_heroes(heroes_dir)
+    gear_dir = tmp_path / "gear"
+    gear_dir.mkdir()
+    GearStore(gear_dir).upsert(
+        GearRecord(
+            piece_id="p0",
+            name="Test Helm",
+            troop_type="infantry",
+            slot="helmet",
+            rarity="mythic",
+            enhancement_level=0,
+            power=1000,
+        )
+    )
+    c = TestClient(create_app(gear_dir, heroes_dir=heroes_dir))
+
+    fodder = {
+        "event": "swordland",
+        "grey": 0,
+        "green": 0,
+        "blue": 0,
+        "purple": 0,
+        "part_100": 0,
+    }
+
+    troops = c.get("/api/troops").json()["troops"]
+    troops["march_capacity"] = 40000  # far from the seeded 80280
+    troops["infantry"] = {"6": 5000}  # replaces the whole block; deterministic
+    put = c.put("/api/troops", json=troops)
+    assert put.status_code == 200, put.text
+    saved = put.json()["troops"]
+
+    result = c.post("/api/optimize/gear-xp", json=fodder)
+    assert result.status_code == 200, result.text
+    actual_utility = result.json()["baseline_utility"]
+
+    # Ground truth: reproduce build_event_utility's internal no-mode branch
+    # for "swordland" by hand, loading troops explicitly from the edited
+    # file — independent of whichever path the code under test actually
+    # reads for the TroopsConfig half of the wiring.
+    from ks.heroes.optimize.catalog import load_catalog
+    from ks.heroes.optimize.events import load_event_profile
+    from ks.heroes.optimize.recommend import recommend_all_modes
+    from ks.heroes.optimize.scenarios import load_scenarios
+    from ks.heroes.optimize.troop_stats import load_troop_stats
+
+    troops_path = heroes_dir / "troops.yaml"
+    catalog = load_catalog(None, REPO_ROOT / "config" / "hero_catalog.yaml")
+    scenarios = load_scenarios(REPO_ROOT / "config" / "point_scenarios.yaml")
+    event_profile = load_event_profile(
+        REPO_ROOT / "config" / "events" / "swordland.yaml"
+    )
+    troop_stats = load_troop_stats(REPO_ROOT / "config" / "troop_stats.yaml")
+    troops_cfg = load_troops_config(troops_path)
+    heroes = HeroStore(heroes_dir).all_heroes()
+    gear_pieces = GearStore(gear_dir).all_pieces()
+
+    expected = recommend_all_modes(
+        heroes,
+        catalog,
+        troops_cfg,
+        scenarios,
+        event=event_profile,
+        troop_stats=troop_stats,
+        truegold=int(saved["truegold"]),
+        gear=gear_pieces,
+        gear_profile="early_game_growth",
+    )
+    expected_best = max(expected.values(), key=lambda r: r.expected_personal_points)
+
+    assert actual_utility == pytest.approx(expected_best.expected_personal_points)

@@ -10,6 +10,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
+import yaml
+
 from ks.heroes.config import DEFAULT_HEROES_CONFIG
 from ks.heroes.gear_config import DEFAULT_GEAR_CONFIG
 from ks.heroes.gear_models import GearRecord
@@ -642,11 +644,33 @@ def create_app(
 
     @app.get("/api/troops")
     def api_get_troops() -> dict[str, Any]:
-        raw = troop_store.load_raw()
-        return {"troops": raw, "totals": _troop_totals(raw)}
+        """Return the on-disk troops document and its computed totals.
+
+        The file is hand-editable YAML in the user's data dir, and
+        save_raw()'s writer is a non-atomic write_text, so either a hand
+        edit or an interrupted save can leave content that fails to parse
+        or fails validation. Surface that as 422 with the underlying
+        message (matching the PUT-side validation error) instead of a
+        blank 500, so the user can see what to repair.
+        """
+        try:
+            raw = troop_store.load_raw()
+            totals = _troop_totals(raw)
+        except (yaml.YAMLError, ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"troops": raw, "totals": totals}
 
     @app.put("/api/troops")
     async def api_put_troops(request: Request) -> dict[str, Any]:
+        """Merge the request body into the existing troops document.
+
+        See TroopStore.save_raw for the exact merge contract: keys present
+        in the body replace their counterparts; keys the body omits are
+        preserved from the existing document (so omitting truegold does not
+        delete it); a present type block (infantry/cavalry/archers) replaces
+        that whole block rather than being deep-merged tier by tier. Task
+        3's editor page is built against this contract.
+        """
         try:
             raw = await request.json()
         except Exception as exc:
