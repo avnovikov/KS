@@ -64,8 +64,9 @@
   function showToast(msg, ok) {
     toast.textContent = msg;
     toast.className = ok ? "ok" : "err";
+    toast.hidden = false;
     clearTimeout(showToast._t);
-    showToast._t = setTimeout(() => { toast.className = ""; }, 2500);
+    showToast._t = setTimeout(() => { toast.className = ""; toast.hidden = true; }, 2500);
   }
 
   const RARITY_RANK = {

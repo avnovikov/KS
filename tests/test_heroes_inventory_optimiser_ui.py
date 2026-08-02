@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -148,14 +149,42 @@ def test_stylesheet_is_served_with_apple_canvas(tmp_path: Path) -> None:
     assert "-apple-system" in r.text
 
 
+def _css_rule_body(css: str, needle: str) -> str:
+    """Return the declaration block `{ ... }` of the rule containing `needle`.
+
+    Anchors an assertion to a specific selector instead of a bare substring
+    search, so the check actually breaks if that rule is edited/removed
+    rather than incidentally matching some unrelated rule elsewhere.
+    """
+    start = css.index(needle)
+    open_brace = css.index("{", start)
+    close_brace = css.index("}", open_brace)
+    return css[open_brace : close_brace + 1]
+
+
 def test_stylesheet_is_phone_first(tmp_path: Path) -> None:
     css = _client(tmp_path).get("/static/app.css").text
     assert "env(safe-area-inset-left" in css
     assert "env(safe-area-inset-bottom" in css
-    assert "44px" in css  # tap targets
     assert "max-width: 640px" in css  # narrow breakpoint
-    assert "overflow-x: auto" in css  # scrollable subtabs / tables
-    assert "position: sticky" in css  # sticky first column helper
+
+    # Scrollable table wrapper: bind to .table-wrap specifically so the
+    # assertion can't be satisfied by unrelated overflow-x rules on
+    # .primary-nav / .subnav.
+    table_wrap = _css_rule_body(css, ".table-wrap {")
+    assert "overflow-x: auto" in table_wrap
+
+    # Sticky first column helper: bind to .data-table.sticky-first
+    # specifically so the assertion can't be satisfied by unrelated
+    # position: sticky rules on .app-header / .modal-header.
+    sticky_first = _css_rule_body(css, ".data-table.sticky-first")
+    assert "position: sticky" in sticky_first
+
+    # Segmented subtabs are the primary phone nav control and must bind to
+    # the shared 44px tap-target token, not merely contain "44px" anywhere
+    # (which the --tap: 44px declaration itself would always satisfy).
+    seg_rule = _css_rule_body(css, ".segmented .seg {")
+    assert "var(--tap)" in seg_rule
 
 
 @pytest.mark.parametrize("path", SHELL_PAGES)
@@ -208,6 +237,17 @@ def test_active_primary_and_subtab_are_marked(
     assert f'href="{path}" aria-current="page"' in body
     # Only the subtab for the page being rendered is flagged current.
     assert body.count('aria-current="page"') == 1
+
+
+def test_inventory_tab_links_to_heroes_when_gear_disabled(tmp_path: Path) -> None:
+    """Heroes-only app (no --gear-dir): the Inventory tab is the one
+    deliberate deviation from the plan's verbatim layout HTML — its href
+    must skip the gear-only default and point straight at /inventory/heroes,
+    not the gear-only /inventory/gear. test_active_primary_and_subtab_are_marked
+    above only ever runs with gear enabled, so it never exercises this branch.
+    """
+    body = _client(tmp_path, with_gear=False).get("/inventory/heroes").text
+    assert '<a href="/inventory/heroes" class="on">Inventory</a>' in body
 
 
 # --- capability gating ---------------------------------------------------

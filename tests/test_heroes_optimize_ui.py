@@ -101,6 +101,103 @@ def test_optimize_page_and_api(tmp_path: Path) -> None:
     assert arena["defense"]["status"] == "Optimal"
 
 
+# --- restoration tracking ---------------------------------------------------
+#
+# Task 1 (Apple shell) stubbed the optimiser pages, which forced the
+# lineup-board and Gear-XP-form assertions below out of test_optimize_page_and_api
+# above. They must come back for real once the pages that own them ship, so
+# they're kept alive here as strict xfails against the *new* routes: if the
+# stub still renders, xfail is a no-op; the moment real markup lands the
+# assertion starts passing, strict=True turns that XPASS into a failure, and
+# whoever ships the page is forced to delete the xfail mark instead of the
+# coverage silently vanishing.
+
+
+def _optimiser_client(tmp_path: Path):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.ui.app import create_app
+
+    heroes_dir = _seed_roster(tmp_path / "heroes")
+    return TestClient(create_app(heroes_dir=heroes_dir))
+
+
+@pytest.mark.xfail(
+    reason="restored by Task 6: event lineups board renders a Swordland mode chip",
+    strict=True,
+)
+def test_optimiser_events_board_shows_swordland(tmp_path: Path) -> None:
+    page = _optimiser_client(tmp_path).get("/optimiser/events")
+    assert b"Swordland" in page.content
+
+
+@pytest.mark.xfail(
+    reason="restored by Task 6: event lineups board renders a Bear mode chip",
+    strict=True,
+)
+def test_optimiser_events_board_shows_bear(tmp_path: Path) -> None:
+    page = _optimiser_client(tmp_path).get("/optimiser/events")
+    assert b"Bear" in page.content
+
+
+@pytest.mark.xfail(
+    reason="restored by Task 6: event lineups board renders an Arena section",
+    strict=True,
+)
+def test_optimiser_events_board_shows_arena(tmp_path: Path) -> None:
+    page = _optimiser_client(tmp_path).get("/optimiser/events")
+    assert b"Arena" in page.content
+
+
+@pytest.mark.xfail(
+    reason="restored by Task 6: event lineups board has a Regenerate control",
+    strict=True,
+)
+def test_optimiser_events_board_has_regenerate(tmp_path: Path) -> None:
+    page = _optimiser_client(tmp_path).get("/optimiser/events")
+    assert b"Regenerate" in page.content
+
+
+@pytest.mark.xfail(
+    reason=(
+        "restored by Task 6: event lineups board has a gear-detail-modal "
+        "for the per-hero gear drilldown"
+    ),
+    strict=True,
+)
+def test_optimiser_events_board_has_gear_detail_modal(tmp_path: Path) -> None:
+    page = _optimiser_client(tmp_path).get("/optimiser/events")
+    assert b"gear-detail-modal" in page.content
+
+
+@pytest.mark.xfail(
+    reason="restored by Task 6: Regenerate control is wired via a data-regen= attribute",
+    strict=True,
+)
+def test_optimiser_events_board_has_data_regen_attr(tmp_path: Path) -> None:
+    page = _optimiser_client(tmp_path).get("/optimiser/events")
+    assert b"data-regen=" in page.content
+
+
+@pytest.mark.xfail(
+    reason="restored by Task 7: Gear XP page renders the 'Gear XP spend' heading/form",
+    strict=True,
+)
+def test_optimiser_gear_xp_page_shows_heading(tmp_path: Path) -> None:
+    page = _optimiser_client(tmp_path).get("/optimiser/gear-xp")
+    assert b"Gear XP spend" in page.content
+
+
+@pytest.mark.xfail(
+    reason="restored by Task 7: Gear XP page renders the grey-rarity fodder input",
+    strict=True,
+)
+def test_optimiser_gear_xp_page_shows_grey_rarity(tmp_path: Path) -> None:
+    page = _optimiser_client(tmp_path).get("/optimiser/gear-xp")
+    assert b"grey" in page.content
+
+
 def test_optimize_gear_xp_api_smoke(tmp_path: Path) -> None:
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient

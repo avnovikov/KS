@@ -89,8 +89,9 @@
     const el = document.getElementById("toast");
     el.textContent = msg;
     el.className = ok ? "ok" : "err";
+    el.hidden = false;
     clearTimeout(showToast._t);
-    showToast._t = setTimeout(() => { el.className = ""; }, 3200);
+    showToast._t = setTimeout(() => { el.className = ""; el.hidden = true; }, 3200);
   }
 
   function fmt(v) {

@@ -164,7 +164,7 @@ a:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 36px;
+  min-height: var(--tap);
   padding: 0 0.85rem;
   border-radius: 8px;
   font-size: 0.85rem;
@@ -316,6 +316,7 @@ table.data-table {
 }
 
 .data-table th.sortable {
+  min-height: var(--tap);
   cursor: pointer;
   user-select: none;
 }
@@ -356,8 +357,8 @@ table.data-table {
 }
 
 .name-cell img {
-  width: 40px;
-  height: 40px;
+  width: var(--tap);
+  height: var(--tap);
   border-radius: 10px;
   object-fit: cover;
   background: var(--canvas);

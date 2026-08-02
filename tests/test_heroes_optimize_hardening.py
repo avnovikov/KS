@@ -167,3 +167,30 @@ def test_optimize_page_cache_control(tmp_path: Path) -> None:
     # The board's client-side rendering (and its esc() helper) lands with the
     # Event lineups task; the shell must stay uncached either way.
     assert b"Event lineups" in events.content
+
+
+# --- restoration tracking ----------------------------------------------------
+#
+# Task 1 (Apple shell) stubbed /optimiser/events, which forced this assertion
+# out of test_optimize_page_cache_control above. Kept alive as a strict xfail
+# against the new route: it's a no-op while the stub stands, and the moment
+# Task 6 ships the real client-side board, strict=True turns the XPASS into a
+# failure so the implementer must drop this mark instead of the coverage
+# silently vanishing.
+@pytest.mark.xfail(
+    reason="restored by Task 6: event lineups board ships its client-side esc() escaping helper",
+    strict=True,
+)
+def test_optimiser_events_page_has_esc_helper(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.store import HeroStore
+    from ks.heroes.ui.app import create_app
+
+    store = HeroStore(tmp_path)
+    store.upsert(HeroRecord(name="Helga", stars=2, power=1000, scraped_at="t"))
+    client = TestClient(create_app(heroes_dir=tmp_path))
+    events = client.get("/optimiser/events")
+    assert events.status_code == 200
+    assert b"function esc(" in events.content
