@@ -79,6 +79,41 @@ def test_set_count_rejects_bad_inputs(tmp_path: Path) -> None:
         set_count(path, "infantry", 1, -1)
 
 
+def test_default_troops_path_siblings_gear_yaml() -> None:
+    from ks.heroes.gear_config import DEFAULT_GEAR_CONFIG
+    from ks.heroes.ui.troops_inventory import DEFAULT_TROOPS_PATH
+
+    assert DEFAULT_TROOPS_PATH.parent == DEFAULT_GEAR_CONFIG.parent
+    assert DEFAULT_TROOPS_PATH.name == "troops.yaml"
+    assert DEFAULT_TROOPS_PATH.is_file(), (
+        f"expected packaged config at {DEFAULT_TROOPS_PATH}"
+    )
+
+
+def test_create_app_enables_troops_tab_with_default_path(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.models import HeroRecord
+    from ks.heroes.store import HeroStore
+    from ks.heroes.ui.app import create_app
+    from ks.heroes.ui.troops_inventory import DEFAULT_TROOPS_PATH
+
+    if not DEFAULT_TROOPS_PATH.is_file():
+        pytest.skip("repo config/troops.yaml missing")
+
+    heroes_dir = tmp_path / "heroes"
+    heroes_dir.mkdir()
+    HeroStore(heroes_dir).upsert(
+        HeroRecord(name="Helga", stars=1, pellets=0, scraped_at="t")
+    )
+    client = TestClient(create_app(heroes_dir=heroes_dir))
+    page = client.get("/heroes")
+    assert page.status_code == 200
+    assert b'href="/troops"' in page.content
+    assert b'title="config/troops.yaml not found"' not in page.content
+
+
 def test_troop_icon_url_fallback_svg() -> None:
     from ks.heroes.ui.troop_icons import troop_icon_url
 
