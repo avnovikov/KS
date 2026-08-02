@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
@@ -70,6 +71,91 @@ def test_run_optimize_bundle_isolates_section_failure() -> None:
     assert bundle["arena"]["defense"]["status"] == "Optimal"
 
 
+def _config_copy(tmp_path: Path) -> Path:
+    """A writable clone of the repo config tree, to corrupt one file in."""
+    root = Path(__file__).resolve().parents[1]
+    dest = tmp_path / "root"
+    dest.mkdir()
+    shutil.copytree(root / "config", dest / "config")
+    return dest
+
+
+@pytest.mark.parametrize(
+    ("roles_file", "broken_keys", "intact_key"),
+    [
+        ("conquest_roles.yaml", ("conquest",), "arena_attack"),
+        ("arena_roles.yaml", ("arena_attack", "arena_defense"), "conquest"),
+    ],
+)
+def test_a_broken_roles_file_fails_only_its_own_sections(
+    tmp_path: Path,
+    roles_file: str,
+    broken_keys: tuple[str, ...],
+    intact_key: str,
+) -> None:
+    """A malformed roles YAML must degrade to a section error, not a 500.
+
+    Both role loads used to run above the `errors` dict and outside every try
+    block, so either file being missing or malformed raised straight out of
+    run_optimize_bundle — Swordland, Bear Trap and Arena all disappeared
+    because Conquest's config was bad, which is precisely the partial failure
+    the Conquest spec ruled out. Not reachable in production (both files are
+    committed and config_root defaults to the repo), but the isolation is
+    cheap and this is what holds it.
+
+    Parametrised over both files because they had the identical exposure and
+    a fix that guarded only the one Conquest added would leave the older half
+    of the bug in place.
+    """
+    heroes = [
+        HeroRecord(name=n, stars=3, power=300_000)
+        for n in ("Helga", "Howard", "Jabel", "Chenko", "Saul", "Gordon", "Diana")
+    ]
+    root = _config_copy(tmp_path)
+    (root / "config" / roles_file).write_text("{[not: yaml", encoding="utf-8")
+
+    bundle = run_optimize_bundle(heroes, config_root=root)
+
+    # The broken half: named in errors, and given a real row rather than a
+    # missing key, so the board can select it and show the reason.
+    #
+    # The message is pinned, not just its truthiness. Skipping the section
+    # when its roles failed to load is what produces the *parse error*; fall
+    # through to the solver with roles=None instead and it grinds through the
+    # whole gear/ILP setup before dying on `roles.get(...)`, reporting
+    # "internal error: 'NoneType' object has no attribute 'get'" — which names
+    # neither the file nor the reason, and buries a traceback in the log. A
+    # truthy-only assertion here passed for both, so it pinned nothing.
+    for key in broken_keys:
+        assert key in bundle["errors"], bundle["errors"]
+        message = bundle["errors"][key]
+        assert "parsing" in message, message
+        assert "internal error" not in message, message
+        assert "NoneType" not in message, message
+    if "conquest" in broken_keys:
+        row = bundle["conquest"]
+        assert row["status"] == "Error"
+        assert row["mode"] == "conquest"
+        assert row["error"] == bundle["errors"]["conquest"]
+    else:
+        for side in ("attack", "defense"):
+            row = bundle["arena"][side]
+            assert row["status"] == "Error"
+            assert row["side"] == side
+            assert row["error"] == bundle["errors"][f"arena_{side}"]
+
+    # Everything else still solved.
+    assert intact_key not in bundle["errors"], bundle["errors"]
+    assert bundle["sword"]["modes"], bundle["errors"]
+    assert bundle["bear"]["modes"], bundle["errors"]
+    assert "sword" not in bundle["errors"] and "bear" not in bundle["errors"]
+    if intact_key == "conquest":
+        assert bundle["conquest"]["status"] == "Optimal"
+    else:
+        assert bundle["arena"]["attack"]["status"] == "Optimal"
+        assert bundle["arena"]["defense"]["status"] == "Optimal"
+
+
 def test_no_section_reads_a_second_troops_file(tmp_path: Path) -> None:
     """`troops_path` must be the *only* troops file the whole bundle opens.
 
@@ -92,6 +178,16 @@ def test_no_section_reads_a_second_troops_file(tmp_path: Path) -> None:
     by any name — optimize_conquest scores from the catalog, conquest_roles
     and gear — and this is what keeps that true: wire a load_troops_config
     into it that resolves its own path and the repo file shows up here.
+
+    Scope, stated so this is not mistaken for more than it is: the guard is
+    only as broad as that one method. A loader that reached for the troops
+    file through builtin `open()`, `yaml.safe_load(open(...))`, `os.read` or
+    a C extension would not be recorded here and would pass — verified, not
+    assumed: a planted `open()` read of the repo file inside the conquest
+    section goes undetected. It holds because every loader in this subsystem
+    uses Path.read_text, which is a convention this test depends on rather
+    than one it enforces. A new loader that breaks with it needs either a
+    conversion to Path.read_text or a widening of the patch below.
     """
     heroes = [
         HeroRecord(name=n, stars=3, power=300_000)

@@ -972,8 +972,9 @@ table.data-table {
   font-family: inherit;
 }
 
-/* Three segments fit 390px today; a longer event name must scroll rather
-   than widen the page, same rule the subnav follows. */
+/* Four event segments as of the Conquest port, which is already past what
+   390px fits; they scroll here rather than widening the page, same rule the
+   subnav follows. */
 .seg-scroll {
   margin-bottom: 0.7rem;
   overflow-x: auto;

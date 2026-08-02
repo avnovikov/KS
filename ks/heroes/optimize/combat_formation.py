@@ -356,7 +356,13 @@ def solve_combat_formation(
         if explain_fn is not None:
             try:
                 explanations = explain_fn(
-                    side,
+                    # `effective_side`, not `side`: scoring above already ran
+                    # on the "attack" default when the caller passed None, so
+                    # handing the explainer a bare None would have it explain
+                    # a different side than the one that was solved. Conquest
+                    # is the only mode with side=None, so the first Conquest
+                    # explain_fn would have been the one to hit it.
+                    effective_side,
                     heroes,
                     catalog,
                     roles,

@@ -82,6 +82,24 @@ def _section_error(label: str, message: str) -> dict[str, Any]:
     return {"label": label, "modes": {}, "status": "Error", "error": message}
 
 
+def _formation_error(message: str, **identity: str) -> dict[str, Any]:
+    """The shape a failed 5-hero formation section returns.
+
+    `identity` is `side="attack"` for an arena side and `mode="conquest"` for
+    Conquest, matching which of the two keys CombatFormationResult.to_dict()
+    emits for each — it omits `side` when the solver had none.
+    """
+    return {
+        **identity,
+        "status": "Error",
+        "formation": {},
+        "heroes": [],
+        "score": None,
+        "reasons": {},
+        "error": message,
+    }
+
+
 def run_optimize_bundle(
     heroes: list[HeroRecord],
     *,
@@ -116,13 +134,37 @@ def run_optimize_bundle(
     troop_stats_path = root / "config" / "troop_stats.yaml"
     roles_path = root / "config" / "arena_roles.yaml"
     conquest_roles_path = root / "config" / "conquest_roles.yaml"
+    # The catalog is the one genuinely shared input — every section scores
+    # against it — so a failure here is still fatal for the request.
     catalog = load_catalog(None, catalog_path)
-    roles = load_arena_roles(roles_path, catalog=catalog)
-    conquest_roles = load_combat_roles(conquest_roles_path, catalog=catalog)
 
     errors: dict[str, str] = {}
     warnings: list[str] = []
     out: dict[str, Any] = {"errors": errors, "warnings": warnings}
+
+    def _load_roles(loader: Any, path: Path, keys: tuple[str, ...]) -> Any:
+        """Load one roles YAML, charging any failure to its own sections.
+
+        These two loads used to sit above `errors`, outside every try block,
+        so a missing or malformed conquest_roles.yaml raised straight out of
+        run_optimize_bundle and 500'd /api/optimize — taking Swordland, Bear
+        Trap and Arena down with Conquest, which is exactly the partial
+        failure the Conquest spec said must not happen. arena_roles.yaml had
+        the identical exposure.
+        """
+        try:
+            return loader(path, catalog=catalog)
+        except _DOMAIN_ERRORS as exc:
+            for key in keys:
+                errors[key] = str(exc)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("%s roles load failed", path.name)
+            for key in keys:
+                errors[key] = f"internal error: {exc}"
+        return None
+
+    roles = _load_roles(load_arena_roles, roles_path, ("arena_attack", "arena_defense"))
+    conquest_roles = _load_roles(load_combat_roles, conquest_roles_path, ("conquest",))
 
     try:
         out["sword"] = _event_bundle(
@@ -166,6 +208,10 @@ def run_optimize_bundle(
 
     arena: dict[str, Any] = {}
     for side in ("attack", "defense"):
+        if roles is None:
+            # _load_roles already charged the failure to both arena keys.
+            arena[side] = _formation_error(errors[f"arena_{side}"], side=side)
+            continue
         try:
             result = optimize_arena(
                 side,
@@ -182,63 +228,38 @@ def run_optimize_bundle(
             arena[side] = payload
         except _DOMAIN_ERRORS as exc:
             errors[f"arena_{side}"] = str(exc)
-            arena[side] = {
-                "side": side,
-                "status": "Error",
-                "formation": {},
-                "heroes": [],
-                "score": None,
-                "reasons": {},
-                "error": str(exc),
-            }
+            arena[side] = _formation_error(str(exc), side=side)
         except Exception as exc:  # noqa: BLE001
             logger.exception("arena %s optimize failed", side)
             errors[f"arena_{side}"] = f"internal error: {exc}"
-            arena[side] = {
-                "side": side,
-                "status": "Error",
-                "formation": {},
-                "heroes": [],
-                "score": None,
-                "reasons": {},
-                "error": errors[f"arena_{side}"],
-            }
+            arena[side] = _formation_error(errors[f"arena_{side}"], side=side)
     out["arena"] = arena
 
-    try:
-        conquest_result = optimize_conquest(
-            heroes,
-            catalog,
-            conquest_roles,
-            gear=gear,
-            gear_profile=gear_profile_arena,
-        )
-        out["conquest"] = conquest_result.to_dict()
-        if conquest_result.status != "Optimal":
-            errors["conquest"] = f"status={conquest_result.status}"
-    except _DOMAIN_ERRORS as exc:
-        errors["conquest"] = str(exc)
-        out["conquest"] = {
-            "mode": "conquest",
-            "status": "Error",
-            "formation": {},
-            "heroes": [],
-            "score": None,
-            "reasons": {},
-            "error": str(exc),
-        }
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("conquest optimize failed")
-        errors["conquest"] = f"internal error: {exc}"
-        out["conquest"] = {
-            "mode": "conquest",
-            "status": "Error",
-            "formation": {},
-            "heroes": [],
-            "score": None,
-            "reasons": {},
-            "error": errors["conquest"],
-        }
+    if conquest_roles is None:
+        # _load_roles already charged the failure to errors["conquest"].
+        # Deliberately not an early `return out`: this is the last section
+        # today, and a `return` here would silently skip a fifth one added
+        # below it.
+        out["conquest"] = _formation_error(errors["conquest"], mode="conquest")
+    else:
+        try:
+            conquest_result = optimize_conquest(
+                heroes,
+                catalog,
+                conquest_roles,
+                gear=gear,
+                gear_profile=gear_profile_arena,
+            )
+            out["conquest"] = conquest_result.to_dict()
+            if conquest_result.status != "Optimal":
+                errors["conquest"] = f"status={conquest_result.status}"
+        except _DOMAIN_ERRORS as exc:
+            errors["conquest"] = str(exc)
+            out["conquest"] = _formation_error(str(exc), mode="conquest")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("conquest optimize failed")
+            errors["conquest"] = f"internal error: {exc}"
+            out["conquest"] = _formation_error(errors["conquest"], mode="conquest")
     return out
 
 

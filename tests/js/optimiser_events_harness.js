@@ -942,7 +942,12 @@ async function suiteConquestFormation() {
   var rows = d.rows();
   check("Conquest keeps the Front/Back split arena uses", rows.length === 2, "rows=" + rows.length);
   check(
-    "named Front and Back",
+    // Deliberately not "named Front and Back": that is arena's check name, and
+    // _assert_ran on the Python side is a name-set membership test, so a twin
+    // would answer the presence question for a *deleted* one. Every name in
+    // this file is unique, and test_every_harness_check_name_is_unique keeps
+    // it that way.
+    "Conquest's rows are named Front and Back",
     rows.length === 2 && rows[0].label === "Front" && rows[1].label === "Back",
     rows
       .map(function (r) {
@@ -986,7 +991,11 @@ async function suiteConquestFormation() {
   // emits (with_explanations=False).
   d.slot("Amadeus").el.fire("click");
   check("tapping a Conquest hero opens the sheet", d.sheetOpen() === true, d.sheetState());
-  check("titled with the hero", d.modalTitle.textContent === "Amadeus", d.modalTitle.textContent);
+  check(
+    "titled with the Conquest hero",
+    d.modalTitle.textContent === "Amadeus",
+    d.modalTitle.textContent
+  );
   check(
     "and placed in context",
     d.modalSub.textContent === "Conquest · formation",
@@ -1038,7 +1047,11 @@ async function suiteConquestFailure() {
     d.chips().length === 1,
     "chips=" + d.chips().length
   );
-  check("and flagged on its chip", d.chips()[0].classList.contains("is-error"), d.chips()[0].className);
+  check(
+    "and the failed Conquest chip is flagged",
+    d.chips()[0].classList.contains("is-error"),
+    d.chips()[0].className
+  );
   check(
     "the chip shows the status instead of a fake score",
     d.chipScore(0) === "Error",

@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -120,11 +121,35 @@ def _failures(js_run: dict, names: list[str] | None = None) -> list[str]:
 
 
 def _assert_ran(js_run: dict, names: list[str]) -> None:
-    """Guard against a check silently disappearing from the harness."""
+    """Guard against a check silently disappearing from the harness.
+
+    Sound only while check names are unique — see
+    test_every_harness_check_name_is_unique, which is what makes the
+    membership test below mean what it says."""
     present = {c["name"] for c in js_run["checks"]}
     missing = [n for n in names if n not in present]
     assert not missing, f"harness no longer runs: {missing}"
     assert not _failures(js_run, names), "\n".join(_failures(js_run, names))
+
+
+def test_every_harness_check_name_is_unique(js_run: dict) -> None:
+    """`_assert_ran` asks whether a name is *present* in the results, so two
+    checks sharing a name silently defeat it: delete one and its twin still
+    answers the presence question, the suite drops a check, and every test
+    stays green.
+
+    The Conquest port introduced the first three duplicates this harness had
+    ever had — "named Front and Back", "titled with the hero" and "and
+    flagged on its chip" each collided with an arena or hero-sheet check —
+    and a deleted Conquest check was demonstrably invisible to
+    `_assert_ran`. They are renamed; this is what stops the next one.
+    """
+    counts = Counter(c["name"] for c in js_run["checks"])
+    dupes = {name: n for name, n in counts.items() if n > 1}
+    assert not dupes, (
+        "check names must be unique or _assert_ran cannot detect a deletion: "
+        f"{dupes}"
+    )
 
 
 # --- wiring ------------------------------------------------------------------
@@ -356,14 +381,14 @@ def test_conquest_is_the_fourth_event_on_the_same_board(js_run: dict) -> None:
             "the meta is the score alone",
             "with no troops line, because Conquest is scored from no troop counts",
             "Conquest keeps the Front/Back split arena uses",
-            "named Front and Back",
+            "Conquest's rows are named Front and Back",
             "Front holds the two F slots",
             "Back holds the three B slots",
             "switching to Conquest costs no extra request either",
             "and leaves no skipped-modes note behind",
             "nothing is flagged as failed",
             "tapping a Conquest hero opens the sheet",
-            "titled with the hero",
+            "titled with the Conquest hero",
             "and placed in context",
             "the sheet still shows that hero's gear",
             "and says plainly that Conquest records no per-hero why",
@@ -385,7 +410,7 @@ def test_a_failed_conquest_surfaces_like_any_other_section(js_run: dict) -> None
         js_run,
         [
             "a failed Conquest is still selectable rather than vanishing",
-            "and flagged on its chip",
+            "and the failed Conquest chip is flagged",
             "the chip shows the status instead of a fake score",
             "the board gives the solver's reason",
             "and draws no hero slots",
