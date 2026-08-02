@@ -1,0 +1,15 @@
+# Conquest placement multipliers (5 heroes, 2F+3B).
+# Hero roles/values from hero_catalog.yaml via load_combat_roles.
+slots:
+  front: [F1, F2]
+  back: [B1, B2, B3]
+  carry_slot: B2
+placement:
+  infantry_front: 1.30
+  cavalry_front: 1.05
+  archers_front: 0.50
+  infantry_back: 0.85
+  cavalry_back: 1.10
+  archers_back: 1.15
+  carry_slot_bonus: 1.10
+  front_tank_bonus: 1.15
