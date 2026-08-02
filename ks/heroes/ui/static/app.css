@@ -508,8 +508,12 @@ input.tier-input {
   flex-wrap: wrap;
 }
 
-/* Soft CTA into the Optimiser — a link sized like a tap target, never a gate. */
-.trust-cta {
+/* Soft CTA out of one screen and into another — a link sized like a tap
+   target, never a gate. `.trust-cta` is the inventory toolbar's route into
+   the Optimiser; `.result-link` is the Gear XP result's route into Event
+   lineups. One declaration, two names, rather than a second copy of it. */
+.trust-cta,
+.result-link {
   display: inline-flex;
   align-items: center;
   min-height: var(--tap);
@@ -1265,6 +1269,178 @@ button.hero-slot:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* --- optimiser: gear XP spend (layout A) --------------------------------- */
+
+/* A group header sitting at the top of its panel already has the panel's
+   padding above it; the default top margin would double it. */
+.panel > .section-title:first-child {
+  margin-top: 0;
+}
+
+.spend-form {
+  display: grid;
+  gap: 0.85rem;
+}
+
+/* Label above, control full width beneath — the single column's own field
+   shape, as opposed to the troops editor's `.field`, which keeps the label
+   and a narrow value box on one line. */
+.stack-field {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.5rem 0;
+}
+
+/* `display: grid` above would otherwise beat the UA's `[hidden]` rule, and
+   the two mode pickers for the events you did not choose are hidden. */
+.stack-field[hidden] {
+  display: none;
+}
+
+.stack-field + .stack-field {
+  border-top: 1px solid var(--border);
+}
+
+/* `input.`/`select.` prefixes on purpose: the shared input[type="number"]
+   rule is an attribute selector, so a bare class would lose the specificity
+   tie and these boxes would keep the narrow 4.75rem default. */
+input.stack-input,
+select.stack-input {
+  width: 100%;
+  min-height: var(--tap);
+  padding: 0 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.run-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+/* The screen's one primary action, so it is the one filled control on it. */
+.btn-run {
+  min-height: var(--tap);
+  padding: 0 1.4rem;
+  border: 1px solid var(--accent);
+  border-radius: 980px;
+  background: var(--accent);
+  color: var(--panel);
+  font-weight: 600;
+}
+
+.btn-run:hover {
+  background: #0064c8;
+}
+
+.run-note {
+  flex: 1 1 12rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.delta-line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0 0 0.3rem;
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.delta-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.delta-from {
+  color: var(--muted);
+}
+
+.delta-to,
+.delta-badge {
+  font-weight: 600;
+}
+
+.delta-arrow {
+  color: var(--muted-soft);
+}
+
+.delta-badge.delta-up {
+  color: var(--ok-text);
+}
+
+.delta-badge.delta-flat {
+  color: var(--muted);
+}
+
+.target-line {
+  margin: 0 0 0.6rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+/* Ordered because the order is the answer: each step is the best remaining
+   move once the ones above it are paid for. */
+.spend-list {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spend-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.spend-rank {
+  flex: 0 0 1.4rem;
+  color: var(--muted-soft);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.spend-main {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.spend-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.spend-meta {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.leftover-line {
+  margin: 0.7rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 /* --- narrow phones -------------------------------------------------------- */
 
 @media (max-width: 640px) {
@@ -1328,5 +1504,15 @@ button.hero-slot:hover {
   .portrait {
     width: 2.9rem;
     height: 2.9rem;
+  }
+
+  /* The Gear XP column's one primary action spans the column at 390px
+     rather than sitting as a short pill beside its note. */
+  .btn-run {
+    width: 100%;
+  }
+
+  .run-note {
+    flex-basis: 100%;
   }
 }

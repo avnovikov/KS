@@ -113,10 +113,11 @@ def test_optimize_page_and_api(tmp_path: Path) -> None:
 # whoever ships the page is forced to delete the xfail mark instead of the
 # coverage silently vanishing.
 #
-# The six lineup-board assertions are restored: Task 6 shipped
-# optimiser_events.html, so they are ordinary passing tests again. What each
-# one covers on the real page is spelled out on the test. Only the two
-# Gear XP ones are still waiting on Task 7.
+# All eight are restored and none is an xfail any more: Task 6 shipped
+# optimiser_events.html and Task 7 shipped optimiser_gear_xp.html, so these
+# are ordinary passing tests again. What each one covers on the real page is
+# spelled out on the test, and the two that assert on a loose substring
+# ("Bear", "grey") each pin the actual control alongside it.
 
 
 def _optimiser_client(tmp_path: Path):
@@ -177,22 +178,24 @@ def test_optimiser_events_board_has_data_regen_attr(tmp_path: Path) -> None:
     assert b'data-regen="all"' in page.content
 
 
-@pytest.mark.xfail(
-    reason="restored by Task 7: Gear XP page renders the 'Gear XP spend' heading/form",
-    strict=True,
-)
 def test_optimiser_gear_xp_page_shows_heading(tmp_path: Path) -> None:
+    """Restored. The screen names itself server-side: the whole answer is
+    drawn later from a POST, so without this the document has no heading for
+    the several seconds the spend search takes."""
     page = _optimiser_client(tmp_path).get("/optimiser/gear-xp")
     assert b"Gear XP spend" in page.content
+    assert b'<h1 class="page-title">Gear XP spend</h1>' in page.content
 
 
-@pytest.mark.xfail(
-    reason="restored by Task 7: Gear XP page renders the grey-rarity fodder input",
-    strict=True,
-)
 def test_optimiser_gear_xp_page_shows_grey_rarity(tmp_path: Path) -> None:
+    """Restored. `b"grey"` is a loose needle — a `.grey-row` class or a CSS
+    token would satisfy it — so the grey fodder box itself is pinned
+    alongside it: the label that names it, and the id/data hook the planner
+    reads its count off."""
     page = _optimiser_client(tmp_path).get("/optimiser/gear-xp")
     assert b"grey" in page.content
+    assert b'<label class="field-label" for="fodder-grey">' in page.content
+    assert b'id="fodder-grey" data-fodder="grey" data-label="Grey"' in page.content
 
 
 def test_optimize_gear_xp_api_smoke(tmp_path: Path) -> None:

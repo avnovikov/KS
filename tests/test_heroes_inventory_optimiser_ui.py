@@ -1907,3 +1907,363 @@ def test_gear_xp_api_uses_edited_march_capacity_and_tier_counts_not_repo_file(
     expected_best = max(expected.values(), key=lambda r: r.expected_personal_points)
 
     assert actual_utility == pytest.approx(expected_best.expected_personal_points)
+
+
+# --- Optimiser Gear XP spend, layout A (Task 7) -----------------------------
+#
+# What the planner *does* once it has a reply is executed for real in
+# tests/test_heroes_optimiser_gear_xp_js.py. What is left here is the server
+# half: the page renders the single column the design asks for, its labels
+# come off the same config the search consumes, the POST contract is the one
+# the legacy page used, and a run proposes without ever writing gear.json.
+
+
+def _gear_xp_client(tmp_path: Path, *, with_gear: bool = True) -> TestClient:
+    heroes_dir = tmp_path / "heroes"
+    heroes_dir.mkdir(parents=True)
+    _seed_catalog_heroes(heroes_dir)
+    gear_dir = None
+    if with_gear:
+        gear_dir = tmp_path / "gear"
+        gear_dir.mkdir(parents=True)
+        GearStore(gear_dir).upsert(
+            GearRecord(
+                piece_id="p0",
+                name="Judicator's Armet",
+                troop_type="infantry",
+                slot="helmet",
+                rarity="mythic",
+                enhancement_level=0,
+                power=1000,
+            )
+        )
+    return TestClient(create_app(gear_dir, heroes_dir=heroes_dir))
+
+
+def test_gear_xp_page_is_the_single_column_the_design_asks_for(
+    tmp_path: Path,
+) -> None:
+    """Layout A in order: the screen names itself, then target, then the
+    fodder bag, then the run control, then the panel the answer lands in.
+    Ordering is asserted on positions rather than mere presence, because
+    every one of these strings would still be somewhere in the document if
+    the column were shuffled."""
+    body = _gear_xp_client(tmp_path).get("/optimiser/gear-xp").text
+    order = [
+        '<h1 class="page-title">Gear XP spend</h1>',
+        '<h2 class="section-title">Target</h2>',
+        'aria-label="Event"',
+        '<h2 class="section-title">Fodder bag</h2>',
+        'id="fodder-grey"',
+        'id="fodder-part_100"',
+        'id="run-btn"',
+        'id="delta-line"',
+        'id="spend-list"',
+        'id="leftover-line"',
+    ]
+    seen = [body.index(needle) for needle in order]
+    assert seen == sorted(seen), dict(zip(order, seen))
+
+
+def test_gear_xp_page_offers_one_box_per_fodder_kind_the_api_accepts(
+    tmp_path: Path,
+) -> None:
+    """Derived, not transcribed: the form's boxes must be exactly the keys
+    FodderBag carries, or a kind the user owns has nowhere to be entered."""
+    from ks.heroes.optimize.xp_ladder import FodderBag
+
+    body = _gear_xp_client(tmp_path).get("/optimiser/gear-xp").text
+    offered = set(re.findall(r'data-fodder="([a-z0-9_]+)"', body))
+    assert offered == set(FodderBag().counts())
+
+
+def test_gear_xp_fodder_labels_quote_the_configured_xp_values(
+    tmp_path: Path,
+) -> None:
+    """The "30 XP each" note beside a box is read off
+    pieces_and_stats.yaml — the same file allocate_fodder_xp() spends
+    against — so retuning it cannot leave the form lying to the user."""
+    from ks.heroes.optimize.xp_ladder import load_fodder_xp_values
+
+    body = _gear_xp_client(tmp_path).get("/optimiser/gear-xp").text
+    values = load_fodder_xp_values()
+    assert set(values) == {"grey", "green", "blue", "purple", "part_100"}
+    for kind, xp in values.items():
+        label_at = body.index(f'for="fodder-{kind}"')
+        field = body[label_at : body.index(f'id="fodder-{kind}"')]
+        assert f"{xp} XP each" in field, (kind, field)
+
+
+def test_gear_xp_mode_pickers_offer_exactly_the_modes_the_solver_has(
+    tmp_path: Path,
+) -> None:
+    """Also derived: the sword and bear pickers are built from the very
+    point-scenario files build_event_utility() hands to recommend(), so the
+    form can never offer a mode the API would reject."""
+    from ks.heroes.optimize.scenarios import load_scenarios
+
+    body = _gear_xp_client(tmp_path).get("/optimiser/gear-xp").text
+    for event, filename in (
+        ("swordland", "point_scenarios.yaml"),
+        ("beartrap", "point_scenarios_beartrap.yaml"),
+    ):
+        start = body.index(f'data-mode-select="{event}"')
+        block = body[start : body.index("</select>", start)]
+        offered = set(re.findall(r'<option value="([a-z_]*)"', block))
+        expected = set(load_scenarios(REPO_ROOT / "config" / filename))
+        # "" is the "Best mode" option: no `mode` key is sent at all.
+        assert offered == expected | {""}, (event, offered)
+
+    # Arena has sides, not scenario modes, and no "let the search pick".
+    arena = body[
+        body.index('data-mode-select="arena"') : body.index(
+            "</select>", body.index('data-mode-select="arena"')
+        )
+    ]
+    assert set(re.findall(r'<option value="([a-z]*)"', arena)) == {"attack", "defense"}
+
+
+def test_gear_xp_page_ships_no_inline_script_or_style(tmp_path: Path) -> None:
+    """Global constraint: every rule lives in app.css and the planner's logic
+    in /static/optimiser_gear_xp.js."""
+    body = _gear_xp_client(tmp_path).get("/optimiser/gear-xp").text
+    assert "<style" not in body
+    assert "style=" not in body
+    assert "<script>" not in body
+    assert 'src="/static/optimiser_gear_xp.js"' in body
+
+
+def test_gear_xp_page_says_it_only_proposes(tmp_path: Path) -> None:
+    """Propose-only is a plan constraint, not an implementation detail: the
+    page has to say so where the user is about to press the button, because
+    nothing else on screen distinguishes a proposal from a commit."""
+    body = _gear_xp_client(tmp_path).get("/optimiser/gear-xp").text
+    note = body[body.index('id="run-btn"') : body.index('id="spend-status"')]
+    assert "Proposals only" in note
+    assert "written back to your gear inventory" in note
+
+
+def test_gear_xp_page_links_on_to_the_lineups_the_spend_changes(
+    tmp_path: Path,
+) -> None:
+    """The soft link the design calls for, inside the result panel: the
+    spends are judged by a lineup, and that lineup is the next screen."""
+    body = _gear_xp_client(tmp_path).get("/optimiser/gear-xp").text
+    result = body[body.index('id="spend-result"') :]
+    assert '<a class="result-link" href="/optimiser/events">' in result
+
+
+def test_gear_xp_page_names_the_inventories_it_would_spend_from(
+    tmp_path: Path,
+) -> None:
+    """Same page-meta line every other screen carries — and here it is both
+    directories, since the roster decides the utility and the gear is what
+    gets levelled."""
+    c = _gear_xp_client(tmp_path)
+    body = c.get("/optimiser/gear-xp").text
+    assert str(tmp_path / "heroes") in body
+    assert str(tmp_path / "gear") in body
+
+
+def test_gear_xp_form_is_inert_without_a_gear_inventory(tmp_path: Path) -> None:
+    """A heroes-only app can still reach this page (the Optimiser tab is
+    live), so the form has to explain itself rather than fail on submit with
+    the API's `--gear` message."""
+    body = _gear_xp_client(tmp_path, with_gear=False).get("/optimiser/gear-xp").text
+    assert 'id="gear-missing"' in body
+    assert "--gear" in body
+    assert 'id="run-btn" disabled' in body
+    # Every control, not just the button: a form you can fill but never send
+    # is worse than one that is visibly switched off.
+    assert body.count(" disabled") == 1 + 3 + 3 + 5  # button, segments, modes, counts
+    assert "No gear inventory configured." in body
+
+
+def test_gear_xp_page_is_reachable_from_its_legacy_url(tmp_path: Path) -> None:
+    """The redirect Task 1 added now has somewhere real to land: following
+    it end to end must reach the built page, not a stub or a 404."""
+    c = _gear_xp_client(tmp_path)
+    hop = c.get("/optimize/gear-xp", follow_redirects=False)
+    assert hop.status_code == 302
+    assert hop.headers["location"] == "/optimiser/gear-xp"
+    landed = c.get("/optimize/gear-xp")
+    assert landed.status_code == 200
+    assert '<h1 class="page-title">Gear XP spend</h1>' in landed.text
+
+
+# --- POST /api/optimize/gear-xp: contract unchanged -------------------------
+
+
+@pytest.mark.parametrize(
+    ("body", "detail"),
+    [
+        ({"event": "arena_attack", "grey": -1}, "grey must be non-negative"),
+        ({"event": "arena_attack", "green": "many"}, "invalid fodder count for green"),
+        ({"event": "arena_attack", "blue": None}, "invalid fodder count for blue"),
+        (
+            {"event": "arena_attack", "part_100": "3.5"},
+            "invalid fodder count for part_100",
+        ),
+    ],
+)
+def test_gear_xp_api_rejects_counts_it_cannot_spend(
+    tmp_path: Path, body: dict[str, Any], detail: str
+) -> None:
+    """The counts the form guards client-side are guarded here too — the API
+    is reachable without the page. Unchanged by this task; pinned because the
+    planner's refusal-to-send behaviour is written against these messages."""
+    res = _gear_xp_client(tmp_path).post("/api/optimize/gear-xp", json=body)
+    assert res.status_code == 400
+    assert res.json()["detail"] == detail
+
+
+def test_gear_xp_api_says_which_half_of_the_setup_is_missing(
+    tmp_path: Path,
+) -> None:
+    """Two different 400s, and the page shows whichever comes back verbatim:
+    no --gear at all, versus a gear directory with nothing in it."""
+    no_gear = _gear_xp_client(tmp_path / "a", with_gear=False)
+    body = {"event": "arena_attack", "grey": 1}
+    res = no_gear.post("/api/optimize/gear-xp", json=body)
+    assert res.status_code == 400
+    assert res.json()["detail"] == "gear inventory required; start UI with --gear"
+
+    heroes_dir = tmp_path / "b" / "heroes"
+    heroes_dir.mkdir(parents=True)
+    _seed_catalog_heroes(heroes_dir)
+    empty_gear = tmp_path / "b" / "gear"
+    empty_gear.mkdir(parents=True)
+    (empty_gear / "gear.json").write_text("[]", encoding="utf-8")
+    c = TestClient(create_app(empty_gear, heroes_dir=heroes_dir))
+    res = c.post("/api/optimize/gear-xp", json=body)
+    assert res.status_code == 400
+    assert res.json()["detail"] == "gear inventory is empty"
+
+
+def test_gear_xp_api_rejects_an_event_it_cannot_solve(tmp_path: Path) -> None:
+    res = _gear_xp_client(tmp_path).post(
+        "/api/optimize/gear-xp", json={"event": "city_attack", "grey": 1}
+    )
+    assert res.status_code == 400
+    assert "unsupported event" in res.json()["detail"]
+
+
+def test_gear_xp_api_accepts_the_body_the_page_sends_and_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    """Propose-only, checked rather than asserted in prose: the exact body
+    the planner builds (event + mode + all five counts) is accepted, and
+    gear.json is byte-identical afterwards. A spend that quietly levelled the
+    piece it proposed would pass every other test in this file.
+    """
+    heroes_dir = tmp_path / "heroes"
+    heroes_dir.mkdir()
+    _seed_catalog_heroes(heroes_dir)
+    gear_dir = tmp_path / "gear"
+    gear_dir.mkdir()
+    GearStore(gear_dir).upsert(
+        GearRecord(
+            piece_id="p0",
+            name="Judicator's Armet",
+            troop_type="infantry",
+            slot="helmet",
+            rarity="mythic",
+            enhancement_level=0,
+            power=1000,
+        )
+    )
+    gear_json = gear_dir / "gear.json"
+    before = gear_json.read_bytes()
+
+    c = TestClient(create_app(gear_dir, heroes_dir=heroes_dir))
+    res = c.post(
+        "/api/optimize/gear-xp",
+        json={
+            "event": "arena",
+            # "defense", not the "attack" the arena branch falls back to when
+            # no mode is sent: the side below has to be evidence the mode
+            # travelled, not evidence of the default.
+            "mode": "defense",
+            "grey": 4,
+            "green": 2,
+            "blue": 0,
+            "purple": 0,
+            "part_100": 0,
+        },
+    )
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    # Every field the planner reads off the reply.
+    assert {
+        "event",
+        "baseline_utility",
+        "best_utility",
+        "delta_utility",
+        "steps",
+        "leftover",
+        "best_summary",
+    } <= set(payload)
+    assert set(payload["leftover"]) == {"grey", "green", "blue", "purple", "part_100"}
+    assert payload["best_summary"]["side"] == "defense"
+
+    assert gear_json.read_bytes() == before
+    assert GearStore(gear_dir).all_pieces()[0].enhancement_level == 0
+
+
+def test_gear_xp_api_targets_the_mode_the_page_asked_for(tmp_path: Path) -> None:
+    """`mode` is the half of the contract the legacy page could never send.
+    Forcing a mode has to change which lineup the utility is measured
+    against, or the picker is decoration."""
+    c = _gear_xp_client(tmp_path)
+    bag = {"grey": 0, "green": 0, "blue": 0, "purple": 0, "part_100": 0}
+
+    best = c.post("/api/optimize/gear-xp", json={"event": "swordland", **bag}).json()
+    joiner = c.post(
+        "/api/optimize/gear-xp", json={"event": "swordland", "mode": "joiner", **bag}
+    ).json()
+
+    assert best["best_summary"]["mode"] != "joiner"
+    assert joiner["best_summary"]["mode"] == "joiner"
+    assert joiner["baseline_utility"] != best["baseline_utility"]
+
+
+def test_gear_xp_styles_are_phone_first(tmp_path: Path) -> None:
+    css = _client(tmp_path).get("/static/app.css").text
+
+    # Full-width controls in the single column — the design's own wording —
+    # rather than the troops editor's label-left/value-right row.
+    stack = _css_rule_body(css, "input.stack-input,\nselect.stack-input {")
+    assert "width: 100%" in stack
+    assert "var(--tap)" in stack
+
+    # `display: grid` on .stack-field beats the UA's `[hidden]` rule, so the
+    # two mode pickers that do not apply would stay on screen without this.
+    assert "display: none" in _css_rule_body(css, ".stack-field[hidden] {")
+
+    # The primary action is a filled accent pill and spans the column at
+    # 390px. Bound to the rule inside the narrow breakpoint specifically:
+    # the base .btn-run rule above it would satisfy a looser needle while
+    # the responsive one was deleted outright.
+    run = _css_rule_body(css, ".btn-run {")
+    assert "background: var(--accent)" in run
+    assert "var(--tap)" in run
+    narrow_at = css.index("@media (max-width: 640px)")
+    assert "width: 100%" in _css_rule_body(css[narrow_at:], ".btn-run {")
+
+    # The delta line wraps rather than pushing the page sideways, and long
+    # OCR'd piece names break instead of widening the column.
+    assert "flex-wrap: wrap" in _css_rule_body(css, ".delta-line {")
+    assert "overflow-wrap: anywhere" in _css_rule_body(css, ".spend-name {")
+
+
+def test_the_two_tap_target_links_share_one_rule(tmp_path: Path) -> None:
+    """The Gear XP result's link out is the same control as the inventory
+    toolbar's link into the Optimiser, so it reuses that declaration instead
+    of copying it. Pinned because a copy is exactly what a later edit would
+    reach for, and the two would then drift."""
+    css = _client(tmp_path).get("/static/app.css").text
+    shared = _css_rule_body(css, ".trust-cta,\n.result-link {")
+    assert "min-height: var(--tap)" in shared
+    # Comments stripped first: the rule's own comment names both classes, and
+    # counting raw occurrences would pass with a second rule sitting below it.
+    assert re.sub(r"/\*.*?\*/", "", css, flags=re.S).count(".result-link") == 1

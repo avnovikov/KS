@@ -467,12 +467,32 @@ def create_app(
 
     @app.get("/optimiser/gear-xp", response_class=HTMLResponse)
     def optimiser_gear_xp_page(request: Request) -> HTMLResponse:
-        _require_heroes()
+        heroes_path, _ = _require_heroes()
+        # Both lists the form offers are read off the same config the spend
+        # search itself consumes, never transcribed into the template:
+        #   - fodder XP values from pieces_and_stats.yaml, so the "30 XP each"
+        #     note beside a box cannot outlive a retune of that file;
+        #   - mode keys from the point-scenario files build_event_utility()
+        #     passes to recommend(), so the picker can never offer a mode the
+        #     optimiser would reject with a 400.
+        # Read per request rather than at startup: these are hand-edited
+        # tuning files and the page is already no-store.
+        from ks.heroes.optimize.scenarios import load_scenarios
+        from ks.heroes.optimize.xp_ladder import load_fodder_xp_values
+
+        events_dir = REPO_ROOT / "config"
         return _shell_page(
             request,
             "optimiser_gear_xp.html",
             primary="optimiser",
             subtab="gear-xp",
+            heroes_dir=str(heroes_path),
+            gear_dir=str(resolved_gear) if resolved_gear is not None else None,
+            fodder_xp=load_fodder_xp_values(),
+            sword_modes=list(load_scenarios(events_dir / "point_scenarios.yaml")),
+            bear_modes=list(
+                load_scenarios(events_dir / "point_scenarios_beartrap.yaml")
+            ),
         )
 
     @app.get("/optimiser/hero-levels", response_class=HTMLResponse)
