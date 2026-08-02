@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KS Optimize</title>
+  <style>
+    :root {
+      --bg: #1a1d23;
+      --panel: #242830;
+      --text: #e8eaed;
+      --muted: #9aa0a6;
+      --accent: #6cb2ff;
+      --ok: #7dcea0;
+      --err: #f1959b;
+      --border: #3a3f4b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.4;
+    }
+    header {
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, #2a303a, var(--bg));
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem 1.25rem;
+    }
+    .header-text { min-width: 12rem; }
+    h1 { margin: 0 0 0.35rem; font-size: 1.35rem; font-weight: 600; }
+    .meta { color: var(--muted); font-size: 0.85rem; }
+    .header-actions { display: flex; align-items: center; gap: 0.6rem; }
+    button {
+      padding: 0.45rem 0.85rem;
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      background: transparent;
+      color: var(--accent);
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+    button:hover { background: rgba(108, 178, 255, 0.12); }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    button.secondary {
+      border-color: var(--border);
+      color: var(--muted);
+      padding: 0.3rem 0.65rem;
+      font-size: 0.78rem;
+    }
+    main { padding: 1rem 1.5rem 2.5rem; }
+    .status {
+      min-height: 1.25rem;
+      margin: 0 0 1rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    .status.err { color: var(--err); }
+    .status.ok { color: var(--ok); }
+    section.block {
+      margin-bottom: 1.5rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.1rem 1.15rem;
+    }
+    .block-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.75rem;
+    }
+    section.block h2 {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 600;
+    }
+    .mode-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+      gap: 0.75rem;
+    }
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.75rem 0.85rem;
+      background: rgba(0, 0, 0, 0.18);
+      cursor: pointer;
+      text-align: left;
+      color: inherit;
+      width: 100%;
+      font: inherit;
+    }
+    .card:hover {
+      border-color: var(--accent);
+      background: rgba(108, 178, 255, 0.06);
+    }
+    .card h3 {
+      margin: 0 0 0.35rem;
+      font-size: 0.9rem;
+      font-weight: 600;
+      text-transform: capitalize;
+    }
+    .card-hint {
+      margin: 0.45rem 0 0;
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+    .points {
+      font-size: 1.15rem;
+      font-weight: 650;
+      color: var(--accent);
+      margin-bottom: 0.4rem;
+    }
+    .heroes, .troops, .formation {
+      font-size: 0.82rem;
+      color: var(--muted);
+      margin: 0.15rem 0;
+    }
+    .heroes strong { color: var(--text); font-weight: 550; }
+    .slot-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem 0.75rem;
+      margin-top: 0.35rem;
+    }
+    .slot {
+      font-size: 0.8rem;
+      padding: 0.2rem 0.45rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .slot .k { color: var(--muted); margin-right: 0.25rem; }
+
+    .modal {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+      background: rgba(0, 0, 0, 0.55);
+      z-index: 40;
+    }
+    .modal.open { display: flex; }
+    .modal-panel {
+      width: min(42rem, 100%);
+      max-height: min(90vh, 40rem);
+      overflow: auto;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.1rem 1.2rem;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    }
+    .modal-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-bottom: 0.85rem;
+    }
+    .modal-head h2 {
+      margin: 0;
+      font-size: 1.1rem;
+    }
+    .modal-sub {
+      margin: 0.25rem 0 0;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+    .hero-gear {
+      border-top: 1px solid var(--border);
+      padding: 0.85rem 0 0.4rem;
+    }
+    .hero-gear h3 {
+      margin: 0 0 0.35rem;
+      font-size: 0.95rem;
+    }
+    .why {
+      margin: 0 0 0.55rem;
+      padding: 0.45rem 0.55rem;
+      border-radius: 6px;
+      background: rgba(108, 178, 255, 0.06);
+      border: 1px solid rgba(108, 178, 255, 0.18);
+    }
+    .why .role {
+      font-size: 0.78rem;
+      color: var(--accent);
+      margin: 0 0 0.25rem;
+      font-weight: 550;
+    }
+    .why ul {
+      margin: 0;
+      padding-left: 1.1rem;
+      color: var(--muted);
+      font-size: 0.76rem;
+    }
+    .why li { margin: 0.12rem 0; }
+    .why .marginal {
+      margin: 0.35rem 0 0;
+      font-size: 0.78rem;
+      color: var(--ok);
+      font-weight: 550;
+    }
+    .why .marginal.critical { color: var(--err); }
+    .gear-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+      max-width: 22rem;
+    }
+    .gear-cell {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      padding: 0.45rem;
+      min-height: 5.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+    .gear-cell .slot-label {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+    .gear-cell .piece {
+      display: flex;
+      gap: 0.45rem;
+      align-items: flex-start;
+      font-size: 0.78rem;
+    }
+    .gear-cell img {
+      width: 40px;
+      height: 40px;
+      border-radius: 6px;
+      object-fit: cover;
+      background: #12151a;
+      border: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .gear-cell .empty { color: var(--muted); font-size: 0.78rem; }
+    .gear-cell .meta-line { color: var(--muted); font-size: 0.72rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-text">
+      <h1>Optimize</h1>
+      <div class="meta">
+        Swordland + Bear Trap modes and Arena attack/defense from current roster
+        {% if heroes_dir %} · {{ heroes_dir }}{% endif %}
+      </div>
+      {% set active = "optimize" %}
+      {% include "_nav_tabs.html" %}
+    </div>
+    <div class="header-actions">
+      <button type="button" id="refresh-btn" data-regen="all">Regenerate all</button>
+    </div>
+  </header>
+  <main>
+    <p class="status" id="status">Loading recommendations…</p>
+
+    <section class="block" id="sword-block">
+      <div class="block-head">
+        <h2>Swordland</h2>
+        <button type="button" class="secondary" data-regen="sword">Regenerate</button>
+      </div>
+      <div class="mode-grid" id="sword-modes"></div>
+    </section>
+
+    <section class="block" id="bear-block">
+      <div class="block-head">
+        <h2>Bear Trap</h2>
+        <button type="button" class="secondary" data-regen="bear">Regenerate</button>
+      </div>
+      <div class="mode-grid" id="bear-modes"></div>
+    </section>
+
+    <section class="block" id="arena-block">
+      <div class="block-head">
+        <h2>Arena</h2>
+        <button type="button" class="secondary" data-regen="arena">Regenerate</button>
+      </div>
+      <div class="mode-grid" id="arena-sides"></div>
+    </section>
+  </main>
+
+  <div class="modal" id="gear-detail-modal" role="dialog" aria-modal="true" aria-labelledby="gear-modal-title" hidden>
+    <div class="modal-panel">
+      <div class="modal-head">
+        <div>
+          <h2 id="gear-modal-title">Gear</h2>
+          <p class="modal-sub" id="gear-modal-sub"></p>
+        </div>
+        <button type="button" class="secondary" id="gear-modal-close">Close</button>
+      </div>
+      <div id="gear-modal-body"></div>
+    </div>
+  </div>
+
+  <script>
+    const GEAR_SLOTS = [
+      { key: "helmet", label: "Helm" },
+      { key: "gloves", label: "Gloves" },
+      { key: "chest", label: "Body" },
+      { key: "boots", label: "Boots" },
+    ];
+
+    function esc(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+    function safeUrl(u) {
+      if (!u) return "";
+      const s = String(u);
+      if (s.startsWith("/") || s.startsWith("http://") || s.startsWith("https://")) return s;
+      return "";
+    }
+    function fmtPoints(n) {
+      if (n == null || Number.isNaN(n) || !Number.isFinite(Number(n))) return "—";
+      return Math.round(n).toLocaleString();
+    }
+    function fmtScore(n) {
+      if (n == null || Number.isNaN(n) || !Number.isFinite(Number(n))) return "—";
+      return Number(n).toFixed(1);
+    }
+    function heroNames(row) {
+      return (row.heroes || []).map((h) => h.name || h).join(", ");
+    }
+    function orderedHeroNames(row) {
+      if (row.formation) {
+        return ["F1", "F2", "B1", "B2", "B3"]
+          .map((s) => row.formation[s])
+          .filter(Boolean);
+      }
+      return (row.heroes || []).map((h) => h.name || h);
+    }
+    function troopsLine(row) {
+      const t = row.troops || {};
+      return `I=${t.infantry ?? "—"} C=${t.cavalry ?? "—"} A=${t.archers ?? "—"} · cap ${row.effective_capacity ?? "—"}`;
+    }
+    function pieceForSlot(pieces, slot) {
+      return (pieces || []).find((p) => p.slot === slot) || null;
+    }
+    function renderGearGrid(pieces) {
+      return GEAR_SLOTS.map(({ key, label }) => {
+        const p = pieceForSlot(pieces, key);
+        if (!p) {
+          return `<div class="gear-cell"><div class="slot-label">${esc(label)}</div><div class="empty">Empty</div></div>`;
+        }
+        const url = safeUrl(p.icon_url);
+        const img = url
+          ? `<img src="${esc(url)}" alt="" />`
+          : `<img alt="" style="opacity:.35" />`;
+        const enh = p.enhancement_level != null ? `+${p.enhancement_level}` : "";
+        const mast = p.mastery_level != null ? ` M${p.mastery_level}` : "";
+        return (
+          `<div class="gear-cell">` +
+          `<div class="slot-label">${esc(label)}</div>` +
+          `<div class="piece">${img}<div>` +
+          `<div>${esc(p.name || "—")}</div>` +
+          `<div class="meta-line">${esc(p.rarity || "")} ${esc(enh)}${esc(mast)}</div>` +
+          `<div class="meta-line">${p.power != null ? esc(p.power.toLocaleString() + " pwr") : ""}</div>` +
+          `</div></div></div>`
+        );
+      }).join("");
+    }
+    function explainFor(row, name) {
+      if (row.explanations && row.explanations[name]) return row.explanations[name];
+      const hero = (row.heroes || []).find((h) => (h.name || h) === name);
+      return (hero && hero.explain) || null;
+    }
+    function alternateLine(loo) {
+      return (loo.alternate_lineup || loo.replacement_heroes || []).join(", ");
+    }
+    function renderWhy(explain) {
+      if (!explain) return "";
+      const fits = (explain.fits_because || [])
+        .map((b) => `<li>${esc(b)}</li>`)
+        .join("");
+      const loo = explain.leave_one_out || {};
+      let marginal = "";
+      if (loo.critical) {
+        marginal = `<p class="marginal critical">Critical — no feasible lineup if removed</p>`;
+      } else if (loo.inconclusive) {
+        marginal = `<p class="marginal critical">Leave-one-out inconclusive (status ${esc(loo.status || "?")})</p>`;
+      } else if (loo.marginal_points != null) {
+        const alt = alternateLine(loo);
+        marginal =
+          `<p class="marginal">Removing costs ${esc(Math.round(loo.marginal_points).toLocaleString())} pts` +
+          (alt ? ` · alternate lineup: ${esc(alt)}` : "") +
+          `</p>`;
+      } else if (loo.marginal_score != null) {
+        const alt = alternateLine(loo);
+        marginal =
+          `<p class="marginal">Removing costs ${esc(Number(loo.marginal_score).toFixed(1))} score` +
+          (alt ? ` · alternate lineup: ${esc(alt)}` : "") +
+          `</p>`;
+      }
+      const role = explain.role
+        ? `<p class="role">${esc(explain.slot ? explain.slot + " · " : "")}${esc(String(explain.role).replaceAll("_", " "))}</p>`
+        : "";
+      return (
+        `<div class="why">${role}` +
+        (fits ? `<ul>${fits}</ul>` : "") +
+        marginal +
+        `</div>`
+      );
+    }
+    function openGearModal(title, sub, row) {
+      if (row.status && row.status !== "Optimal") return;
+      const modal = document.getElementById("gear-detail-modal");
+      document.getElementById("gear-modal-title").textContent = title;
+      const bd = row.breakdown || {};
+      const breakdownBits = ["combat", "occupation", "first_control", "loot"]
+        .filter((k) => bd[k] != null)
+        .map((k) => `${k.replaceAll("_", " ")} ${Math.round(bd[k]).toLocaleString()}`)
+        .join(" · ");
+      document.getElementById("gear-modal-sub").textContent =
+        [sub, breakdownBits].filter(Boolean).join(" · ") ||
+        "Why each hero was chosen, leave-one-out cost, and gear.";
+      const body = document.getElementById("gear-modal-body");
+      const assignment = row.gear_assignment || {};
+      const names = orderedHeroNames(row);
+      if (!names.length) {
+        body.innerHTML = '<p class="empty">No heroes in this result.</p>';
+      } else {
+        body.innerHTML = names.map((name) => {
+          const pieces = assignment[name] || [];
+          const why = renderWhy(explainFor(row, name));
+          return (
+            `<div class="hero-gear">` +
+            `<h3>${esc(name)}</h3>` +
+            why +
+            `<div class="gear-grid">${renderGearGrid(pieces)}</div>` +
+            `</div>`
+          );
+        }).join("");
+      }
+      modal.hidden = false;
+      modal.classList.add("open");
+    }
+    function closeGearModal() {
+      const modal = document.getElementById("gear-detail-modal");
+      modal.classList.remove("open");
+      modal.hidden = true;
+    }
+    function renderModes(el, section, sectionLabel) {
+      el.innerHTML = "";
+      if ((section || {}).status === "Error" || (section || {}).error) {
+        el.innerHTML =
+          `<p class="heroes" style="color:var(--err)">Section failed: ${esc(section.error || "unknown error")}</p>`;
+        return;
+      }
+      const modes = (section || {}).modes || {};
+      const keys = Object.keys(modes);
+      const modeErrors = (section || {}).mode_errors || {};
+      if (!keys.length) {
+        el.innerHTML = '<p class="heroes">No feasible modes for this roster.</p>';
+        return;
+      }
+      for (const mode of keys) {
+        const row = modes[mode];
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = "card";
+        card.innerHTML =
+          `<h3>${esc(mode.replaceAll("_", " "))}</h3>` +
+          `<div class="points">${esc(fmtPoints(row.expected_personal_points))} pts</div>` +
+          `<p class="heroes"><strong>${esc(heroNames(row))}</strong></p>` +
+          `<p class="troops">${esc(troopsLine(row))}</p>` +
+          `<p class="card-hint">Click for why + gear (helm · gloves · body · boots)</p>`;
+        card.addEventListener("click", () => {
+          openGearModal(
+            `${sectionLabel} · ${mode.replaceAll("_", " ")}`,
+            `${fmtPoints(row.expected_personal_points)} expected points`,
+            row
+          );
+        });
+        el.appendChild(card);
+      }
+      const skipped = Object.keys(modeErrors);
+      if (skipped.length) {
+        const note = document.createElement("p");
+        note.className = "heroes";
+        note.textContent = "Skipped infeasible: " + skipped.join(", ");
+        el.appendChild(note);
+      }
+    }
+    function renderArena(el, arena) {
+      el.innerHTML = "";
+      for (const side of ["attack", "defense"]) {
+        const row = (arena || {})[side] || {};
+        const ok = row.status === "Optimal";
+        const card = document.createElement(ok ? "button" : "div");
+        if (ok) card.type = "button";
+        card.className = "card";
+        const form = row.formation || {};
+        const slots = ["F1", "F2", "B1", "B2", "B3"]
+          .map((s) => {
+            const name = form[s] || "—";
+            return `<span class="slot"><span class="k">${esc(s)}</span>${esc(name)}</span>`;
+          })
+          .join("");
+        card.innerHTML =
+          `<h3>${esc(side)}</h3>` +
+          `<div class="points">score ${esc(fmtScore(row.score))}</div>` +
+          `<p class="formation">status: ${esc(row.status || "—")}</p>` +
+          (ok ? `<div class="slot-row">${slots}</div>` : "") +
+          (ok
+            ? `<p class="card-hint">Click for why + gear (helm · gloves · body · boots)</p>`
+            : `<p class="heroes">${esc(row.error || "No optimal formation")}</p>`);
+        if (ok) {
+          card.addEventListener("click", () => {
+            openGearModal(`Arena · ${side}`, `score ${fmtScore(row.score)}`, row);
+          });
+        }
+        el.appendChild(card);
+      }
+    }
+    function applyAll(data) {
+      renderModes(document.getElementById("sword-modes"), data.sword, "Swordland");
+      renderModes(document.getElementById("bear-modes"), data.bear, "Bear Trap");
+      renderArena(document.getElementById("arena-sides"), data.arena);
+    }
+    async function loadOptimize() {
+      const status = document.getElementById("status");
+      const buttons = document.querySelectorAll("[data-regen]");
+      buttons.forEach((b) => { b.disabled = true; });
+      status.className = "status";
+      status.textContent = "Regenerating recommendations…";
+      try {
+        const res = await fetch("/api/optimize");
+        if (!res.ok) {
+          const detail = await res.text();
+          throw new Error(detail || res.statusText);
+        }
+        const data = await res.json();
+        // Full recompute always; refresh every panel so nothing stays stale.
+        applyAll(data);
+        const errs = data.errors || {};
+        const warns = data.warnings || [];
+        const errKeys = Object.keys(errs);
+        if (errKeys.length) {
+          status.className = "status err";
+          status.textContent = errKeys.map((k) => `${k}: ${errs[k]}`).join(" · ");
+        } else if (warns.length) {
+          status.className = "status err";
+          status.textContent = warns.join(" · ");
+        } else {
+          status.className = "status ok";
+          status.textContent = "Updated from current heroes + gear inventory.";
+        }
+      } catch (err) {
+        status.className = "status err";
+        status.textContent = String(err.message || err);
+      } finally {
+        buttons.forEach((b) => { b.disabled = false; });
+      }
+    }
+    document.querySelectorAll("[data-regen]").forEach((btn) => {
+      btn.addEventListener("click", () => loadOptimize());
+    });
+    document.getElementById("gear-modal-close").addEventListener("click", closeGearModal);
+    document.getElementById("gear-detail-modal").addEventListener("click", (ev) => {
+      if (ev.target.id === "gear-detail-modal") closeGearModal();
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") closeGearModal();
+    });
+    loadOptimize();
+  </script>
+</body>
+</html>
