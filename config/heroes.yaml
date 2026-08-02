@@ -41,13 +41,27 @@ nav:
   stats_list_button: {x: 980, y: 1680}
 
 skills:
-  slots:
-    - {x: 160, y: 520}
-    - {x: 160, y: 720}
-    - {x: 160, y: 920}
-    - {x: 920, y: 520}
-    - {x: 920, y: 720}
-    - {x: 920, y: 920}
+  # Per-rarity tap maps (BlueStacks 1080×1920, calibrated 2026-08-02).
+  # rare=2×2 (no middle), epic=3 left + 2 right, legendary=3×2.
+  by_rarity:
+    rare:
+      - {x: 160, y: 440}
+      - {x: 160, y: 860}
+      - {x: 920, y: 440}
+      - {x: 920, y: 860}
+    epic:
+      - {x: 160, y: 440}
+      - {x: 160, y: 680}
+      - {x: 160, y: 860}
+      - {x: 920, y: 440}
+      - {x: 920, y: 860}
+    legendary:
+      - {x: 160, y: 440}
+      - {x: 160, y: 680}
+      - {x: 160, y: 860}
+      - {x: 920, y: 440}
+      - {x: 920, y: 680}
+      - {x: 920, y: 860}
 
 ocr:
   # y=26 skips Android "pointer location" light band; framing matches show_neg without it.
