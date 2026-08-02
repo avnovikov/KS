@@ -79,12 +79,31 @@ def recommend(
     best = max(feasible, key=lambda s: s.expected_personal_points)
     total = sum(best.troops.values()) or 1
     ratios = {k: v / total for k, v in best.troops.items()}
-    hero_rows = tuple(
-        {
-            "name": name,
-            "reason": _reason(name, catalog, best.mode),
-        }
-        for name in best.hero_names
+    best_scenario = modes[best.mode]
+    best_scenario = Scenario(
+        mode=best.mode,
+        combat_rate=best_scenario.combat_rate,
+        minutes_held=best_scenario.minutes_held,
+        personal_rate=best_scenario.personal_rate,
+        p_first=best_scenario.p_first,
+        first_bonus=best_scenario.first_bonus,
+        loot_expected=best_scenario.loot_expected,
+        enemy_power_scale=best_scenario.enemy_power_scale,
+        formation_weights=best_scenario.formation_weights,
+        require_widget=best_scenario.require_widget,
+    )
+    from ks.heroes.optimize.explain import explain_selected_heroes
+
+    hero_rows = explain_selected_heroes(
+        heroes,
+        catalog,
+        troops,
+        best_scenario,
+        best,
+        event=event,
+        troop_stats=troop_stats,
+        truegold=truegold,
+        gear_bonus_by_troop=gear_bonus,
     )
     alternatives = tuple(
         {
@@ -125,17 +144,34 @@ def recommend(
     )
 
 
-def _reason(name: str, catalog: dict[str, CatalogEntry], mode: str) -> str:
-    entry = catalog.get(name)
-    if entry is None:
-        return "owned"
-    bits = [f"widget={entry.widget_type or 'none'}"]
-    if entry.troop:
-        bits.append(f"troop={entry.troop}")
-    if mode == "garrison" and entry.garrison_tier:
-        bits.append(f"garrison_tier={entry.garrison_tier}")
-    if mode == "rally_lead" and entry.rally_tier:
-        bits.append(f"rally_tier={entry.rally_tier}")
-    if mode == "joiner" and entry.joiner_tier:
-        bits.append(f"joiner_tier={entry.joiner_tier}")
-    return ", ".join(bits)
+def recommend_all_modes(
+    heroes: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    troops: TroopsConfig,
+    scenarios: dict[str, Scenario],
+    *,
+    event: EventProfile | None = None,
+    troop_stats: TroopStatsTable | None = None,
+    truegold: int = 0,
+    gear: list[GearRecord] | None = None,
+    gear_profile: str = "early_game_growth",
+) -> dict[str, RecommendResult]:
+    """Run recommend once per scenario mode (full per-mode points/formation)."""
+    if not scenarios:
+        raise ValueError("scenarios must not be empty")
+    return {
+        mode: recommend(
+            heroes,
+            catalog,
+            troops,
+            scenarios,
+            force_mode=mode,
+            event=event,
+            troop_stats=troop_stats,
+            truegold=truegold,
+            gear=gear,
+            gear_profile=gear_profile,
+        )
+        for mode in scenarios
+    }
+

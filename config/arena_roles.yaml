@@ -22,3 +22,19 @@ placement:
   archers_back: 1.15
   carry_slot_bonus: 1.12
   front_tank_bonus: 1.1
+# Offline defense: keep tanks up front, heal on B1, slightly prefer sustain.
+defense_placement:
+  infantry_front: 1.35
+  cavalry_front: 1.1
+  archers_front: 0.45
+  infantry_back: 0.9
+  cavalry_back: 1.05
+  archers_back: 1.1
+  carry_slot_bonus: 1.08
+  front_tank_bonus: 1.2
+  heal_slot: B1
+  heal_slot_bonus: 1.28
+  tank_tag_bonus: 1.15
+  heal_tag_bonus: 1.25
+  team_def_tag_bonus: 1.1
+  glass_dps_penalty: 0.92

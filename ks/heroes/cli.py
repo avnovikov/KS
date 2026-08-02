@@ -281,7 +281,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     arena = sub.add_parser(
         "arena",
-        help="Pick Arena attack formation (5 heroes, 2 front + 3 back).",
+        help="Pick Arena attack or defense formation (5 heroes, 2F+3B).",
     )
     arena.add_argument(
         "--heroes",
@@ -311,8 +311,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--side",
         type=str,
         default="attack",
-        choices=["attack"],
-        help="Arena side (only attack / generic offense for now).",
+        choices=["attack", "defense"],
+        help="Arena side: attack (offense) or defense (offline).",
     )
     arena.add_argument(
         "--gear",
@@ -713,7 +713,7 @@ def _cmd_recommend(args: argparse.Namespace) -> int:
 
 
 def _cmd_arena(args: argparse.Namespace) -> int:
-    from ks.heroes.optimize.arena import load_arena_roles, optimize_arena_attack
+    from ks.heroes.optimize.arena import load_arena_roles, optimize_arena
     from ks.heroes.optimize.catalog import load_catalog
 
     try:
@@ -729,9 +729,8 @@ def _cmd_arena(args: argparse.Namespace) -> int:
             from ks.heroes.optimize.gear_assign import load_gear_pieces
 
             gear_pieces = load_gear_pieces(args.gear)
-        if args.side != "attack":
-            raise ValueError(f"unsupported arena side {args.side!r}")
-        result = optimize_arena_attack(
+        result = optimize_arena(
+            args.side,
             heroes,
             catalog,
             roles,

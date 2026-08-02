@@ -1,10 +1,10 @@
-"""Arena generic-offense optimizer: pick 5 heroes and 2F+3B placement."""
+"""Arena attack/defense optimizer: pick 5 heroes and 2F+3B placement."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -31,6 +31,11 @@ FRONT = ("F1", "F2")
 BACK = ("B1", "B2", "B3")
 ALL_SLOTS = FRONT + BACK
 
+# Attack: carry and fronts claim gear first.
+_ATTACK_GEAR_ORDER = ("B2", "F1", "F2", "B1", "B3")
+# Defense: tanks survive first, then carry, then heal last.
+_DEFENSE_GEAR_ORDER = ("F1", "F2", "B2", "B3", "B1")
+
 
 @dataclass(frozen=True)
 class ArenaResult:
@@ -41,9 +46,10 @@ class ArenaResult:
     gear_assignment: dict[str, list[dict[str, Any]]] | None
     reasons: dict[str, str]
     status: str = "Optimal"
+    explanations: dict[str, dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "side": self.side,
             "formation": dict(self.formation),
             "heroes": list(self.heroes),
@@ -52,6 +58,9 @@ class ArenaResult:
             "reasons": dict(self.reasons),
             "status": self.status,
         }
+        if self.explanations is not None:
+            out["explanations"] = self.explanations
+        return out
 
 
 def load_arena_roles(
@@ -78,6 +87,15 @@ def load_arena_roles(
     return out
 
 
+def _meta_for(hero_name: str, roles: dict[str, Any]) -> dict[str, Any]:
+    return (roles.get("heroes") or {}).get(hero_name) or {}
+
+
+def _hero_tags(hero_name: str, roles: dict[str, Any]) -> set[str]:
+    meta = _meta_for(hero_name, roles)
+    return {str(t) for t in (meta.get("tags") or meta.get("arena_tags") or [])}
+
+
 def _hero_base_score(
     hero: HeroRecord,
     entry: CatalogEntry | None,
@@ -85,8 +103,9 @@ def _hero_base_score(
     *,
     effective_power: int | None,
     gear_bonus: float,
+    side: str,
 ) -> float:
-    meta = (roles.get("heroes") or {}).get(hero.name) or {}
+    meta = _meta_for(hero.name, roles)
     if entry is not None and entry.arena_value is not None:
         arena_value = float(entry.arena_value)
     else:
@@ -101,7 +120,27 @@ def _hero_base_score(
         rarity_bonus = 8.0
     elif rarity == "epic":
         rarity_bonus = 4.0
-    return arena_value * star + 40.0 * power_term + gear_bonus + rarity_bonus
+    base = arena_value * star + 40.0 * power_term + gear_bonus + rarity_bonus
+
+    if side == "defense":
+        place = roles.get("defense_placement") or roles.get("placement") or {}
+        tags = _hero_tags(hero.name, roles)
+        if "tank" in tags:
+            base *= float(place.get("tank_tag_bonus", 1.15))
+        if "heal" in tags:
+            base *= float(place.get("heal_tag_bonus", 1.25))
+        if "team_def" in tags:
+            base *= float(place.get("team_def_tag_bonus", 1.1))
+        # Pure glass DPS is slightly less valuable offline than on attack.
+        if "dps" in tags and "tank" not in tags and "heal" not in tags:
+            base *= float(place.get("glass_dps_penalty", 0.92))
+    return base
+
+
+def _placement_table(roles: dict[str, Any], side: str) -> dict[str, Any]:
+    if side == "defense" and roles.get("defense_placement"):
+        return dict(roles["defense_placement"])
+    return dict(roles.get("placement") or {})
 
 
 def _placement_mult(
@@ -109,34 +148,74 @@ def _placement_mult(
     slot: str,
     hero_name: str,
     roles: dict[str, Any],
+    *,
+    side: str,
 ) -> float:
-    place = roles.get("placement") or {}
+    place = _placement_table(roles, side)
     family = "front" if slot in FRONT else "back"
     key = f"{troop}_{family}"
     mult = float(place.get(key, 1.0))
-    meta = (roles.get("heroes") or {}).get(hero_name) or {}
+    meta = _meta_for(hero_name, roles)
     role = str(meta.get("role") or meta.get("arena_role") or "")
-    if family == "front" and role.startswith("front"):
+    tags = _hero_tags(hero_name, roles)
+    if family == "front" and (
+        role.startswith("front") or "tank" in tags
+    ):
         mult *= float(place.get("front_tank_bonus", 1.0))
     carry_slot = str(roles.get("slots", {}).get("carry_slot") or "B2")
-    tags = set(meta.get("tags") or meta.get("arena_tags") or [])
     if slot == carry_slot and ("dps" in tags or "aoe" in tags or role.startswith("back")):
         mult *= float(place.get("carry_slot_bonus", 1.0))
+    if side == "defense":
+        heal_slot = str(place.get("heal_slot") or "B1")
+        if slot == heal_slot and "heal" in tags:
+            mult *= float(place.get("heal_slot_bonus", 1.25))
     return mult
 
 
-def optimize_arena_attack(
+def _provisional_gear_bonus(
+    usable: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    gear: list[GearRecord] | None,
+    gear_profile: str,
+) -> dict[str, float]:
+    gear_bonus_by_hero: dict[str, float] = {h.name: 0.0 for h in usable}
+    if not gear:
+        return gear_bonus_by_hero
+    weights = load_profile_weights(gear_profile)
+    score_priority = [
+        h.name for h in sorted(usable, key=lambda row: -(row.power or 0))
+    ]
+    provisional = assign_exclusive_sets(
+        usable,
+        catalog,
+        gear,
+        selected=[h.name for h in usable],
+        priority=score_priority,
+        profile=gear_profile,
+    )
+    for name, slots in provisional.items():
+        gear_bonus_by_hero[name] = 0.15 * sum(
+            piece_score(piece, profile=gear_profile, weights=weights)
+            for piece in slots.values()
+        )
+    return gear_bonus_by_hero
+
+
+def _solve_arena(
+    side: str,
     heroes: list[HeroRecord],
     catalog: dict[str, CatalogEntry],
     roles: dict[str, Any],
     *,
-    gear: list[GearRecord] | None = None,
-    gear_profile: str = "early_game_combat",
+    gear: list[GearRecord] | None,
+    gear_profile: str,
+    gear_slot_order: tuple[str, ...],
+    with_explanations: bool = True,
 ) -> ArenaResult:
     usable = [h for h in heroes if h.name in catalog]
     if len(usable) < 5:
         return ArenaResult(
-            side="attack",
+            side=side,
             formation={},
             heroes=(),
             score=float("-inf"),
@@ -151,41 +230,22 @@ def optimize_arena_attack(
         or "infantry"
         for h in usable
     }
-    # Arena scores each hero on their own power. Gear is exclusive (one piece →
-    # one hero), so score with a provisional exclusive assign by power priority
-    # rather than giving every same-troop hero the full class-best set.
-    gear_bonus_by_hero: dict[str, float] = {h.name: 0.0 for h in usable}
-    if gear:
-        weights = load_profile_weights(gear_profile)
-        score_priority = [
-            h.name for h in sorted(usable, key=lambda row: -(row.power or 0))
-        ]
-        provisional = assign_exclusive_sets(
-            usable,
-            catalog,
-            gear,
-            selected=[h.name for h in usable],
-            priority=score_priority,
-            profile=gear_profile,
-        )
-        for name, slots in provisional.items():
-            gear_bonus_by_hero[name] = 0.15 * sum(
-                piece_score(piece, profile=gear_profile, weights=weights)
-                for piece in slots.values()
-            )
+    gear_bonus_by_hero = _provisional_gear_bonus(
+        usable, catalog, gear, gear_profile
+    )
 
     base: dict[str, float] = {}
     for h in usable:
-        troop = troop_of[h.name]
         base[h.name] = _hero_base_score(
             h,
             catalog.get(h.name),
             roles,
             effective_power=h.power,
             gear_bonus=float(gear_bonus_by_hero.get(h.name, 0.0)),
+            side=side,
         )
 
-    prob = pulp.LpProblem("arena_attack", pulp.LpMaximize)
+    prob = pulp.LpProblem(f"arena_{side}", pulp.LpMaximize)
     x = pulp.LpVariable.dicts(
         "place",
         ((h.name, s) for h in usable for s in ALL_SLOTS),
@@ -200,7 +260,9 @@ def optimize_arena_attack(
     obj = []
     for h in usable:
         for s in ALL_SLOTS:
-            mult = _placement_mult(troop_of[h.name], s, h.name, roles)
+            mult = _placement_mult(
+                troop_of[h.name], s, h.name, roles, side=side
+            )
             obj.append(base[h.name] * mult * x[h.name, s])
     prob += pulp.lpSum(obj)
 
@@ -208,7 +270,7 @@ def optimize_arena_attack(
     status_name = pulp.LpStatus.get(status, str(status))
     if status_name != "Optimal":
         return ArenaResult(
-            side="attack",
+            side=side,
             formation={},
             heroes=(),
             score=float("-inf"),
@@ -230,14 +292,7 @@ def optimize_arena_attack(
     }
     gear_assignment = None
     if gear:
-        # Carry (B2) and fronts claim gear first; no piece shared across heroes.
-        priority = [
-            formation.get("B2"),
-            formation.get("F1"),
-            formation.get("F2"),
-            formation.get("B1"),
-            formation.get("B3"),
-        ]
+        priority = [formation.get(slot) for slot in gear_slot_order]
         priority_names = [n for n in priority if n]
         assigned = assign_exclusive_sets(
             usable,
@@ -250,14 +305,103 @@ def optimize_arena_attack(
         gear_assignment = assignment_to_dict(assigned)
 
     score = float(pulp.value(prob.objective) or 0.0)
+    explanations = None
+    if with_explanations:
+        from ks.heroes.optimize.explain import explain_arena_formation
+
+        explanations = explain_arena_formation(
+            side,
+            heroes,
+            catalog,
+            roles,
+            formation,
+            base,
+            score,
+            gear=gear,
+            gear_profile=gear_profile,
+        )
+        for name, exp in explanations.items():
+            reasons[name] = exp.get("summary") or reasons.get(name, "")
     return ArenaResult(
-        side="attack",
+        side=side,
         formation=formation,
         heroes=ordered,
         score=score,
         gear_assignment=gear_assignment,
         reasons=reasons,
         status="Optimal",
+        explanations=explanations,
+    )
+
+
+def optimize_arena_attack(
+    heroes: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    roles: dict[str, Any],
+    *,
+    gear: list[GearRecord] | None = None,
+    gear_profile: str = "early_game_combat",
+    with_explanations: bool = True,
+) -> ArenaResult:
+    return _solve_arena(
+        "attack",
+        heroes,
+        catalog,
+        roles,
+        gear=gear,
+        gear_profile=gear_profile,
+        gear_slot_order=_ATTACK_GEAR_ORDER,
+        with_explanations=with_explanations,
+    )
+
+
+def optimize_arena_defense(
+    heroes: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    roles: dict[str, Any],
+    *,
+    gear: list[GearRecord] | None = None,
+    gear_profile: str = "early_game_combat",
+    with_explanations: bool = True,
+) -> ArenaResult:
+    """Offline defense: prefer tanks + heal; fronts claim gear first."""
+    return _solve_arena(
+        "defense",
+        heroes,
+        catalog,
+        roles,
+        gear=gear,
+        gear_profile=gear_profile,
+        gear_slot_order=_DEFENSE_GEAR_ORDER,
+        with_explanations=with_explanations,
+    )
+
+
+def optimize_arena(
+    side: str,
+    heroes: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    roles: dict[str, Any],
+    *,
+    gear: list[GearRecord] | None = None,
+    gear_profile: str = "early_game_combat",
+    with_explanations: bool = True,
+) -> ArenaResult:
+    solvers: dict[str, Callable[..., ArenaResult]] = {
+        "attack": optimize_arena_attack,
+        "defense": optimize_arena_defense,
+    }
+    if side not in solvers:
+        raise ValueError(
+            f"unsupported arena side {side!r}; have {sorted(solvers)}"
+        )
+    return solvers[side](
+        heroes,
+        catalog,
+        roles,
+        gear=gear,
+        gear_profile=gear_profile,
+        with_explanations=with_explanations,
     )
 
 
@@ -268,17 +412,17 @@ def _reason(
     troop: str,
     score: float,
 ) -> str:
-    meta = (roles.get("heroes") or {}).get(name) or {}
+    meta = _meta_for(name, roles)
     entry = catalog.get(name)
     bits = [
-        f"role={meta.get('role') or 'flex'}",
+        f"role={meta.get('role') or meta.get('arena_role') or 'flex'}",
         f"troop={troop}",
         f"arena_value={meta.get('arena_value') or '-'}",
         f"score={score:.1f}",
     ]
     if entry and entry.rarity:
         bits.append(f"rarity={entry.rarity}")
-    tags = meta.get("tags") or []
+    tags = meta.get("tags") or meta.get("arena_tags") or []
     if tags:
         bits.append("tags=" + "+".join(str(t) for t in tags))
     return ", ".join(bits)

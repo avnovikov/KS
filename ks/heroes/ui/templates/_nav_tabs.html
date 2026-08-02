@@ -1,4 +1,4 @@
-{# Shared Gear / Heroes tab bar. Expects: active ("gear"|"heroes"), gear_enabled, heroes_enabled #}
+{# Shared tab bar. Expects: active ("gear"|"heroes"|"optimize"), gear_enabled, heroes_enabled #}
 <style>
   .tab-bar {
     display: inline-flex;
@@ -56,6 +56,16 @@
     {% endif %}
   {% else %}
     <span class="tab is-disabled" title="Start UI with --heroes to enable" role="tab" aria-disabled="true">Heroes inventory</span>
+  {% endif %}
+
+  {% if heroes_enabled %}
+    {% if active == "optimize" %}
+    <span class="tab is-active" role="tab" aria-selected="true">Optimize</span>
+    {% else %}
+    <a class="tab" href="/optimize" role="tab" aria-selected="false">Optimize</a>
+    {% endif %}
+  {% else %}
+    <span class="tab is-disabled" title="Start UI with --heroes to enable Optimize" role="tab" aria-disabled="true">Optimize</span>
   {% endif %}
 </nav>
 {% endif %}

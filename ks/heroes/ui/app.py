@@ -1,4 +1,4 @@
-"""FastAPI app: gear inventory + heroes roster (stars/pellets) via stores."""
+"""FastAPI app: gear + heroes roster + optimize via stores."""
 
 from __future__ import annotations
 
@@ -538,6 +538,50 @@ def create_app(
             ],
         }
 
+    @app.get("/optimize", response_class=HTMLResponse)
+    def optimize_page(request: Request) -> HTMLResponse:
+        heroes_path, _store = _require_heroes()
+        response = templates.TemplateResponse(
+            request,
+            "optimize.html",
+            {
+                "heroes_dir": str(heroes_path),
+                "gear_enabled": resolved_gear is not None,
+                "heroes_enabled": True,
+            },
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.get("/api/optimize")
+    def api_optimize() -> dict[str, Any]:
+        """Sword/Bear all modes + Arena attack/defense from current inventory."""
+        heroes_path, hero_store_local = _require_heroes()
+        from ks.heroes.ui.optimize_run import (
+            attach_gear_icon_urls,
+            run_optimize_bundle,
+        )
+
+        hero_store_local.reload()
+        heroes = hero_store_local.all_heroes()
+        gear_pieces: list[GearRecord] | None = None
+        icon_by_id: dict[str, str | None] = {}
+        if gear_store is not None and resolved_gear is not None:
+            gear_store.reload()
+            gear_pieces = gear_store.all_pieces() or None
+            if gear_pieces:
+                bust = inventory_revision(resolved_gear, "gear.json")
+                raw_icons = ensure_all_icons(gear_pieces, resolved_gear)
+                icon_by_id = {
+                    pid: with_cache_bust(url, bust)
+                    for pid, url in raw_icons.items()
+                }
+        bundle = run_optimize_bundle(heroes, gear=gear_pieces)
+        if icon_by_id:
+            attach_gear_icon_urls(bundle, icon_by_id)
+        bundle["heroes_dir"] = str(heroes_path)
+        return bundle
+
     return app
 
 
@@ -551,7 +595,7 @@ def run_ui(
     heroes_config: Path | None = None,
     serial: str | None = None,
 ) -> None:
-    """Serve the gear/heroes UI (blocking)."""
+    """Serve the gear/heroes/optimize UI (blocking)."""
     try:
         import uvicorn
     except ImportError as exc:  # pragma: no cover
@@ -568,6 +612,7 @@ def run_ui(
     )
     if heroes_dir is not None:
         print(f"Heroes UI: http://{host}:{port}/heroes")
+        print(f"Optimize UI: http://{host}:{port}/optimize")
         print(f"Heroes: {Path(heroes_dir).expanduser().resolve()}")
     if gear_dir is not None:
         print(f"Gear UI: http://{host}:{port}/gear")
