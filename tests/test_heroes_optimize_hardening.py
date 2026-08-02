@@ -70,6 +70,62 @@ def test_run_optimize_bundle_isolates_section_failure() -> None:
     assert bundle["arena"]["defense"]["status"] == "Optimal"
 
 
+def test_no_section_reads_a_second_troops_file(tmp_path: Path) -> None:
+    """`troops_path` must be the *only* troops file the whole bundle opens.
+
+    The bug this guards is one Task 2 already shipped once: a second read of
+    the troops config that ignored the parameter, so edited troop counts
+    applied to some sections and silently not to others. The merge that
+    brought Conquest in re-opened the question for a fourth section, and a
+    per-section equality check cannot answer it — a section that wrongly
+    reads the repo's config/troops.yaml produces a stable, plausible answer,
+    identical across two runs with different overrides. So this asserts on
+    the *reads themselves* rather than on the output:
+
+      - the override is genuinely consumed, and
+      - `<root>/config/troops.yaml` is never opened at all, by any section.
+
+    Every config loader under run_optimize_bundle goes through
+    Path.read_text (load_troops_config, load_catalog, load_scenarios,
+    load_event_profile, load_troop_stats, load_combat_roles), so recording
+    that one method sees all of them. Conquest currently reads no troops file
+    by any name — optimize_conquest scores from the catalog, conquest_roles
+    and gear — and this is what keeps that true: wire a load_troops_config
+    into it that resolves its own path and the repo file shows up here.
+    """
+    heroes = [
+        HeroRecord(name=n, stars=3, power=300_000)
+        for n in ("Helga", "Howard", "Jabel", "Chenko", "Saul", "Gordon", "Diana")
+    ]
+    root = Path(__file__).resolve().parents[1]
+    repo_troops = root / "config" / "troops.yaml"
+
+    override = tmp_path / "troops.yaml"
+    override.write_text(repo_troops.read_text(encoding="utf-8"), encoding="utf-8")
+
+    reads: list[Path] = []
+    real_read_text = Path.read_text
+
+    def recording(self, *args, **kwargs):
+        reads.append(Path(self).resolve())
+        return real_read_text(self, *args, **kwargs)
+
+    with patch.object(Path, "read_text", recording):
+        bundle = run_optimize_bundle(heroes, config_root=root, troops_path=override)
+
+    # A section that blew up would take its reads with it and make the
+    # "never opened" half vacuous, so pin that all four actually ran.
+    assert bundle["errors"] == {}, bundle["errors"]
+    assert bundle["conquest"]["status"] == "Optimal"
+    assert bundle["arena"]["attack"]["status"] == "Optimal"
+    assert bundle["sword"]["modes"] and bundle["bear"]["modes"]
+
+    assert override.resolve() in reads, "the troops_path override was never read"
+    assert repo_troops.resolve() not in reads, (
+        "a section read the repo's config/troops.yaml instead of the override"
+    )
+
+
 def test_arena_defense_explanations_and_loo_critical() -> None:
     catalog = _five_catalog()
     heroes = [
@@ -173,8 +229,52 @@ def test_optimize_page_cache_control(tmp_path: Path) -> None:
     page = client.get("/optimize")
     assert page.status_code == 200
     assert page.headers.get("cache-control") == "no-store"
-    assert b'href="/optimize/events"' in page.content
+    assert b'href="/optimiser/events"' in page.content
     events = client.get("/optimize/events")
     assert events.status_code == 200
     assert events.headers.get("cache-control") == "no-store"
-    assert b"function esc(" in events.content
+    # The board's client-side rendering (and its esc() helper) is asserted by
+    # test_optimiser_events_page_has_esc_helper below; the shell must stay
+    # uncached either way.
+    assert b"Event lineups" in events.content
+
+
+# --- restoration tracking ----------------------------------------------------
+#
+# Task 1 (Apple shell) stubbed /optimiser/events, which forced this assertion
+# out of test_optimize_page_cache_control above. It was kept alive as a strict
+# xfail against the new route until the page that owes it shipped; Task 6
+# shipped it, so the mark is gone and this is an ordinary test again.
+#
+# Fix wave 1 RE-ANCHORED the needle without changing it. It used to read
+# `/optimiser/events`, which forced the board's script to be inline; the
+# escaping helper is now shared with hero_detail.js and lives in app.js, so
+# the identical `b"function esc("` is asserted against the bytes the app
+# serves for /static/app.js instead. The whole chain is pinned here — the
+# page loads the board module, the board module loads through the shared
+# helper, and the helper is defined once — so nothing is loosened by the
+# move. What esc() actually escapes is executed in
+# tests/test_heroes_optimiser_events_js.py.
+def test_optimiser_events_page_has_esc_helper(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.store import HeroStore
+    from ks.heroes.ui.app import create_app
+
+    store = HeroStore(tmp_path)
+    store.upsert(HeroRecord(name="Helga", stars=2, power=1000, scraped_at="t"))
+    client = TestClient(create_app(heroes_dir=tmp_path))
+    events = client.get("/optimiser/events")
+    assert events.status_code == 200
+
+    # The page ships the board, the board comes with the shared helpers.
+    assert b'src="/static/optimiser_events.js"' in events.content
+    assert b'src="/static/app.js"' in events.content
+    board = client.get("/static/optimiser_events.js")
+    assert board.status_code == 200
+    assert b"window.escapeHtml" in board.content
+
+    shared = client.get("/static/app.js")
+    assert shared.status_code == 200
+    assert b"function esc(" in shared.content

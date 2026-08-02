@@ -1,0 +1,13 @@
+{# Inventory segmented subtabs. Expects: subtab, gear_enabled, heroes_enabled. #}
+{% macro seg(href, label, key, enabled=True) -%}
+{% if not enabled %}<span class="seg disabled" aria-disabled="true">{{ label }}</span>
+{%- elif subtab == key %}<a class="seg on" href="{{ href }}" aria-current="page">{{ label }}</a>
+{%- else %}<a class="seg" href="{{ href }}">{{ label }}</a>{% endif %}
+{%- endmacro %}
+<nav class="subnav" aria-label="Inventory sections">
+  <div class="segmented">
+    {{ seg("/inventory/gear", "Gear", "gear", gear_enabled) }}
+    {{ seg("/inventory/heroes", "Heroes", "heroes", heroes_enabled) }}
+    {{ seg("/inventory/troops", "Troops", "troops") }}
+  </div>
+</nav>

@@ -1,0 +1,77 @@
+{% extends "_layout.html" %}
+{% block title %}Troops · Inventory · KS{% endblock %}
+
+{% block content %}
+<p class="page-meta">{{ troops_path }}</p>
+{% if load_error %}
+<p class="banner-err" id="troops-load-error" role="alert">
+  Could not read your troops file: {{ load_error }}. Unreadable fields show
+  as 0 — fix them here and the next save rewrites the file.
+</p>
+{% endif %}
+{# Filled in and un-hidden by troops.js when it has to pull a value on disk
+   back into range, or when one cannot be repaired automatically. A banner
+   rather than a toast: #toast is shared and single-timer, so a notice raised
+   at load would be overwritten by the next message and time out unread. #}
+<p class="banner-warn" id="troops-repair-notice" role="alert" hidden></p>
+
+<form id="troops-form" class="troops-form" data-save-url="/api/troops" novalidate>
+  <section class="panel">
+    <div class="form-head">
+      <h1 class="page-title">Troops</h1>
+      <p class="save-status" id="save-status" aria-live="polite"></p>
+    </div>
+    <p class="hint">
+      Counts the optimisers march with. Changes save automatically.
+    </p>
+
+    <div class="field">
+      <label class="field-label" for="march_capacity">March capacity</label>
+      <input class="field-input" type="number" inputmode="numeric" min="0" step="1"
+             id="march_capacity" name="march_capacity"
+             data-field="march_capacity" data-label="March capacity"
+             value="{{ form.march_capacity }}" />
+    </div>
+    <div class="field">
+      <label class="field-label" for="truegold">
+        Truegold
+        <span class="field-note">applies to every tier · 0–5</span>
+      </label>
+      <input class="field-input" type="number" inputmode="numeric" min="0" max="5" step="1"
+             id="truegold" name="truegold"
+             data-field="truegold" data-label="Truegold"
+             value="{{ form.truegold }}" />
+    </div>
+  </section>
+
+  {% for t in form.types %}
+  <details class="panel troop-card" data-troop-type="{{ t.key }}" open>
+    <summary class="troop-summary">
+      {# <summary> takes phrasing content or a single heading, not both — so
+         the type name is a styled span, not an h2, next to the total. #}
+      <span class="troop-name">{{ t.label }}</span>
+      <span class="troop-total">
+        <span class="troop-total-label">Total</span>
+        <span class="troop-total-value" data-total-for="{{ t.key }}">{{ "{:,}".format(t.total) }}</span>
+      </span>
+    </summary>
+    <div class="tier-grid">
+      {% for row in t.tiers %}
+      <div class="tier-cell">
+        <label class="tier-label" for="{{ t.key }}-t{{ row.tier }}">T{{ row.tier }}</label>
+        <input class="tier-input" type="number" inputmode="numeric" min="0" step="1"
+               id="{{ t.key }}-t{{ row.tier }}"
+               data-type="{{ t.key }}" data-tier="{{ row.tier }}"
+               data-label="{{ t.label }} T{{ row.tier }}"
+               value="{{ row.count }}" />
+      </div>
+      {% endfor %}
+    </div>
+  </details>
+  {% endfor %}
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/troops.js"></script>
+{% endblock %}

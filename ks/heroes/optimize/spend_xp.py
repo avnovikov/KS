@@ -101,9 +101,15 @@ def build_event_utility(
     heroes: list[HeroRecord],
     *,
     config_root: Path | None = None,
+    troops_path: Path | None = None,
     mode: str | None = None,
 ) -> UtilityFn:
-    """Return U(gear) -> (utility, summary) for sword/bear/arena events."""
+    """Return U(gear) -> (utility, summary) for sword/bear/arena events.
+
+    `troops_path` overrides where troop counts/truegold are read from (the
+    UI-editable copy); it defaults to the repo-relative config/troops.yaml
+    used before Task 2 wired in a store.
+    """
     root = (config_root or REPO_ROOT).expanduser().resolve()
     key = event.strip().lower().replace(" ", "_")
 
@@ -159,12 +165,17 @@ def build_event_utility(
     else:
         raise ValueError(f"unsupported event {event!r}")
 
-    troops = load_troops_config(root / "config" / "troops.yaml")
+    resolved_troops_path = (
+        Path(troops_path).expanduser().resolve()
+        if troops_path is not None
+        else root / "config" / "troops.yaml"
+    )
+    troops = load_troops_config(resolved_troops_path)
     scenarios = load_scenarios(scenarios_path)
     event_profile = load_event_profile(event_path)
     troop_stats = load_troop_stats(root / "config" / "troop_stats.yaml")
     raw_troops = yaml.safe_load(
-        (root / "config" / "troops.yaml").read_text(encoding="utf-8")
+        resolved_troops_path.read_text(encoding="utf-8")
     ) or {}
     truegold = int(raw_troops.get("truegold", troop_stats.default_truegold))
 

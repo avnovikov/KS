@@ -10,11 +10,14 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
+import yaml
+
 from ks.heroes.config import DEFAULT_HEROES_CONFIG
 from ks.heroes.gear_config import DEFAULT_GEAR_CONFIG
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.gear_store import GearStore
 from ks.heroes.models import HeroRecord
+from ks.heroes.optimize.troops import troops_config_from_dict
 from ks.heroes.store import HeroStore
 from ks.heroes.ui.hero_icons import ensure_all_hero_icons
 from ks.heroes.ui.hero_power import scale_power_for_star_change
@@ -22,10 +25,74 @@ from ks.heroes.ui.heroes_rescan import rescan_heroes_from_ocr
 from ks.heroes.ui.icons import ensure_all_icons
 from ks.heroes.ui.power import compute_gear_power
 from ks.heroes.ui.rescan import rescan_gear_from_ocr
+from ks.heroes.ui.troop_store import TroopStore
+from ks.heroes.ui.troops_form import troops_form_model
+from ks.heroes.ui.trust import (
+    flag_gear_rows,
+    flag_hero_rows,
+    gear_mastery_required,
+    gear_row_incomplete,
+    hero_row_incomplete,
+    summarize_flags,
+)
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 _STARS_RANGE = range(0, 6)
 _PELLETS_RANGE = range(0, 6)
+
+#: What a hand-edited tuning YAML can throw on the way into a *page*.
+#: Deliberately wider than the parse error: a document that loads as a list
+#: instead of a mapping reaches `.get` (AttributeError), and a value that is
+#: not a number reaches `int()` (ValueError/TypeError). Every one of these is
+#: a file the user is expected to edit by hand, and none of them should be
+#: able to 500 the screen they would go to in order to notice the mistake.
+TUNING_ERRORS = (
+    OSError,
+    AttributeError,
+    KeyError,
+    TypeError,
+    ValueError,
+    yaml.YAMLError,
+)
+
+
+def startup_paths(*, gear: bool, heroes: bool) -> list[tuple[str, str]]:
+    """(label, path) for each screen `run_ui` advertises on the console.
+
+    Data rather than a run of print statements so the tests can check every
+    path against the app's own routes. The console was the last surface still
+    naming the pre-/inventory IA (`/heroes`, `/optimize`, …); those paths do
+    still redirect, which is exactly why nothing else caught it.
+
+    Hero levels is reachable in the subnav but not listed here: it is a
+    reserved placeholder, and the console is a list of things to go and do.
+    """
+    rows: list[tuple[str, str]] = []
+    if gear:
+        rows.append(("Inventory · Gear", "/inventory/gear"))
+    if heroes:
+        rows.append(("Inventory · Heroes", "/inventory/heroes"))
+    # Troops is editable whichever inventory is configured — the optimisers
+    # read it either way.
+    rows.append(("Inventory · Troops", "/inventory/troops"))
+    if heroes:
+        rows.append(("Optimiser · Event lineups", "/optimiser/events"))
+        rows.append(("Optimiser · Gear XP", "/optimiser/gear-xp"))
+    return rows
+
+
+def _troop_totals(raw: dict[str, Any]) -> dict[str, int]:
+    """Type/march-capacity totals for the troops API — computed via the same
+    validator save_raw() uses, so totals and validation never disagree.
+    """
+    cfg = troops_config_from_dict(raw)
+    return {
+        "march_capacity": cfg.march_capacity,
+        "infantry": cfg.infantry,
+        "cavalry": cfg.cavalry,
+        "archers": cfg.archers,
+    }
 
 
 def inventory_revision(dir_path: Path, filename: str) -> str:
@@ -225,6 +292,17 @@ def create_app(
     hero_store = (
         HeroStore(resolved_heroes) if resolved_heroes is not None else None
     )
+    # Troops live alongside heroes when both halves are configured — heroes
+    # is what the optimisers actually consume troops for — else alongside
+    # gear. One of the two is always set (checked above), so this is never
+    # None; /inventory/troops and /api/troops stay ungated for the same
+    # reason.
+    troops_dir = resolved_heroes if resolved_heroes is not None else resolved_gear
+    troop_store = TroopStore(
+        troops_dir / "troops.yaml",
+        seed_from=REPO_ROOT / "config" / "troops.yaml",
+    )
+    troop_store.ensure_exists()
     gear_config_path = (gear_config or DEFAULT_GEAR_CONFIG).expanduser().resolve()
     heroes_config_path = (
         (heroes_config or DEFAULT_HEROES_CONFIG).expanduser().resolve()
@@ -242,6 +320,7 @@ def create_app(
     app.state.gear_config = gear_config_path
     app.state.heroes_config = heroes_config_path
     app.state.serial = serial
+    app.state.troops_path = troop_store.path
     static_dir = Path(__file__).resolve().parent / "static"
     if static_dir.is_dir():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
@@ -274,14 +353,56 @@ def create_app(
             )
         return resolved_heroes, hero_store
 
+    def _shell_page(
+        request: Request,
+        template: str,
+        *,
+        primary: str,
+        subtab: str,
+        **extra: Any,
+    ) -> HTMLResponse:
+        """Render a page inside the Inventory/Optimiser shell (never cached)."""
+        context: dict[str, Any] = {
+            "primary": primary,
+            "subtab": subtab,
+            "gear_enabled": resolved_gear is not None,
+            "heroes_enabled": resolved_heroes is not None,
+        }
+        context.update(extra)
+        response = templates.TemplateResponse(request, template, context)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.get("/", include_in_schema=False)
     def home() -> RedirectResponse:
         if resolved_gear is not None:
-            return RedirectResponse(url="/gear", status_code=302)
-        return RedirectResponse(url="/heroes", status_code=302)
+            return RedirectResponse(url="/inventory/gear", status_code=302)
+        return RedirectResponse(url="/inventory/heroes", status_code=302)
 
-    @app.get("/gear", response_class=HTMLResponse)
-    def gear_page(request: Request) -> HTMLResponse:
+    # Legacy paths kept for bookmarks; the IA lives under /inventory and
+    # /optimiser now.
+    @app.get("/gear", include_in_schema=False)
+    def legacy_gear() -> RedirectResponse:
+        return RedirectResponse(url="/inventory/gear", status_code=302)
+
+    @app.get("/heroes", include_in_schema=False)
+    def legacy_heroes() -> RedirectResponse:
+        return RedirectResponse(url="/inventory/heroes", status_code=302)
+
+    @app.get("/optimize", include_in_schema=False)
+    def legacy_optimize() -> RedirectResponse:
+        return RedirectResponse(url="/optimiser/events", status_code=302)
+
+    @app.get("/optimize/events", include_in_schema=False)
+    def legacy_optimize_events() -> RedirectResponse:
+        return RedirectResponse(url="/optimiser/events", status_code=302)
+
+    @app.get("/optimize/gear-xp", include_in_schema=False)
+    def legacy_optimize_gear_xp() -> RedirectResponse:
+        return RedirectResponse(url="/optimiser/gear-xp", status_code=302)
+
+    @app.get("/inventory/gear", response_class=HTMLResponse)
+    def inventory_gear_page(request: Request) -> HTMLResponse:
         gear_path, store = _require_gear()
         store.reload()
         pieces = store.all_pieces()
@@ -290,20 +411,165 @@ def create_app(
             pid: with_cache_bust(url, bust)
             for pid, url in ensure_all_icons(pieces, gear_path).items()
         }
-        response = templates.TemplateResponse(
+        return _shell_page(
             request,
-            "gear.html",
-            {
-                "pieces": pieces,
-                "icons": icon_map,
-                "gear_dir": str(gear_path),
-                "cache_bust": bust,
-                "gear_enabled": True,
-                "heroes_enabled": resolved_heroes is not None,
+            "inventory_gear.html",
+            primary="inventory",
+            subtab="gear",
+            pieces=pieces,
+            icons=icon_map,
+            gear_dir=str(gear_path),
+            cache_bust=bust,
+            # "Needs attention" has to work on a plain page load, before any
+            # rescan has put a trust payload in sessionStorage — so the same
+            # predicate the rescan diff uses runs here, and the browser
+            # never carries a second copy of the rarity gate.
+            incomplete_ids={
+                p.piece_id for p in pieces if gear_row_incomplete(p)
             },
+            mastery_required_ids={
+                p.piece_id for p in pieces if gear_mastery_required(p.rarity)
+            },
+            # Lowercased before de-duplication: the chip's data-filter and
+            # the row's data-troop are both `|lower`ed, so "Cavalry" and
+            # "cavalry" would otherwise render two chips filtering identically.
+            troop_types=sorted(
+                {p.troop_type.lower() for p in pieces if p.troop_type}
+            ),
         )
-        response.headers["Cache-Control"] = "no-store"
-        return response
+
+    @app.get("/inventory/heroes", response_class=HTMLResponse)
+    def inventory_heroes_page(request: Request) -> HTMLResponse:
+        heroes_path, store = _require_heroes()
+        store.reload()
+        heroes = store.all_heroes()
+        bust = inventory_revision(heroes_path, "heroes.json")
+        icon_map = {
+            name: with_cache_bust(url, bust)
+            for name, url in ensure_all_hero_icons(heroes, heroes_path).items()
+        }
+        return _shell_page(
+            request,
+            "inventory_heroes.html",
+            primary="inventory",
+            subtab="heroes",
+            heroes=heroes,
+            icons=icon_map,
+            heroes_dir=str(heroes_path),
+            cache_bust=bust,
+            incomplete_names={
+                h.name for h in heroes if hero_row_incomplete(h)
+            },
+            troop_types=sorted(
+                {h.troop_type.lower() for h in heroes if h.troop_type}
+            ),
+        )
+
+    @app.get("/inventory/troops", response_class=HTMLResponse)
+    def inventory_troops_page(request: Request) -> HTMLResponse:
+        """Server-render the troops editor from the store.
+
+        Unlike GET /api/troops, an unreadable or invalid document must not
+        take the *page* down: the editor is where a user repairs it (a
+        complete PUT is self-healing over corrupt YAML), so a load failure
+        renders the form with whatever was readable plus a banner carrying
+        the validator's message. Validation runs through _troop_totals, the
+        same path the API uses, so page and API never disagree about what
+        counts as broken.
+        """
+        raw: dict[str, Any] = {}
+        load_error: str | None = None
+        try:
+            raw = troop_store.load_raw()
+            _troop_totals(raw)
+        except (yaml.YAMLError, ValueError, TypeError) as exc:
+            load_error = str(exc)
+        return _shell_page(
+            request,
+            "inventory_troops.html",
+            primary="inventory",
+            subtab="troops",
+            form=troops_form_model(raw),
+            troops_path=str(troop_store.path),
+            load_error=load_error,
+        )
+
+    @app.get("/optimiser/events", response_class=HTMLResponse)
+    def optimiser_events_page(request: Request) -> HTMLResponse:
+        heroes_path, _ = _require_heroes()
+        return _shell_page(
+            request,
+            "optimiser_events.html",
+            primary="optimiser",
+            subtab="events",
+            heroes_dir=str(heroes_path),
+        )
+
+    @app.get("/optimiser/gear-xp", response_class=HTMLResponse)
+    def optimiser_gear_xp_page(request: Request) -> HTMLResponse:
+        heroes_path, _ = _require_heroes()
+        # Both lists the form offers are read off the same config the spend
+        # search itself consumes, never transcribed into the template:
+        #   - fodder XP values from pieces_and_stats.yaml, so the "30 XP each"
+        #     note beside a box cannot outlive a retune of that file;
+        #   - mode keys from the point-scenario files build_event_utility()
+        #     passes to recommend(), so the picker can never offer a mode the
+        #     optimiser would reject with a 400.
+        # Read per request rather than at startup: these are hand-edited
+        # tuning files and the page is already no-store.
+        #
+        # And read defensively, for the same reason. Reading per request is
+        # only useful if the page survives a bad edit: unguarded, a typo in
+        # one of these three files 500s the whole screen — including the
+        # fodder boxes and the run button, which have nothing to do with the
+        # file that broke. Each load degrades on its own (no XP notes, or an
+        # empty mode list) and the page names what it could not read.
+        from ks.heroes.optimize.scenarios import load_scenarios
+        from ks.heroes.optimize.xp_ladder import load_fodder_xp_values
+
+        events_dir = REPO_ROOT / "config"
+        tuning_errors: list[str] = []
+
+        def _tuned(what: str, load: Callable[[], Any], fallback: Any) -> Any:
+            try:
+                return load()
+            except TUNING_ERRORS as exc:
+                tuning_errors.append(f"{what} ({exc})")
+                return fallback
+
+        fodder_xp = _tuned("fodder XP values", load_fodder_xp_values, {})
+        sword_modes = _tuned(
+            "Swordland modes",
+            lambda: list(load_scenarios(events_dir / "point_scenarios.yaml")),
+            [],
+        )
+        bear_modes = _tuned(
+            "Bear Trap modes",
+            lambda: list(load_scenarios(events_dir / "point_scenarios_beartrap.yaml")),
+            [],
+        )
+        return _shell_page(
+            request,
+            "optimiser_gear_xp.html",
+            primary="optimiser",
+            subtab="gear-xp",
+            heroes_dir=str(heroes_path),
+            gear_dir=str(resolved_gear) if resolved_gear is not None else None,
+            fodder_xp=fodder_xp,
+            sword_modes=sword_modes,
+            bear_modes=bear_modes,
+            tuning_error="; ".join(tuning_errors) or None,
+        )
+
+    @app.get("/optimiser/hero-levels", response_class=HTMLResponse)
+    def optimiser_hero_levels_page(request: Request) -> HTMLResponse:
+        _require_heroes()
+        return _shell_page(
+            request,
+            "optimiser_hero_levels.html",
+            primary="optimiser",
+            subtab="hero-levels",
+        )
 
     @app.get("/api/gear")
     def api_list_gear() -> dict[str, Any]:
@@ -333,6 +599,11 @@ def create_app(
                 detail="gear rescan already in progress",
             )
         try:
+            # Snapshot before the rescan touches the store, so the trust
+            # diff below compares "what was here" to "what OCR just saw"
+            # rather than the new state against itself.
+            store.reload()
+            before = store.all_pieces()
             pieces = do_gear_rescan(
                 store,
                 config_path=gear_config_path,
@@ -354,9 +625,11 @@ def create_app(
             gear_rescan_lock.release()
         bust = inventory_revision(gear_path, "gear.json")
         icon_map = ensure_all_icons(pieces, gear_path)
+        trust = summarize_flags(flag_gear_rows(before, pieces))
         return {
             "ok": True,
             "count": len(pieces),
+            "trust": trust,
             "cache_bust": bust,
             "gear": [
                 {
@@ -406,31 +679,6 @@ def create_app(
             "ok": True,
             "piece": {**updated.to_dict(), "icon_url": icon_url},
         }
-
-    @app.get("/heroes", response_class=HTMLResponse)
-    def heroes_page(request: Request) -> HTMLResponse:
-        heroes_path, store = _require_heroes()
-        store.reload()
-        heroes = store.all_heroes()
-        bust = inventory_revision(heroes_path, "heroes.json")
-        icon_map = {
-            name: with_cache_bust(url, bust)
-            for name, url in ensure_all_hero_icons(heroes, heroes_path).items()
-        }
-        response = templates.TemplateResponse(
-            request,
-            "heroes.html",
-            {
-                "heroes": heroes,
-                "icons": icon_map,
-                "heroes_dir": str(heroes_path),
-                "cache_bust": bust,
-                "gear_enabled": resolved_gear is not None,
-                "heroes_enabled": True,
-            },
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return response
 
     @app.get("/api/heroes")
     def api_list_heroes() -> dict[str, Any]:
@@ -509,6 +757,11 @@ def create_app(
                 detail="heroes rescan already in progress",
             )
         try:
+            # Snapshot before the rescan upserts into the store: heroes
+            # rescans never wipe the roster, so "new" must mean "not in the
+            # pre-rescan snapshot," not "not in the file we just wrote."
+            store.reload()
+            before = store.all_heroes()
             do_heroes_rescan(
                 store,
                 config_path=heroes_config_path,
@@ -526,9 +779,11 @@ def create_app(
             heroes_rescan_lock.release()
         bust = inventory_revision(heroes_path, "heroes.json")
         icon_map = ensure_all_hero_icons(heroes, heroes_path)
+        trust = summarize_flags(flag_hero_rows(before, heroes))
         return {
             "ok": True,
             "count": len(heroes),
+            "trust": trust,
             "cache_bust": bust,
             "heroes": [
                 {
@@ -539,45 +794,46 @@ def create_app(
             ],
         }
 
-    def _optimize_ctx(heroes_path: Path) -> dict[str, Any]:
-        return {
-            "heroes_dir": str(heroes_path),
-            "gear_enabled": resolved_gear is not None,
-            "heroes_enabled": True,
-        }
+    @app.get("/api/troops")
+    def api_get_troops() -> dict[str, Any]:
+        """Return the on-disk troops document and its computed totals.
 
-    @app.get("/optimize", response_class=HTMLResponse)
-    def optimize_hub(request: Request) -> HTMLResponse:
-        heroes_path, _store = _require_heroes()
-        response = templates.TemplateResponse(
-            request,
-            "optimize_hub.html",
-            _optimize_ctx(heroes_path),
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return response
+        The file is hand-editable YAML in the user's data dir, and
+        save_raw()'s writer is a non-atomic write_text, so either a hand
+        edit or an interrupted save can leave content that fails to parse
+        or fails validation. Surface that as 422 with the underlying
+        message (matching the PUT-side validation error) instead of a
+        blank 500, so the user can see what to repair.
+        """
+        try:
+            raw = troop_store.load_raw()
+            totals = _troop_totals(raw)
+        except (yaml.YAMLError, ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"troops": raw, "totals": totals}
 
-    @app.get("/optimize/events", response_class=HTMLResponse)
-    def optimize_events_page(request: Request) -> HTMLResponse:
-        heroes_path, _store = _require_heroes()
-        response = templates.TemplateResponse(
-            request,
-            "optimize_events.html",
-            _optimize_ctx(heroes_path),
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return response
+    @app.put("/api/troops")
+    async def api_put_troops(request: Request) -> dict[str, Any]:
+        """Merge the request body into the existing troops document.
 
-    @app.get("/optimize/gear-xp", response_class=HTMLResponse)
-    def optimize_gear_xp_page(request: Request) -> HTMLResponse:
-        heroes_path, _store = _require_heroes()
-        response = templates.TemplateResponse(
-            request,
-            "optimize_gear_xp.html",
-            _optimize_ctx(heroes_path),
-        )
-        response.headers["Cache-Control"] = "no-store"
-        return response
+        See TroopStore.save_raw for the exact merge contract: keys present
+        in the body replace their counterparts; keys the body omits are
+        preserved from the existing document (so omitting truegold does not
+        delete it); a present type block (infantry/cavalry/archers) replaces
+        that whole block rather than being deep-merged tier by tier. Task
+        3's editor page is built against this contract.
+        """
+        try:
+            raw = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="JSON body required") from exc
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="JSON object required")
+        try:
+            saved = troop_store.save_raw(raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return {"troops": saved, "totals": _troop_totals(saved)}
 
     @app.get("/api/optimize")
     def api_optimize() -> dict[str, Any]:
@@ -606,7 +862,9 @@ def create_app(
                     }
                 except Exception as exc:  # noqa: BLE001 — optimize without icons
                     icon_warning = f"gear icons unavailable: {exc}"
-        bundle = run_optimize_bundle(heroes, gear=gear_pieces)
+        bundle = run_optimize_bundle(
+            heroes, gear=gear_pieces, troops_path=app.state.troops_path
+        )
         if icon_by_id:
             attach_gear_icon_urls(bundle, icon_by_id)
         if icon_warning:
@@ -661,7 +919,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="gear inventory is empty")
         try:
             utility_fn = build_event_utility(
-                event, heroes, mode=mode_s
+                event, heroes, mode=mode_s, troops_path=app.state.troops_path
             )
             result = allocate_fodder_xp(
                 gear_pieces,
@@ -686,7 +944,7 @@ def run_ui(
     heroes_config: Path | None = None,
     serial: str | None = None,
 ) -> None:
-    """Serve the gear/heroes/optimize UI (blocking)."""
+    """Serve the Inventory/Optimiser UI (blocking)."""
     try:
         import uvicorn
     except ImportError as exc:  # pragma: no cover
@@ -701,13 +959,12 @@ def run_ui(
         heroes_config=heroes_config,
         serial=serial,
     )
+    for label, path in startup_paths(
+        gear=gear_dir is not None, heroes=heroes_dir is not None
+    ):
+        print(f"{label}: http://{host}:{port}{path}")
     if heroes_dir is not None:
-        print(f"Heroes UI: http://{host}:{port}/heroes")
-        print(f"Optimize hub: http://{host}:{port}/optimize")
-        print(f"Event lineups: http://{host}:{port}/optimize/events")
-        print(f"Gear XP spend: http://{host}:{port}/optimize/gear-xp")
         print(f"Heroes: {Path(heroes_dir).expanduser().resolve()}")
     if gear_dir is not None:
-        print(f"Gear UI: http://{host}:{port}/gear")
-        print(f"Inventory: {Path(gear_dir).expanduser().resolve()}")
+        print(f"Gear: {Path(gear_dir).expanduser().resolve()}")
     uvicorn.run(app, host=host, port=port, log_level="info")

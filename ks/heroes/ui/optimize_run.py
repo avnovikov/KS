@@ -87,13 +87,32 @@ def run_optimize_bundle(
     *,
     gear: list[GearRecord] | None = None,
     config_root: Path | None = None,
+    troops_path: Path | None = None,
     gear_profile_events: str = "early_game_growth",
     gear_profile_arena: str = "early_game_combat",
 ) -> dict[str, Any]:
-    """Compute sword + bear mode tables, arena attack/defense, and conquest."""
+    """Compute sword + bear mode tables, arena attack/defense, and conquest.
+
+    `troops_path` overrides where troop counts/truegold are read from (the
+    UI-editable copy); it defaults to the repo-relative config/troops.yaml
+    used by every caller before Task 2 wired in a store.
+
+    Only the two event bundles consume it. `optimize_arena` and
+    `optimize_conquest` score a 5-hero formation from the catalog, their
+    roles YAML and gear alone — neither reads troop counts or truegold, so
+    there is no fourth place for an edited troop count to leak past. That is
+    a behavioural claim, not a comment: the sole read of a troops file under
+    this function is `_event_bundle`'s, and
+    test_no_section_reads_a_second_troops_file pins that the repo's
+    config/troops.yaml is never opened once an override is supplied.
+    """
     root = (config_root or REPO_ROOT).expanduser().resolve()
     catalog_path = root / "config" / "hero_catalog.yaml"
-    troops_path = root / "config" / "troops.yaml"
+    resolved_troops_path = (
+        Path(troops_path).expanduser().resolve()
+        if troops_path is not None
+        else root / "config" / "troops.yaml"
+    )
     troop_stats_path = root / "config" / "troop_stats.yaml"
     roles_path = root / "config" / "arena_roles.yaml"
     conquest_roles_path = root / "config" / "conquest_roles.yaml"
@@ -110,7 +129,7 @@ def run_optimize_bundle(
             "Swordland",
             heroes,
             catalog,
-            troops_path=troops_path,
+            troops_path=resolved_troops_path,
             event_path=root / "config" / "events" / "swordland.yaml",
             scenarios_path=root / "config" / "point_scenarios.yaml",
             troop_stats_path=troop_stats_path,
@@ -130,7 +149,7 @@ def run_optimize_bundle(
             "Bear Trap",
             heroes,
             catalog,
-            troops_path=troops_path,
+            troops_path=resolved_troops_path,
             event_path=root / "config" / "events" / "beartrap.yaml",
             scenarios_path=root / "config" / "point_scenarios_beartrap.yaml",
             troop_stats_path=troop_stats_path,

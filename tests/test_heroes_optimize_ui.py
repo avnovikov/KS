@@ -54,31 +54,30 @@ def test_optimize_page_and_api(tmp_path: Path) -> None:
     heroes_dir = _seed_roster(tmp_path / "heroes")
     client = TestClient(create_app(heroes_dir=heroes_dir))
 
-    hub = client.get("/optimize")
-    assert hub.status_code == 200
-    assert b"Optimize" in hub.content
-    assert b'href="/optimize/events"' in hub.content
-    assert b'href="/optimize/gear-xp"' in hub.content
+    # The optimize hub has no successor: Optimiser lands on Event lineups.
+    hub = client.get("/optimize", follow_redirects=False)
+    assert hub.status_code == 302
+    assert hub.headers["location"] == "/optimiser/events"
 
+    # Only the shell is asserted here. The lineup-board markup that used to
+    # live in this test (Swordland/Bear/Arena/Conquest, Regenerate,
+    # gear-detail-modal, data-regen) now has one named test each, under
+    # "restoration tracking" below, against /optimiser/events rather than
+    # this redirect.
     page = client.get("/optimize/events")
     assert page.status_code == 200
-    assert b"Swordland" in page.content
-    assert b"Bear" in page.content
-    assert b"Arena" in page.content
-    assert b"Conquest" in page.content
-    assert b"conquest-block" in page.content
-    assert b'href="/heroes"' in page.content
-    assert b"Regenerate" in page.content
-    assert b"gear-detail-modal" in page.content
-    assert b"data-regen=" in page.content
+    assert b"Event lineups" in page.content
+    assert b'href="/optimiser/events" aria-current="page"' in page.content
+    assert b'href="/inventory/heroes"' in page.content
 
+    # Fodder-bag form ("Gear XP spend", rarity inputs) returns with the
+    # Gear XP task.
     gear_xp = client.get("/optimize/gear-xp")
     assert gear_xp.status_code == 200
-    assert b"Gear XP spend" in gear_xp.content
-    assert b"grey" in gear_xp.content
+    assert b'href="/optimiser/gear-xp" aria-current="page"' in gear_xp.content
 
     heroes_page = client.get("/heroes")
-    assert b'href="/optimize"' in heroes_page.content
+    assert b'href="/optimiser/events"' in heroes_page.content
 
     payload = client.get("/api/optimize").json()
     assert "sword" in payload
@@ -108,6 +107,123 @@ def test_optimize_page_and_api(tmp_path: Path) -> None:
     assert conquest["status"] == "Optimal"
     assert set(conquest["formation"]) == {"F1", "F2", "B1", "B2", "B3"}
     assert len(conquest["heroes"]) == 5
+
+
+# --- restoration tracking ---------------------------------------------------
+#
+# Task 1 (Apple shell) stubbed the optimiser pages, which forced the
+# lineup-board and Gear-XP-form assertions below out of test_optimize_page_and_api
+# above. They must come back for real once the pages that own them ship, so
+# they're kept alive here as strict xfails against the *new* routes: if the
+# stub still renders, xfail is a no-op; the moment real markup lands the
+# assertion starts passing, strict=True turns that XPASS into a failure, and
+# whoever ships the page is forced to delete the xfail mark instead of the
+# coverage silently vanishing.
+#
+# All eight are restored and none is an xfail any more: Task 6 shipped
+# optimiser_events.html and Task 7 shipped optimiser_gear_xp.html, so these
+# are ordinary passing tests again. What each one covers on the real page is
+# spelled out on the test, and the two that assert on a loose substring
+# ("Bear", "grey") each pin the actual control alongside it.
+
+
+def _optimiser_client(tmp_path: Path):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.ui.app import create_app
+
+    heroes_dir = _seed_roster(tmp_path / "heroes")
+    return TestClient(create_app(heroes_dir=heroes_dir))
+
+
+def test_optimiser_events_board_shows_swordland(tmp_path: Path) -> None:
+    """Restored. The three events are server-rendered segmented buttons —
+    the board reads its labels back off them, so they cannot be JS-only."""
+    page = _optimiser_client(tmp_path).get("/optimiser/events")
+    assert b"Swordland" in page.content
+    assert b'data-event="sword"' in page.content
+
+
+def test_optimiser_events_board_shows_bear(tmp_path: Path) -> None:
+    """Restored. `b"Bear"` is a loose needle — "Bearer", "Bearskin" or any
+    hero name would satisfy it — so the Bear Trap segment itself is pinned
+    alongside it rather than trusting the substring."""
+    page = _optimiser_client(tmp_path).get("/optimiser/events")
+    assert b"Bear" in page.content
+    assert b'data-event="bear" aria-pressed="false">Bear Trap</button>' in page.content
+
+
+def test_optimiser_events_board_shows_arena(tmp_path: Path) -> None:
+    """Restored. Arena is the third event segment, not a separate section."""
+    page = _optimiser_client(tmp_path).get("/optimiser/events")
+    assert b"Arena" in page.content
+    assert b'data-event="arena" aria-pressed="false">Arena</button>' in page.content
+
+
+def test_optimiser_events_board_shows_conquest(tmp_path: Path) -> None:
+    """Ported, not restored. Conquest came from the other branch, where it
+    was a fourth `<section id="conquest-block">` on the template this merge
+    deleted; the two assertions that guarded it there (`b"Conquest"` and
+    `b"conquest-block"`) are re-expressed here against the new board.
+
+    `b"Conquest"` survives verbatim but is a loose needle on its own — a
+    hero name or a CSS token would satisfy it — so, as with "Bear" above,
+    the control itself is pinned alongside it. `b"conquest-block"` had no
+    successor to be renamed to: the section it named is gone. Its job was to
+    pin that Conquest is a real region of the page rather than a heading, and
+    `data-event="conquest"` is what does that job now — it is the hook
+    optimiser_events.js collects with `querySelectorAll("[data-event]")` and
+    reads the label back off, so a Conquest that rendered as inert text
+    would fail here.
+    """
+    page = _optimiser_client(tmp_path).get("/optimiser/events")
+    assert b"Conquest" in page.content
+    assert b'data-event="conquest" aria-pressed="false">Conquest</button>' in page.content
+
+
+def test_optimiser_events_board_has_regenerate(tmp_path: Path) -> None:
+    """Restored. The refresh control lives in the shell's header actions."""
+    page = _optimiser_client(tmp_path).get("/optimiser/events")
+    assert b"Regenerate" in page.content
+    assert b'id="regen-btn"' in page.content
+
+
+def test_optimiser_events_board_has_gear_detail_modal(tmp_path: Path) -> None:
+    """Restored. Tapping a hero opens this; `.sheet` is what makes it a
+    bottom sheet on a phone and a centred modal on a wide screen."""
+    page = _optimiser_client(tmp_path).get("/optimiser/events")
+    assert b"gear-detail-modal" in page.content
+    assert b'class="modal-backdrop sheet"' in page.content
+
+
+def test_optimiser_events_board_has_data_regen_attr(tmp_path: Path) -> None:
+    """Restored. The script collects its refresh controls by this attribute
+    (it disables them all while a recompute is in flight), so the hook is
+    part of the contract and not decoration."""
+    page = _optimiser_client(tmp_path).get("/optimiser/events")
+    assert b"data-regen=" in page.content
+    assert b'data-regen="all"' in page.content
+
+
+def test_optimiser_gear_xp_page_shows_heading(tmp_path: Path) -> None:
+    """Restored. The screen names itself server-side: the whole answer is
+    drawn later from a POST, so without this the document has no heading for
+    the several seconds the spend search takes."""
+    page = _optimiser_client(tmp_path).get("/optimiser/gear-xp")
+    assert b"Gear XP spend" in page.content
+    assert b'<h1 class="page-title">Gear XP spend</h1>' in page.content
+
+
+def test_optimiser_gear_xp_page_shows_grey_rarity(tmp_path: Path) -> None:
+    """Restored. `b"grey"` is a loose needle — a `.grey-row` class or a CSS
+    token would satisfy it — so the grey fodder box itself is pinned
+    alongside it: the label that names it, and the id/data hook the planner
+    reads its count off."""
+    page = _optimiser_client(tmp_path).get("/optimiser/gear-xp")
+    assert b"grey" in page.content
+    assert b'<label class="field-label" for="fodder-grey">' in page.content
+    assert b'id="fodder-grey" data-fodder="grey" data-label="Grey"' in page.content
 
 
 def test_optimize_gear_xp_api_smoke(tmp_path: Path) -> None:

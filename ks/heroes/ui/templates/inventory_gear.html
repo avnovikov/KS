@@ -1,0 +1,94 @@
+{% extends "_layout.html" %}
+{% block title %}Gear · Inventory · KS{% endblock %}
+
+{% block actions %}
+<button type="button" class="rescan" id="rescan-btn"
+        data-rescan-url="/api/gear/rescan"
+        data-reload-url="/inventory/gear"
+        data-rescan-note="OCR rescan started — leave Backpack &gt; Gear open"
+        data-rescan-confirm="Replace the entire gear inventory from ADB OCR?&#10;&#10;Leave Backpack &gt; Gear open on the device. This clears the current set."
+        title="Replace inventory via ADB OCR (Backpack &gt; Gear must be open)">
+  Rescan from OCR
+</button>
+{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Gear</h1>
+<p class="page-meta">{{ gear_dir }} · {{ pieces|length }} pieces</p>
+{% include "_inventory_toolbar.html" %}
+<div class="table-wrap">
+  {# Everything inventory.js needs to drive this table is declared here, so
+     the identical script also serves /inventory/heroes. #}
+  <table id="inventory-table" class="data-table sticky-first"
+         data-inventory-kind="gear"
+         data-patch-base="/api/gear/"
+         data-payload-key="piece">
+    <thead>
+      <tr>
+        <th class="sortable" tabindex="0" data-sort="name" scope="col" title="Sort by name">Name</th>
+        <th class="sortable" tabindex="0" data-sort="troop" scope="col" title="Sort by troop">Troop</th>
+        <th class="sortable" tabindex="0" data-sort="slot" scope="col" title="Sort by slot">Slot</th>
+        <th class="sortable" tabindex="0" data-sort="rarity" scope="col" title="Sort by rarity">Rarity</th>
+        <th class="sortable" tabindex="0" data-sort="enhancement" scope="col" title="Sort by enhancement">Enhancement</th>
+        <th class="sortable" tabindex="0" data-sort="mastery" scope="col" title="Sort by mastery">Mastery</th>
+        <th class="sortable" tabindex="0" data-sort="power" scope="col" title="Sort by power">Power</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in pieces %}
+      <tr data-row-id="{{ p.piece_id }}"
+          data-name="{{ p.name or '' }}"
+          data-troop="{{ (p.troop_type or '')|lower }}"
+          data-slot="{{ (p.slot or '')|lower }}"
+          data-rarity="{{ (p.rarity or '')|lower }}"
+          data-enhancement="{{ p.enhancement_level if p.enhancement_level is not none else '' }}"
+          data-mastery="{{ p.mastery_level if p.mastery_level is not none else '' }}"
+          data-power="{{ p.power if p.power is not none else '' }}"
+          {% if p.piece_id in incomplete_ids %}data-incomplete="1"{% endif %}>
+        <td>
+          <div class="name-cell">
+            {% if icons.get(p.piece_id) %}
+            <img src="{{ icons[p.piece_id] }}" alt="" width="44" height="44" />
+            {% endif %}
+            <span>{{ p.name or "—" }}</span>
+          </div>
+        </td>
+        <td>{{ p.troop_type or "—" }}</td>
+        <td>{{ p.slot or "—" }}</td>
+        <td class="rarity {{ (p.rarity or '')|lower }}">{{ p.rarity or "—" }}</td>
+        <td>
+          {# data-blank names the API key a cleared box turns into: gear
+             levels have an explicit "OCR could not read this" state. #}
+          <input type="number" class="cell-input" inputmode="numeric"
+                 min="0" max="200" step="1"
+                 data-field="enhancement_level"
+                 data-sort-key="enhancement"
+                 data-blank="clear_enhancement"
+                 data-label="{{ p.name or p.piece_id }} enhancement"
+                 data-required
+                 aria-label="Enhancement for {{ p.name or p.piece_id }}"
+                 value="{{ p.enhancement_level if p.enhancement_level is not none else '' }}" />
+        </td>
+        <td>
+          <input type="number" class="cell-input" inputmode="numeric"
+                 min="0" max="20" step="1"
+                 data-field="mastery_level"
+                 data-sort-key="mastery"
+                 data-blank="clear_mastery"
+                 data-label="{{ p.name or p.piece_id }} mastery"
+                 {% if p.piece_id in mastery_required_ids %}data-required{% endif %}
+                 aria-label="Mastery for {{ p.name or p.piece_id }}"
+                 value="{{ p.mastery_level if p.mastery_level is not none else '' }}" />
+        </td>
+        <td class="power-cell">{{ p.power if p.power is not none else "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="empty no-matches" id="no-matches" hidden>No pieces match this filter.</p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/inventory.js"></script>
+{% endblock %}
