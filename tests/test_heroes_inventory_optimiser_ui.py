@@ -507,6 +507,426 @@ def test_hero_rows_declare_autosave_fields_and_blank_semantics(
     assert re.search(r'data-field="pellets"[^>]*data-blank="null"', body)
 
 
+# --- ported from the pre-merge pages: pickers, hero level, pins, delete ----
+
+
+def _lock_cells(row: str) -> dict[str, str]:
+    """Map each editable field to the `<td class="lock-cell">` holding it.
+
+    Per cell, not per row: a `data-locked` needle over a whole `<tr>` is
+    satisfied by any *other* pinned cell on the same row, which is exactly
+    the shape of assertion that passes for the wrong reason here.
+    """
+    cells: dict[str, str] = {}
+    for cell in re.findall(r'<td class="lock-cell".*?</td>', row, flags=re.S):
+        field = re.search(r'data-field="([a-z_]+)"', cell)
+        cells[field.group(1) if field else "unrepresentable"] = cell
+    return cells
+
+
+def _picker(row: str, field: str) -> str:
+    """The whole `<select>…</select>` for one column of one row."""
+    match = re.search(
+        rf'<select[^>]*data-field="{field}".*?</select>', row, flags=re.S
+    )
+    assert match, f"no {field} picker in row"
+    return match.group(0)
+
+
+def test_the_gear_pickers_offer_exactly_the_vocabulary_the_api_accepts() -> None:
+    """The lists the template renders and the frozensets
+    `normalize_ui_rarity`/`normalize_ui_slot` validate against are two
+    spellings of one vocabulary. Let them drift and the page offers an option
+    whose PATCH comes back 400 — a control that looks live and cannot be
+    used. Set equality both ways, so neither a missing option nor an extra
+    one survives.
+    """
+    from ks.heroes.ui.app import (
+        _CANONICAL_RARITIES,
+        _CANONICAL_SLOTS,
+        UI_RARITY_CHOICES,
+        UI_SLOT_CHOICES,
+    )
+
+    assert set(UI_RARITY_CHOICES) == set(_CANONICAL_RARITIES)
+    assert set(UI_SLOT_CHOICES) == set(_CANONICAL_SLOTS)
+    # Ordered, and not alphabetically: these are progression tiers.
+    assert UI_RARITY_CHOICES == ("grey", "green", "blue", "epic", "mythic", "red")
+    assert UI_SLOT_CHOICES == ("helmet", "chest", "gloves", "boots")
+
+
+def test_gear_rarity_and_slot_are_editable_pickers(tmp_path: Path) -> None:
+    """Restored from the page `origin/main` kept building and the rebuild
+    deleted. `PATCH /api/gear/{piece_id}` has accepted both since the merge;
+    only the control was missing.
+
+    Asserted inside the `<select>` for that column, never over the row: the
+    two pickers sit side by side with overlapping markup, and a needle loose
+    enough to match either is a needle that pins neither.
+    """
+    rows = _row_blocks(_spreadsheet_client(tmp_path).get("/inventory/gear").text)
+    slot = _picker(rows["cell0"], "slot")
+    rarity = _picker(rows["cell0"], "rarity")
+
+    assert re.findall(r'<option value="([a-z]*)"', slot) == [
+        "",
+        "helmet",
+        "chest",
+        "gloves",
+        "boots",
+    ]
+    assert re.findall(r'<option value="([a-z]*)"', rarity) == [
+        "",
+        "grey",
+        "green",
+        "blue",
+        "epic",
+        "mythic",
+        "red",
+    ]
+    # Exactly one selected option each, and it is the stored value.
+    assert re.findall(r'<option value="([a-z]*)" selected', slot) == ["helmet"]
+    assert re.findall(r'<option value="([a-z]*)" selected', rarity) == ["mythic"]
+
+    # Same auto-save wiring as the numeric columns: a field name, the clear
+    # flag its blank turns into, and the lockable mark the pin hangs off.
+    for field, control, blank in (
+        ("slot", slot, "clear_slot"),
+        ("rarity", rarity, "clear_rarity"),
+    ):
+        assert 'class="cell-input' in control, field
+        assert f'data-blank="{blank}"' in control
+        assert f'data-sort-key="{field}"' in control
+        assert "data-lockable" in control
+
+    # A piece OCR read no slot for sits on "—", which is also the release.
+    unread_dir = tmp_path / "unread"
+    unread_dir.mkdir()
+    GearStore(unread_dir).upsert(GearRecord(piece_id="bare", name="Bare"))
+    bare = _row_blocks(
+        TestClient(create_app(unread_dir)).get("/inventory/gear").text
+    )["bare"]
+    assert re.findall(
+        r'<option value="([a-z]*)" selected', _picker(bare, "slot")
+    ) == [""]
+    assert re.findall(
+        r'<option value="([a-z]*)" selected', _picker(bare, "rarity")
+    ) == [""]
+
+
+def test_a_stored_value_no_picker_can_represent_is_shown_not_offered(
+    tmp_path: Path,
+) -> None:
+    """Every save sends the row's whole editable state, so a picker parked on
+    "—" over a hand-edited `rarity: chartreuse` would silently clear it the
+    first time any other box on that row moved. The cell renders the stored
+    text instead — no control, nothing for `readRow` to serialize, and the
+    PATCH leaves the field alone.
+
+    OCR itself cannot produce one of these (`gear_parse`'s own maps only emit
+    values `normalize_ui_*` folds), so this is about `gear.json` after a hand
+    edit — which is precisely when losing data silently would be worst.
+    """
+    gear_dir = tmp_path / "gear"
+    gear_dir.mkdir()
+    GearStore(gear_dir).upsert(
+        GearRecord(
+            piece_id="odd",
+            name="Odd",
+            slot="cape",
+            rarity="chartreuse",
+            enhancement_level=1,
+        )
+    )
+    row = _row_blocks(TestClient(create_app(gear_dir)).get("/inventory/gear").text)["odd"]
+    cells = _lock_cells(row)
+
+    assert "<select" not in row
+    assert 'data-field="slot"' not in row
+    assert 'data-field="rarity"' not in row
+    assert row.count('<span class="odd-value"') == 2
+    assert ">cape</span>" in row
+    assert ">chartreuse</span>" in row
+    # Still pinned — the store is still refusing to let OCR touch it, and the
+    # page must not imply otherwise just because it cannot offer the edit.
+    assert "unrepresentable" in cells
+    assert 'data-locked="1"' in cells["unrepresentable"]
+
+
+def test_hero_level_is_editable_beside_stars_and_pellets(tmp_path: Path) -> None:
+    """`PATCH /api/heroes/{name}` has accepted `level` since the merge with
+    no control anywhere. 1..80 mirrors `_HERO_LEVEL_RANGE`, and the blank is
+    an explicit JSON null because that endpoint has no clear_* flag — which
+    is also the only way to release the lock."""
+    from ks.heroes.ui.app import _HERO_LEVEL_RANGE
+
+    body = _spreadsheet_client(tmp_path).get("/inventory/heroes").text
+    rows = _row_blocks(body)
+    level = _lock_cells(rows["Helga"])["level"]
+
+    assert 'data-blank="null"' in level
+    assert f'min="{_HERO_LEVEL_RANGE.start}"' in level
+    assert f'max="{_HERO_LEVEL_RANGE.stop - 1}"' in level
+    assert 'data-sort-key="level"' in level
+    assert 'aria-label="Level for Helga"' in level
+    # Sortable, and the row carries the key the sort reads.
+    assert re.search(r'class="sortable"[^>]*data-sort="level"', body)
+    assert 'data-level=""' in rows["Helga"] or 'data-level="' in rows["Helga"]
+
+
+def test_pinned_cells_are_marked_from_the_stored_value(tmp_path: Path) -> None:
+    """§3 of the merge report: there is no lock flag on disk. For gear
+    slot/rarity/enhancement/mastery and hero level, *holding a value* is what
+    makes a field immune to the next rescan — so the page's predicate is
+    `value is not None`, cell by cell, and nothing else.
+
+    Checked per cell rather than per row: `cell1` is pinned on three of its
+    four lockable columns and blank on the fourth, so a row-wide needle would
+    report it correct whichever way the fourth went.
+    """
+    rows = _row_blocks(_spreadsheet_client(tmp_path).get("/inventory/gear").text)
+
+    # cell1: blue Scout's Cap, enhancement 7, mastery unread.
+    cells = _lock_cells(rows["cell1"])
+    assert set(cells) == {"slot", "rarity", "enhancement_level", "mastery_level"}
+    for field in ("slot", "rarity", "enhancement_level"):
+        assert 'data-locked="1"' in cells[field], field
+    assert "data-locked" not in cells["mastery_level"]
+
+    # cell2: mythic boots, neither level read yet.
+    cells2 = _lock_cells(rows["cell2"])
+    assert "data-locked" not in cells2["enhancement_level"]
+    assert "data-locked" not in cells2["mastery_level"]
+    assert 'data-locked="1"' in cells2["rarity"]
+
+    # Every lockable cell ships the pin; CSS shows it only where it belongs,
+    # which keeps the marker out of the a11y tree on unpinned cells too.
+    assert rows["cell1"].count('<span class="pin" role="img"') == 4
+
+
+def test_a_hero_with_no_level_read_is_not_pinned(tmp_path: Path) -> None:
+    """The other half of the predicate on the other table — and the case a
+    single-fixture test would miss, since the seeded roster has no level at
+    all until one is stored."""
+    heroes_dir = tmp_path / "heroes"
+    heroes_dir.mkdir()
+    store = HeroStore(heroes_dir)
+    store.upsert(HeroRecord(name="Helga", power=1, stars=1, level=40))
+    store.upsert(HeroRecord(name="Gordon", power=1, stars=1))
+    rows = _row_blocks(
+        TestClient(create_app(heroes_dir=heroes_dir)).get("/inventory/heroes").text
+    )
+    assert 'data-locked="1"' in _lock_cells(rows["Helga"])["level"]
+    assert "data-locked" not in _lock_cells(rows["Gordon"])["level"]
+
+
+def test_both_pages_say_what_a_pin_means_and_how_to_release_it(
+    tmp_path: Path,
+) -> None:
+    """The pip is quiet by design — pinned is the common case, not the
+    exception — so the page carries the sentence. Without it the marker is a
+    dot nobody can decode, and the release (empty the field) is undiscoverable
+    because it looks like destroying data rather than handing the field back.
+    """
+    c = _spreadsheet_client(tmp_path)
+    for path in ("/inventory/gear", "/inventory/heroes"):
+        hint = re.search(r'<p class="hint">(.*?)</p>', c.get(path).text, re.S)
+        assert hint, path
+        text = hint.group(1)
+        assert "pinned" in text.lower(), path
+        assert "rescan" in text.lower(), path
+        assert '<span class="pin-legend">' in text, path
+    # Only the gear page has pickers, so only it mentions the "—" option.
+    assert "“—”" in c.get("/inventory/gear").text
+
+
+def test_the_remove_button_only_arms_a_confirmation(tmp_path: Path) -> None:
+    """`DELETE /api/gear/{piece_id}` survived the merge with no UI. It is
+    irreversible, so the affordance is deliberately two deliberate taps: the
+    row carries a full-width-word button that issues no request, and the
+    dialog it arms names the piece before offering the destructive button.
+
+    The row button must not be a submit, must not be a link to the endpoint,
+    and must not be the `✕` the deleted page used — a one-character target in
+    a dense row is the mis-tap this exists to prevent.
+    """
+    body = _spreadsheet_client(tmp_path).get("/inventory/gear").text
+    rows = _row_blocks(body)
+    button = re.search(r"<button[^>]*class=\"btn-remove\".*?</button>", rows["cell0"], re.S)
+    assert button
+    tag = button.group(0)
+    assert 'type="button"' in tag
+    assert 'data-remove-id="cell0"' in tag
+    assert 'data-remove-name="Judicator&#39;s Armet"' in tag
+    assert "aria-label=" in tag
+    assert ">Remove</button>" in tag
+    assert "✕" not in body
+    assert "<form" not in body
+
+    # The dialog: hidden until armed, and named for assistive tech.
+    assert 'id="remove-dialog"' in body
+    assert re.search(r'id="remove-dialog"[^>]*aria-hidden="true"', body)
+    assert 'role="dialog"' in body and 'aria-modal="true"' in body
+    assert 'id="remove-confirm"' in body
+    assert 'id="remove-cancel"' in body
+    assert 'id="remove-target"' in body
+    # The confirm is the one destructive control in the app and says so.
+    assert re.search(
+        r'<button[^>]*class="btn-danger"[^>]*id="remove-confirm"[^>]*>\s*'
+        r"Delete permanently",
+        body,
+    )
+    # It cannot be reached without the dialog, and the dialog cannot be
+    # reached without the row button.
+    assert body.count('id="remove-confirm"') == 1
+
+
+def test_the_body_the_pickers_serialize_is_one_the_api_accepts(
+    tmp_path: Path,
+) -> None:
+    """The seam neither half of the suite can see on its own: the JS harness
+    proves what `readRow` builds, the API tests prove what the endpoint
+    takes, and nothing checks that they are the same document.
+
+    Every save sends the row's *whole* editable state, so a gear PATCH now
+    always carries rarity and slot — including on a row where the user only
+    touched the enhancement box. Sent as the page renders them, and again
+    with each picker on its clear flag, since "—" is the release control and
+    a 400 there would strand a lock the user is trying to let go of.
+    """
+    gear_dir = tmp_path / "gear"
+    gear_dir.mkdir()
+    GearStore(gear_dir).upsert(
+        GearRecord(
+            piece_id="cell0",
+            name="Judicator's Armet",
+            slot="helmet",
+            rarity="mythic",
+            enhancement_level=51,
+            mastery_level=2,
+        )
+    )
+    client = TestClient(create_app(gear_dir))
+    row = _row_blocks(client.get("/inventory/gear").text)["cell0"]
+
+    def selected(field: str) -> str:
+        return re.findall(
+            r'<option value="([a-z]*)" selected', _picker(row, field)
+        )[0]
+
+    body = {
+        "slot": selected("slot"),
+        "rarity": selected("rarity"),
+        "enhancement_level": 51,
+        "mastery_level": 2,
+    }
+    res = client.patch("/api/gear/cell0", json=body)
+    assert res.status_code == 200, res.text
+    piece = res.json()["piece"]
+    assert (piece["slot"], piece["rarity"]) == ("helmet", "mythic")
+
+    cleared = client.patch(
+        "/api/gear/cell0",
+        json={
+            "clear_slot": True,
+            "clear_rarity": True,
+            "enhancement_level": 51,
+            "mastery_level": 2,
+        },
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["piece"]["slot"] is None
+    assert cleared.json()["piece"]["rarity"] is None
+    # …and a cleared field is exactly what an OCR rescan may fill again: the
+    # store only keeps a value it already has. This is the whole point of the
+    # release, so it is asserted against the store rather than assumed.
+    store = GearStore(gear_dir)
+    store.upsert(
+        GearRecord(piece_id="cell0", name="Judicator's Armet", rarity="blue")
+    )
+    assert store.get("cell0").rarity == "blue"
+
+
+def test_a_pinned_field_is_what_a_rescan_cannot_touch(tmp_path: Path) -> None:
+    """The other half of the same claim, on the same route the pin renders
+    from: while the field holds a value, an upsert that does not name it
+    leaves it alone — so `data-locked="1"` is not decoration, it is the
+    store's actual behaviour restated on screen.
+
+    Pinned on both stores, because the pin means the same thing on both
+    tables and only `GearStore` has an existing test saying so.
+    """
+    heroes_dir = tmp_path / "heroes"
+    heroes_dir.mkdir()
+    store = HeroStore(heroes_dir)
+    store.upsert(HeroRecord(name="Helga", power=1, stars=1, level=40))
+    # A rescan reading a different level is discarded…
+    store.upsert(HeroRecord(name="Helga", power=2, stars=1, level=1))
+    assert next(h for h in store.all_heroes() if h.name == "Helga").level == 40
+    # …until the page releases it by storing None, after which OCR wins.
+    from ks.heroes.ui.app import update_hero_stars
+
+    update_hero_stars(store, "Helga", level=None)
+    store.upsert(HeroRecord(name="Helga", power=3, stars=1, level=7))
+    assert next(h for h in store.all_heroes() if h.name == "Helga").level == 7
+
+
+def test_the_heroes_page_has_no_delete_path(tmp_path: Path) -> None:
+    """There is no `DELETE /api/heroes/{name}`, and the shared script guards
+    on the dialog's absence — but the guard is only meaningful while the
+    markup really is absent."""
+    body = _spreadsheet_client(tmp_path).get("/inventory/heroes").text
+    assert "btn-remove" not in body
+    assert "remove-dialog" not in body
+
+
+def test_every_id_and_hook_inventory_js_reaches_for_exists_in_the_pages(
+    tmp_path: Path,
+) -> None:
+    """The markup/script contract, derived rather than transcribed — the same
+    check the event lineups board gets. The JS harness supplies its own DOM,
+    so it cannot notice a template rename; the page tests do not read the
+    script. Split by page because the delete dialog is gear-only: every id is
+    looked up defensively, so the heroes page is allowed to lack those four,
+    and the gear page is not.
+    """
+    client = _spreadsheet_client(tmp_path)
+    gear = client.get("/inventory/gear").text
+    heroes = client.get("/inventory/heroes").text
+    script = client.get("/static/inventory.js").text
+
+    looked_up = set(re.findall(r'getElementById\("([^"]+)"\)', script))
+    assert len(looked_up) >= 9, looked_up
+    assert not sorted(i for i in looked_up if f'id="{i}"' not in gear)
+    gear_only = {"remove-dialog", "remove-confirm", "remove-cancel", "remove-target"}
+    assert gear_only < looked_up
+    assert not sorted(i for i in looked_up - gear_only if f'id="{i}"' not in heroes)
+
+    # Class hooks the script collects rather than looks up by id.
+    for selector, page in (
+        ("cell-input", gear),
+        ("cell-input", heroes),
+        ("btn-remove", gear),
+    ):
+        assert f'querySelectorAll("{"button." if "btn" in selector else "."}{selector}")' in script
+        assert selector in page
+
+
+def test_gear_page_still_ships_no_inline_script_or_style(tmp_path: Path) -> None:
+    """The pickers, the pin and the confirmation dialog all landed as markup
+    plus shared CSS/JS. The deleted page they came from carried 200 lines of
+    inline `<style>` and a `<script>` block, which is exactly what this task
+    must not reintroduce."""
+    body = _spreadsheet_client(tmp_path).get("/inventory/gear").text
+    assert "<style" not in body
+    assert "style=" not in body
+    assert "<script>" not in body
+    assert re.findall(r'<script src="([^"]+)"', body) == [
+        "/static/app.js",
+        "/static/inventory.js",
+    ]
+
+
 def test_gear_icons_declare_the_size_the_stylesheet_gives_them(
     tmp_path: Path,
 ) -> None:
@@ -745,6 +1165,68 @@ def test_spreadsheet_styles_are_phone_first(tmp_path: Path) -> None:
 
     # Sortable headers are focusable, so they need the shared focus ring.
     assert ".data-table th.sortable:focus-visible" in css
+
+
+def test_the_gear_pickers_are_phone_sized_and_focusable(tmp_path: Path) -> None:
+    """A `<select>` picks up none of the `input[type=...]` chrome above it —
+    that rule is an attribute selector on inputs — so the two pickers would
+    otherwise render as bare UA dropdowns under the tap floor, in the middle
+    of a table of 44px controls."""
+    css = _client(tmp_path).get("/static/app.css").text
+    picker = _css_rule_body(css, "select.cell-input {")
+    assert "min-height: var(--tap)" in picker
+    assert "var(--border)" in picker
+    # The focus ring is a shared rule; `select` has to be one of its subjects
+    # or the one control you can only reach by keyboard has no visible focus.
+    assert "select:focus-visible" in css
+
+
+def test_the_pin_is_hidden_unless_the_cell_is_pinned(tmp_path: Path) -> None:
+    """The pip ships on every lockable cell and CSS decides which ones show
+    it, so `data-locked` is the single source of truth for both the visual
+    and the a11y tree.
+
+    `display` specifically, not opacity or visibility: those leave the
+    `role="img"` label in the accessibility tree, and a screen reader would
+    announce "pinned" on every cell of every row — the exact opposite of what
+    the marker is for. Both halves are bound to their own full selector: the
+    hide rule and the show rule are one character apart, and a needle over
+    the whole sheet would be satisfied by either.
+    """
+    css = _client(tmp_path).get("/static/app.css").text
+    hidden = _css_rule_body(css, ".lock-cell .pin {")
+    assert "display: none" in hidden
+    shown = _css_rule_body(css, '.lock-cell[data-locked="1"] .pin {')
+    assert "display: inline" in shown
+    assert "var(--muted-soft)" in shown  # quiet: pinned is the common case
+    # Source order matters — same specificity would otherwise decide it.
+    assert css.index(".lock-cell .pin {") < css.index('.lock-cell[data-locked="1"] .pin {')
+
+
+def test_the_destructive_controls_are_tap_sized_and_read_as_destructive(
+    tmp_path: Path,
+) -> None:
+    """Two different weights on purpose. The row button only arms the dialog,
+    so it stays a text-coloured pill like every other control on the page;
+    the dialog's button is the only thing in this app that destroys data and
+    is the only filled one. Both are tap targets — the row button because it
+    lives in a dense table, the confirm because it must not be a sliver next
+    to Cancel on a phone.
+    """
+    css = _client(tmp_path).get("/static/app.css").text
+
+    row_button = _css_rule_body(css, ".btn-remove {")
+    assert "min-height: var(--tap)" in row_button
+    assert "var(--err-text)" in row_button  # readable red, not the fill hue
+    assert "background:" not in row_button  # armed, not destructive
+
+    confirm = _css_rule_body(css, ".btn-danger {")
+    assert "min-height: var(--tap)" in confirm
+    assert "background: var(--err)" in confirm
+
+    # A confirmation is a sentence and a button; the 720px `.modal` would
+    # strand it in whitespace.
+    assert "width: min(26rem, 100%)" in _css_rule_body(css, ".modal.modal-confirm {")
 
 
 @pytest.mark.parametrize("state", ["[data-trust]", "[data-unsaved]", ".row-saved"])

@@ -17,8 +17,11 @@
 <h1 class="page-title">Heroes</h1>
 <p class="page-meta">{{ heroes_dir }} · {{ heroes|length }} heroes</p>
 <p class="hint">
-  Edit stars/pellets mid-event — changes save themselves. Tap a hero name for
-  full details. Power scales from the last OCR baseline.
+  Edit level, stars and pellets mid-event — changes save themselves. Level is
+  <strong>pinned</strong> (<span class="pin-legend">•</span>) once it holds a
+  value: an OCR rescan keeps what is there and discards what it read. Blank
+  the box to let the next rescan fill it in again. Tap a hero name for full
+  details. Power scales from the last OCR baseline.
 </p>
 {% include "_inventory_toolbar.html" %}
 <div class="table-wrap">
@@ -31,6 +34,7 @@
         <th class="sortable" tabindex="0" data-sort="name" scope="col" title="Sort by name">Name</th>
         <th class="sortable" tabindex="0" data-sort="rarity" scope="col" title="Sort by rarity">Rarity</th>
         <th class="sortable" tabindex="0" data-sort="troop" scope="col" title="Sort by troop">Troop</th>
+        <th class="sortable" tabindex="0" data-sort="level" scope="col" title="Sort by level">Level</th>
         <th class="sortable" tabindex="0" data-sort="stars" scope="col" title="Sort by stars">Stars</th>
         <th class="sortable" tabindex="0" data-sort="pellets" scope="col" title="Sort by pellets">Pellets</th>
         <th class="sortable" tabindex="0" data-sort="power" scope="col" title="Sort by power">Power</th>
@@ -46,6 +50,7 @@
           data-name="{{ h.name }}"
           data-rarity="{{ (h.rarity or '')|lower }}"
           data-troop="{{ (h.troop_type or '')|lower }}"
+          data-level="{{ h.level if h.level is not none else '' }}"
           data-stars="{{ h.stars if h.stars is not none else '' }}"
           data-pellets="{{ h.pellets if h.pellets is not none else '' }}"
           data-power="{{ h.power if h.power is not none else '' }}"
@@ -65,6 +70,24 @@
         </td>
         <td class="rarity {{ (h.rarity or '')|lower }}">{{ h.rarity or "—" }}</td>
         <td>{{ h.troop_type or "—" }}</td>
+        {# `level` is HeroStore's one _LOCKED_UNLESS_OVERWRITE field: any
+           value it holds survives every rescan that does not name it in an
+           overwrite set, and the only way back is storing None — which is
+           what blanking this box does (data-blank="null"). data-locked
+           mirrors the stored value, re-derived from the server's echoed
+           record after each save. #}
+        <td class="lock-cell"{% if h.level is not none %} data-locked="1"{% endif %}>
+          <input type="number" class="cell-input" inputmode="numeric"
+                 min="1" max="80" step="1"
+                 data-field="level"
+                 data-sort-key="level"
+                 data-blank="null"
+                 data-lockable
+                 data-label="{{ h.name }} level"
+                 aria-label="Level for {{ h.name }}"
+                 value="{{ h.level if h.level is not none else '' }}" />
+          <span class="pin" role="img" aria-label="Pinned — an OCR rescan keeps this value">•</span>
+        </td>
         <td>
           {# data-blank="null": PATCH /api/heroes/{name} has no clear_* flag,
              it maps an explicit JSON null onto "unknown". #}

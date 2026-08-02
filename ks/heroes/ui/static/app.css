@@ -283,7 +283,24 @@ input[type="search"] {
   font-variant-numeric: tabular-nums;
 }
 
+/* The gear rarity/slot pickers. Sized and bordered like the numeric boxes
+   beside them — they are the same kind of control, one column over — but
+   `width: auto` so the vocabulary decides the width instead of the 4.75rem
+   the numeric rule sets. */
+select.cell-input {
+  min-height: var(--tap);
+  padding: 0 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9rem;
+  text-transform: capitalize;
+}
+
 input:focus-visible,
+select:focus-visible,
 button:focus-visible,
 a:focus-visible,
 /* Sortable headers are keyboard-operable (tabindex="0" + Enter/Space), so
@@ -763,9 +780,14 @@ table.data-table {
   font-weight: 600;
 }
 
+/* The rarity column was colour-coded before it became editable, and the
+   picker keeps that: inventory.js repaints the class from the chosen value.
+   `red` and `mythic` share the mythic hue, matching power.py's curves. */
 .rarity.legendary,
 .rarity.mythic,
 .rarity.gold,
+select.rarity-select.mythic,
+select.rarity-select.red,
 .name-cell img.rarity-legendary,
 .name-cell img.rarity-mythic,
 .name-cell img.rarity-gold {
@@ -775,6 +797,7 @@ table.data-table {
 
 .rarity.epic,
 .rarity.purple,
+select.rarity-select.epic,
 .name-cell img.rarity-epic,
 .name-cell img.rarity-purple {
   color: #8944ab;
@@ -783,6 +806,7 @@ table.data-table {
 
 .rarity.rare,
 .rarity.blue,
+select.rarity-select.blue,
 .name-cell img.rarity-rare,
 .name-cell img.rarity-blue {
   color: var(--accent);
@@ -791,10 +815,102 @@ table.data-table {
 
 .rarity.uncommon,
 .rarity.green,
+select.rarity-select.green,
 .name-cell img.rarity-uncommon,
 .name-cell img.rarity-green {
   color: #248a3d;
   border-color: #6fdc8c;
+}
+
+/* --- pinned fields (the store's lock model, made visible) ---------------- */
+
+/* Nothing on disk records a lock. GearStore and HeroStore simply refuse to
+   let a rescan change slot/rarity/enhancement/mastery/level while the field
+   holds a value, so "pinned" *is* "has a value" — which is the common case,
+   not the exception. The marker is therefore deliberately quiet: a muted pip
+   after the control, not a badge or a second colour on every cell of every
+   row. The page's hint line says what it means and how to release it, and
+   the pip carries the same sentence for assistive tech. */
+.lock-cell {
+  white-space: nowrap;
+}
+
+/* `display: none` rather than opacity/visibility: it takes the pip out of
+   the accessibility tree too, so the `role="img"` label announces "pinned"
+   on exactly the cells that are. */
+.lock-cell .pin {
+  display: none;
+}
+
+.lock-cell[data-locked="1"] .pin {
+  display: inline;
+  margin-left: 0.3rem;
+  color: var(--muted-soft);
+  font-size: 0.9rem;
+  line-height: 1;
+}
+
+/* The same pip inline in the hint that explains it. */
+.pin-legend {
+  color: var(--muted-soft);
+}
+
+/* A stored slot/rarity no option can represent — hand-edited into gear.json.
+   Shown as text rather than a picker: every save sends the row's whole
+   editable state, so a picker that cannot hold this value would clear it the
+   first time any other box on the row moved. */
+.odd-value {
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* --- destructive row action ---------------------------------------------- */
+
+.row-actions {
+  text-align: right;
+}
+
+/* Full-height, full-word, and red only in its text: the row button arms the
+   confirmation, it does not delete, so it must not read as the deed itself.
+   A `✕` glyph in a dense row is exactly the mis-tap this avoids. */
+.btn-remove {
+  min-height: var(--tap);
+  padding: 0 0.85rem;
+  color: var(--err-text);
+  font-size: 0.82rem;
+}
+
+.btn-remove:hover {
+  background: var(--err-tint);
+}
+
+/* The one button in this app that destroys data, so it is the one filled
+   button in the app: everything else is a tinted-text pill, and the weight
+   difference is the point. */
+.btn-danger {
+  min-height: var(--tap);
+  border-color: var(--err);
+  background: var(--err);
+  color: #fff;
+  font-weight: 600;
+}
+
+.btn-danger:hover {
+  background: var(--err);
+  opacity: 0.9;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+/* A confirmation is a sentence and a button, not a data sheet — the 720px
+   `.modal` width would leave it stranded in whitespace on a laptop. */
+.modal.modal-confirm {
+  width: min(26rem, 100%);
 }
 
 /* --- toast --------------------------------------------------------------- */

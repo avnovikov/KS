@@ -28,6 +28,20 @@
  *
  * The in-flight check runs *before* the dedupe check, and that order is load
  * bearing — see save().
+ *
+ * Two editable control shapes, not one: `input.cell-input` for the numeric
+ * columns and `select.cell-input` for gear's fixed rarity/slot vocabularies.
+ * A select has no half-typed state, so it commits on `change` (still through
+ * the same debounce, so flicking through options coalesces) and is never
+ * "unsendable" — the option set is server-rendered from the vocabulary the
+ * PATCH endpoint validates against.
+ *
+ * The pin (`td.lock-cell[data-locked]`) is the visible half of the store's
+ * lock model: for gear slot/rarity/enhancement/mastery and hero level, the
+ * store treats *any stored non-null value* as immune to OCR rescans, and
+ * emptying the field is the only way to release it. So `data-locked` tracks
+ * what the server echoed back, never what the box shows — a clear the server
+ * rejected must leave the pin exactly where it was.
  */
 (function () {
   "use strict";
@@ -59,7 +73,10 @@
   function RowState(tr) {
     this.tr = tr;
     this.id = tr.dataset.rowId;
-    this.inputs = slice(tr.querySelectorAll("input.cell-input"));
+    // Both control shapes, in document order: `.cell-input` rather than
+    // `input.cell-input`, or the gear rarity/slot selects would be edited on
+    // screen and never sent.
+    this.inputs = slice(tr.querySelectorAll(".cell-input"));
     this.timer = null;
     this.flashTimer = null;
     this.saving = false;
@@ -77,6 +94,11 @@
   var headers = slice(table.querySelectorAll("th.sortable"));
 
   /* --- reading a row -------------------------------------------------------- */
+
+  /** A fixed-vocabulary picker rather than a typed box. */
+  function isPicker(control) {
+    return control.tagName === "SELECT";
+  }
 
   /** True when the box is empty, as opposed to holding text the browser
    *  refused to parse (which also reads as "" but sets badInput). */
@@ -101,8 +123,13 @@
   }
 
   /** True when this box holds something that cannot be sent at all. A blank
-   *  box is *not* unsendable — it is the row's "unknown" state. */
+   *  box is *not* unsendable — it is the row's "unknown" state.
+   *
+   *  A picker never is: its options are server-rendered from the same
+   *  vocabulary the PATCH endpoint validates against, and readInt() would
+   *  reject every one of them for not being a number. */
   function isUnsendable(input) {
+    if (isPicker(input)) return false;
     return !isBlank(input) && readInt(input) === null;
   }
 
@@ -122,6 +149,10 @@
         // endpoints read as "leave whatever is stored alone".
         if (blank === "null") body[field] = null;
         else if (blank) body[blank] = true;
+        return;
+      }
+      if (isPicker(input)) {
+        body[field] = String(input.value);
         return;
       }
       var value = readInt(input);
@@ -320,8 +351,39 @@
     }, DEBOUNCE_MS);
   }
 
+  /**
+   * Repaint each pin from what the store now holds.
+   *
+   * There is no lock flag anywhere: GearStore and HeroStore treat *any*
+   * stored non-null value on their locked fields as immune to a rescan, so
+   * the pin's predicate is literally `payload[field] !== null`. It is read
+   * off the server's echoed record and never off the box, because those two
+   * disagree exactly when it matters — a clear the store refused has to
+   * leave the pin showing, or the page would promise a release that never
+   * happened.
+   *
+   * A field the response does not carry is left alone rather than treated as
+   * released: absent is not the same as null.
+   */
+  function syncLocks(state, payload) {
+    state.inputs.forEach(function (input) {
+      if (input.dataset.lockable === undefined) return;
+      var field = input.dataset.field;
+      if (!Object.prototype.hasOwnProperty.call(payload, field)) return;
+      var cell = input.closest("td");
+      if (!cell) return;
+      var stored = payload[field];
+      if (stored === null || stored === undefined || stored === "") {
+        delete cell.dataset.locked;
+      } else {
+        cell.dataset.locked = "1";
+      }
+    });
+  }
+
   function applyServerRow(state, payload) {
     if (!payload) return;
+    syncLocks(state, payload);
     var power = payload.power;
     var cell = state.tr.querySelector(".power-cell");
     // Plain String(), not toLocaleString(): the server-rendered cell this
@@ -329,6 +391,21 @@
     // replacement would change style the moment the user typed.
     if (cell) cell.textContent = power === null || power === undefined ? "—" : String(power);
     state.tr.dataset.power = power === null || power === undefined ? "" : String(power);
+  }
+
+  /* The rarity column has been colour-coded since before this rewrite; the
+   * picker that replaced the static cell keeps that, repainted as the user
+   * changes it. Only the six canonical values can be chosen, and app.css
+   * folds each store alias onto one of them. */
+  var RARITY_TINTS = ["grey", "green", "blue", "epic", "mythic", "red"];
+
+  function paintRarity(control) {
+    if (control.dataset.rarityTint === undefined) return;
+    RARITY_TINTS.forEach(function (name) {
+      control.classList.remove(name);
+    });
+    var value = String(control.value).trim().toLowerCase();
+    if (value) control.classList.add(value);
   }
 
   /** Keep the sortable column's dataset in step with the box above it, so a
@@ -500,7 +577,14 @@
   };
   var SLOT_RANK = { helmet: 1, helm: 1, chest: 2, gloves: 3, boots: 4 };
   var TROOP_RANK = { infantry: 1, cavalry: 2, archers: 3, archer: 3 };
-  var NUMERIC_SORTS = { power: 1, enhancement: 1, mastery: 1, stars: 1, pellets: 1 };
+  var NUMERIC_SORTS = {
+    power: 1,
+    enhancement: 1,
+    mastery: 1,
+    level: 1,
+    stars: 1,
+    pellets: 1,
+  };
 
   function sortValue(tr, key) {
     var raw = tr.dataset[key] || "";
@@ -599,6 +683,106 @@
     });
   }
 
+  /* --- removing a piece ----------------------------------------------------- */
+
+  /** Take a deleted row out of everything that still refers to it.
+   *
+   *  Not only the DOM: `rows` drives the filter counts and `byId` the trust
+   *  bookkeeping, so a row left in either would keep a piece that no longer
+   *  exists inside "2 of 3 shown" and could keep its flag pinning the banner
+   *  open with nothing on screen to review. */
+  function dropRow(state) {
+    cancelPending(state);
+    clearTimeout(state.flashTimer);
+    clearTrustFor(state.id); // needs byId[state.id], so before the delete
+    var at = rows.indexOf(state);
+    if (at !== -1) rows.splice(at, 1);
+    delete byId[state.id];
+    state.tr.remove();
+  }
+
+  /**
+   * The consume/delete path: irreversible, so it is deliberately two taps
+   * apart and the first one is inert.
+   *
+   * The per-row button only *arms* the dialog — it never issues a request —
+   * and the dialog names the piece before offering the destructive button.
+   * `armed` is cleared by every exit (Cancel, backdrop, Escape, and the
+   * delete itself), so a stray tap on a confirm button belonging to no open
+   * dialog deletes nothing; the button is disabled while the request is in
+   * flight, so an impatient double-tap sends one DELETE.
+   */
+  function wireRemoval() {
+    var dialog = document.getElementById("remove-dialog");
+    var confirmBtn = document.getElementById("remove-confirm");
+    var cancelBtn = document.getElementById("remove-cancel");
+    var targetEl = document.getElementById("remove-target");
+    var buttons = slice(table.querySelectorAll("button.btn-remove"));
+    // The heroes table has neither, and nothing on it is deletable.
+    if (!dialog || !confirmBtn || !buttons.length) return;
+
+    var armed = null;
+
+    function close() {
+      armed = null;
+      dialog.classList.remove("open");
+      dialog.setAttribute("aria-hidden", "true");
+      confirmBtn.disabled = false;
+    }
+
+    function arm(state, name) {
+      armed = { state: state, name: name };
+      if (targetEl) targetEl.textContent = name;
+      confirmBtn.disabled = false;
+      dialog.classList.add("open");
+      dialog.setAttribute("aria-hidden", "false");
+    }
+
+    buttons.forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var state = byId[btn.dataset.removeId];
+        if (!state) return;
+        arm(state, btn.dataset.removeName || btn.dataset.removeId);
+      });
+    });
+
+    // Cancel button, a click on the backdrop itself, and Escape — the same
+    // three exits the hero detail sheet has, from app.js's one copy.
+    window.bindDialogDismiss(dialog, cancelBtn, close);
+
+    confirmBtn.addEventListener("click", async function () {
+      if (!armed || confirmBtn.disabled) return;
+      var target = armed;
+      confirmBtn.disabled = true;
+      try {
+        // Same resource path the row PATCHes, different verb.
+        var res = await fetch(PATCH_BASE + encodeURIComponent(target.state.id), {
+          method: "DELETE",
+          cache: "no-store",
+        });
+        var data = await res.json().catch(function () {
+          return {};
+        });
+        if (!res.ok) {
+          var detail = data.detail || res.statusText;
+          throw new Error(
+            typeof detail === "string" ? detail : JSON.stringify(detail)
+          );
+        }
+        dropRow(target.state);
+        applyFilters();
+        close();
+        toast("Removed " + target.name, true);
+      } catch (err) {
+        // Left open, still naming the piece: the user can retry or back out,
+        // rather than being dropped onto a table that still shows a row they
+        // were told nothing about.
+        confirmBtn.disabled = false;
+        toast(String((err && err.message) || err), false);
+      }
+    });
+  }
+
   /* --- wiring --------------------------------------------------------------- */
 
   rows.forEach(function (state) {
@@ -607,6 +791,23 @@
     state.lastSavedBody = JSON.stringify(readRow(state));
 
     state.inputs.forEach(function (input) {
+      if (isPicker(input)) {
+        // A picker has no half-typed state, so every value it can hold is
+        // sendable — *including* the blank one, which is the release control
+        // and must reach the server rather than waiting for a blur that
+        // never comes on a tap-and-look-away. Still debounced, so flicking
+        // through options coalesces into one PATCH.
+        input.addEventListener("change", function () {
+          syncSortKey(input);
+          paintRarity(input);
+          schedule(state);
+        });
+        input.addEventListener("blur", function () {
+          save(state, input);
+        });
+        return;
+      }
+
       input.addEventListener("input", function () {
         markValidity(input, true); // never nag mid-typing
         syncSortKey(input);
@@ -670,6 +871,7 @@
   }
 
   wireRescan();
+  wireRemoval();
 
   loadTrust();
   paintTrustRows();

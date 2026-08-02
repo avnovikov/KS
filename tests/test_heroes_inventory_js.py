@@ -193,11 +193,17 @@ def test_a_blank_box_never_becomes_a_null_the_api_rejects(js_run: dict) -> None:
             "a blank hero star box is sent as an explicit null, the API's own spelling",
         ],
     )
+    # Spelled out whole, not by membership: the row's *entire* editable state
+    # goes in every body, so this also pins that adding the rarity/slot
+    # pickers did not quietly change how the other four columns serialize.
     assert json.loads(js_run["data"]["gear_clear_body"]) == {
+        "slot": "helmet",
+        "rarity": "mythic",
         "enhancement_level": 52,
         "clear_mastery": True,
     }
     assert json.loads(js_run["data"]["heroes_clear_body"]) == {
+        "level": 40,
         "stars": None,
         "pellets": 0,
     }
@@ -508,6 +514,152 @@ def test_rescan_stores_the_trust_payload_before_it_navigates(
     assert sequence.index("store:heroesUiTrust:gear") < sequence.index("navigate")
 
 
+def test_the_gear_pickers_behave_like_the_boxes_beside_them(js_run: dict) -> None:
+    """Rarity and slot came back from the pre-merge page as `<select>`s, and
+    a select is the one control here whose *blank* is a chosen value: "—" is
+    the release action, so it has to go out on `change` rather than wait for
+    a blur that a tap-and-look-away never produces. Everything else — the
+    400ms debounce, the whole-row body, the `data-unsaved` mark on a
+    rejection — is deliberately identical to the numeric columns.
+
+    The "never mistaken for an out-of-range number" check is the one that
+    would otherwise be invisible: `readInt("mythic")` is null, so without the
+    picker branch in `isUnsendable` every save on a gear row would be refused
+    before it was built.
+    """
+    _assert_ran(
+        js_run,
+        [
+            "the rarity column is a picker, not a typed box",
+            "changing it sends nothing yet",
+            "and is debounced on the same 400ms the boxes use",
+            "the chosen value goes out as the API's own string",
+            "alongside the rest of the row, exactly as a box edit would",
+            "the sortable column follows the picker",
+            "and so does the rarity tint the column has always had",
+            "choosing — sends straight away rather than waiting for a blur",
+            "as the API's own clear flag, never an empty string",
+            "a picker is never mistaken for an out-of-range number",
+            "a rejected picker save marks the row unsaved like any other",
+            "and the toast carries the server's reason",
+        ],
+    )
+    # Whole bodies, not membership: the picker columns joined the row's
+    # editable state and must serialize as the API spells them.
+    assert json.loads(js_run["data"]["picker_body"]) == {
+        "slot": "helmet",
+        "rarity": "epic",
+        "enhancement_level": 51,
+        "mastery_level": 2,
+    }
+    assert json.loads(js_run["data"]["picker_clear_body"]) == {
+        "clear_slot": True,
+        "rarity": "epic",
+        "enhancement_level": 51,
+        "mastery_level": 2,
+    }
+
+
+def test_the_pin_tracks_the_store_and_not_the_box(js_run: dict) -> None:
+    """The lock model has no flag to read. `GearStore` and `HeroStore` refuse
+    to let a rescan change slot/rarity/enhancement/mastery/level while the
+    field holds a value, so "pinned" is exactly "the stored value is not
+    None", and emptying the field is the only release there is.
+
+    Which is why the pin is painted from the record the server echoes back
+    and never from the control: those two disagree precisely when it matters.
+    A clear the store refused has to leave the pin showing — otherwise the
+    page advertises a release that did not happen, and the user walks away
+    believing the next rescan will refill a field it will still skip.
+
+    The "absent is not null" case is the other half: a response that says
+    nothing about a field must not be read as saying it is empty.
+    """
+    _assert_ran(
+        js_run,
+        [
+            "a field that arrived with a value is pinned",
+            "a field that arrived empty is not",
+            "clearing a field the store accepts releases its pin",
+            "and leaves the other fields on that row pinned",
+            "storing a value pins the field again",
+            "a clear the store rejected leaves the pin exactly where it was",
+            "a field the response does not carry keeps its pin: absent is not null",
+            "choosing — releases the picker's pin once the store confirms it",
+            "a stored hero level is pinned, an unread one is not",
+            "blanking it sends the null that releases the lock",
+            "and the pin follows the store, not the box",
+            "a column the store does not lock never grows a pin",
+        ],
+    )
+    assert js_run["data"]["lock_after_clear"] == "undefined"
+    assert js_run["data"]["lock_after_rejected_clear"] == "1"
+    # `PATCH /api/heroes/{name}` has no clear_* flag; an explicit null is how
+    # `update_hero_stars` is told to store None, which is what releases it.
+    assert json.loads(js_run["data"]["hero_level_release_body"]) == {
+        "level": None,
+        "stars": 2,
+        "pellets": 0,
+    }
+
+
+def test_a_piece_cannot_be_deleted_by_one_tap(js_run: dict) -> None:
+    """`DELETE /api/gear/{piece_id}` is irreversible: the piece leaves
+    gear.json and both SQLite tables, and only a rescan of an inventory that
+    still contains it brings it back.
+
+    So the row's button is inert — it arms a dialog that names the piece, and
+    nothing but that dialog's own button ever issues the request. Every exit
+    (Cancel, backdrop, Escape) disarms as well as closes, so a stray tap on a
+    confirm button whose dialog is long gone deletes nothing; the confirm is
+    disabled while the request is open, so an impatient double-tap sends one
+    DELETE. `remove_calls_before_confirm` is spelled out because every check
+    above it is a negative, and a wiring bug that never armed anything would
+    satisfy all of them at once.
+    """
+    _assert_ran(
+        js_run,
+        [
+            "tapping the row's button sends nothing at all",
+            "it opens the confirmation instead",
+            "which names the piece it is about to destroy",
+            "and the row is still on the table",
+            "Cancel closes it",
+            "and disarms it: a confirm tap after cancelling deletes nothing",
+            "another row arms it again",
+            "Escape closes it too",
+            "and disarms it as well",
+            "and a third row arms it again",
+            "a click that bubbled out of the panel does not dismiss it",
+            "a click on the backdrop itself does",
+            "disarmed by that too",
+            "confirming DELETEs the row's own API URL",
+            "an impatient double-tap sends one DELETE, not two",
+            "the dialog closes on success",
+            "the row leaves the table",
+            (
+                "and its trust flag leaves sessionStorage with it, rather than "
+                "pinning the banner open over a row nobody can see"
+            ),
+            "the deletion is confirmed by name",
+            "and the row count now describes a two-row table",
+            "a refused delete keeps the row",
+            "says why",
+            (
+                "and leaves the dialog open and re-armed rather than dropping "
+                "the user back on an unchanged table"
+            ),
+            "one row matches the active filter",
+            (
+                "deleting the last row a filter matched leaves the empty "
+                "state, not a blank table"
+            ),
+            "a page with no delete dialog still wires the rest of its table",
+        ],
+    )
+    assert js_run["data"]["remove_calls_before_confirm"] == 0
+
+
 def test_one_script_serves_both_inventory_pages(js_run: dict) -> None:
     """The heroes table runs the same source with different data attributes —
     which is what makes deleting the two inline copies safe."""
@@ -518,5 +670,6 @@ def test_one_script_serves_both_inventory_pages(js_run: dict) -> None:
             "sending the row's whole editable state",
             "a hero name is URL-encoded into the patch path",
             "and writes its payload under the heroes key, never gear's",
+            "level sorts as a number, not as text",
         ],
     )

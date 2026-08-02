@@ -194,6 +194,43 @@ _SLOT_ALIASES = {
 }
 
 
+#: The vocabularies the gear pickers offer, in game order rather than
+#: alphabetical. Kept beside the frozensets `normalize_ui_rarity` /
+#: `normalize_ui_slot` validate against, and pinned equal to them by
+#: `test_the_gear_pickers_offer_exactly_the_vocabulary_the_api_accepts` — a
+#: picker must never offer a value the PATCH it feeds would reject with a 400.
+UI_RARITY_CHOICES: tuple[str, ...] = ("grey", "green", "blue", "epic", "mythic", "red")
+UI_SLOT_CHOICES: tuple[str, ...] = ("helmet", "chest", "gloves", "boots")
+
+
+def ui_select_value(
+    raw: str | None, normalizer: Callable[[str | None], str | None]
+) -> str | None:
+    """What a gear picker should show for the rarity/slot currently stored.
+
+    Three outcomes, and the third is the load-bearing one:
+
+    - ``""`` — nothing is stored. The picker sits on its "—" option, which is
+      also the release control: choosing it clears the field, and a cleared
+      field is one the next OCR rescan is allowed to fill in again.
+    - the canonical spelling — the stored value is one the PATCH endpoint
+      accepts, with aliases folded (``purple`` → ``epic``, ``helm`` →
+      ``helmet``).
+    - ``None`` — it is neither, i.e. a value hand-edited into ``gear.json``
+      that this vocabulary cannot represent. The page renders that cell
+      read-only instead of offering a picker, because every save sends the
+      row's *whole* editable state: a picker showing "—" over a stored
+      ``chartreuse`` would quietly clear it the first time any other box on
+      that row was touched.
+    """
+    if raw is None or str(raw).strip() == "":
+        return ""
+    try:
+        return normalizer(raw)
+    except ValueError:
+        return None
+
+
 def normalize_ui_rarity(rarity: str | None) -> str | None:
     """Map UI/OCR rarity labels to a canonical store value."""
     if rarity is None:
@@ -553,6 +590,21 @@ def create_app(
             },
             mastery_required_ids={
                 p.piece_id for p in pieces if gear_mastery_required(p.rarity)
+            },
+            # The two pickers restored from the pre-merge page. Values are
+            # normalised here rather than in Jinja so the `selected` option
+            # is decided by the same function the PATCH endpoint validates
+            # with; `None` means "this store value has no option" — see
+            # ui_select_value.
+            rarity_options=UI_RARITY_CHOICES,
+            slot_options=UI_SLOT_CHOICES,
+            rarity_values={
+                p.piece_id: ui_select_value(p.rarity, normalize_ui_rarity)
+                for p in pieces
+            },
+            slot_values={
+                p.piece_id: ui_select_value(p.slot, normalize_ui_slot)
+                for p in pieces
             },
             # Lowercased before de-duplication: the chip's data-filter and
             # the row's data-troop are both `|lower`ed, so "Cavalry" and

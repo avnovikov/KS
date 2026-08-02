@@ -35,6 +35,9 @@ function record(key, value) {
 
 function El(tag, attrs) {
   this.tag = tag;
+  // inventory.js tells a picker from a typed box with `tagName === "SELECT"`,
+  // which is how the real DOM spells it.
+  this.tagName = String(tag).toUpperCase();
   this.attrs = attrs || {};
   this.dataset = {};
   this.value = "";
@@ -88,6 +91,13 @@ El.prototype.appendChild = function (child) {
   child.parent = this;
   return child;
 };
+/** Detach from the parent, the way Element.remove() does. */
+El.prototype.remove = function () {
+  if (!this.parent) return;
+  var at = this.parent.children.indexOf(this);
+  if (at !== -1) this.parent.children.splice(at, 1);
+  this.parent = null;
+};
 El.prototype.closest = function (selector) {
   var node = this;
   while (node) {
@@ -118,7 +128,7 @@ El.prototype._select = function () {
 
 /** Column order for each table, mirroring the two templates. */
 var GEAR_SORTS = ["name", "troop", "slot", "rarity", "enhancement", "mastery", "power"];
-var HEROES_SORTS = ["name", "rarity", "troop", "stars", "pellets", "power"];
+var HEROES_SORTS = ["name", "rarity", "troop", "level", "stars", "pellets", "power"];
 
 /**
  * Build one inventory page, install it over the globals inventory.js reaches
@@ -146,6 +156,8 @@ function makePage(spec) {
 
   var rowsByIndex = [];
   var inputsByRow = {};
+  var cellsByRow = {};
+  var removeButtons = [];
 
   (spec.rows || []).forEach(function (rowSpec) {
     var tr = new El("tr");
@@ -167,40 +179,84 @@ function makePage(spec) {
     powerCell.textContent =
       rowSpec.power === undefined || rowSpec.power === null ? "—" : String(rowSpec.power);
 
+    /* Each editable control sits in its own `<td class="lock-cell">`, as the
+       templates render it: the pin lives on the cell, and inventory.js
+       reaches it with `control.closest("td")`. */
+    var cells = {};
     var inputs = (rowSpec.inputs || []).map(function (inputSpec) {
-      var input = new El("input", {
-        min: inputSpec.min === undefined ? "0" : inputSpec.min,
-        max: inputSpec.max,
-        step: "1",
-      });
-      if (inputSpec.max === undefined) delete input.attrs.max;
-      input.dataset.field = inputSpec.field;
-      if (inputSpec.sortKey) input.dataset.sortKey = inputSpec.sortKey;
-      if (inputSpec.blank) input.dataset.blank = inputSpec.blank;
-      input.dataset.label = inputSpec.label || rowSpec.id + " " + inputSpec.field;
-      if (inputSpec.required) input.dataset.required = "";
-      input.value = inputSpec.value === undefined ? "" : String(inputSpec.value);
-      input.parent = tr;
+      var control;
+      if (inputSpec.kind === "select") {
+        control = new El("select");
+        if (inputSpec.rarityTint) control.dataset.rarityTint = "";
+        if (inputSpec.value) control.classes[inputSpec.value] = true;
+      } else {
+        control = new El("input", {
+          min: inputSpec.min === undefined ? "0" : inputSpec.min,
+          max: inputSpec.max,
+          step: "1",
+        });
+        if (inputSpec.max === undefined) delete control.attrs.max;
+        if (inputSpec.required) control.dataset.required = "";
+      }
+      control.dataset.field = inputSpec.field;
+      if (inputSpec.sortKey) control.dataset.sortKey = inputSpec.sortKey;
+      if (inputSpec.blank) control.dataset.blank = inputSpec.blank;
+      if (inputSpec.lockable) control.dataset.lockable = "";
+      control.dataset.label = inputSpec.label || rowSpec.id + " " + inputSpec.field;
+      control.value = inputSpec.value === undefined ? "" : String(inputSpec.value);
+
+      var cell = new El("td");
+      // Only the store's locked fields get the pin markup, exactly as the
+      // templates render it — hero stars/pellets are plain cells with
+      // nowhere to put a pin.
+      if (inputSpec.lockable) cell.classes["lock-cell"] = true;
+      // The template's own predicate: a stored value is a lock, so the pin
+      // ships on whichever cells arrive non-empty.
+      if (inputSpec.lockable && control.value !== "") cell.dataset.locked = "1";
+      cell.parent = tr;
+      control.parent = cell;
+      cells[inputSpec.field] = cell;
+
       // Mirror the template: the sortable column's dataset starts out
       // agreeing with the box above it.
-      if (inputSpec.sortKey) tr.dataset[inputSpec.sortKey] = input.value;
-      return input;
+      if (inputSpec.sortKey) tr.dataset[inputSpec.sortKey] = control.value;
+      return control;
     });
 
+    if (spec.removable) {
+      var removeBtn = new El("button");
+      removeBtn.dataset.removeId = rowSpec.id;
+      removeBtn.dataset.removeName = rowSpec.name === undefined ? rowSpec.id : rowSpec.name;
+      removeButtons.push(removeBtn);
+    }
+
     tr._select = function (selector) {
-      if (selector === "input.cell-input") return inputs;
+      if (selector === ".cell-input") return inputs;
+      // Modelled as the real DOM would answer it, so narrowing the source
+      // back to `input.` — which would drop both pickers off the row — fails
+      // the picker checks rather than crashing the harness on an unsupported
+      // selector and reporting only "harness ran to completion".
+      if (selector === "input.cell-input") {
+        return inputs.filter(function (control) {
+          return control.tagName === "INPUT";
+        });
+      }
       if (selector === ".power-cell") return [powerCell];
       return null;
     };
     tbody.appendChild(tr);
     rowsByIndex.push(tr);
     inputsByRow[rowSpec.id] = inputs;
+    cellsByRow[rowSpec.id] = cells;
   });
 
   table._select = function (selector) {
     if (selector === "tbody") return [tbody];
     if (selector === "tbody tr") return tbody.children.slice();
     if (selector === "th.sortable") return headers;
+    // Always answered, empty on the heroes table: the source collects these
+    // before it checks whether this page has a remove dialog at all.
+    if (selector === "button.btn-remove") return removeButtons;
     return null;
   };
 
@@ -266,6 +322,13 @@ function makePage(spec) {
     if (spec.rescan.confirm) rescanBtn.dataset.rescanConfirm = spec.rescan.confirm;
   }
 
+  /* The remove confirmation, present only on the gear page. */
+  var removeDialog = new El("div");
+  var removeConfirm = new El("button");
+  removeConfirm.disabled = false;
+  var removeCancel = new El("button");
+  var removeTarget = new El("div");
+
   var byId = {
     "inventory-table": table,
     "trust-banner": bannerEl,
@@ -277,9 +340,22 @@ function makePage(spec) {
     "no-matches": noMatchesEl,
     "rescan-btn": rescanBtn,
   };
+  if (spec.removable) {
+    byId["remove-dialog"] = removeDialog;
+    byId["remove-confirm"] = removeConfirm;
+    byId["remove-cancel"] = removeCancel;
+    byId["remove-target"] = removeTarget;
+  }
+
+  /* app.js's bindDialogDismiss wires Escape on the document, so the fake one
+     has to be able to take a listener. */
+  var docListeners = {};
   globalThis.document = {
     getElementById: function (id) {
       return Object.prototype.hasOwnProperty.call(byId, id) ? byId[id] : null;
+    },
+    addEventListener: function (type, fn) {
+      (docListeners[type] = docListeners[type] || []).push(fn);
     },
   };
 
@@ -451,11 +527,51 @@ function makePage(spec) {
       }
       return null;
     },
+    /** The `<td class="lock-cell">` one control sits in — where the pin is. */
+    cell: function (id, field) {
+      return (cellsByRow[id] || {})[field] || null;
+    },
+    /** "1" when this field's pin is showing, "undefined" when it is not. */
+    pinned: function (id, field) {
+      var cell = (cellsByRow[id] || {})[field];
+      return cell ? String(cell.dataset.locked) : "no-cell";
+    },
+    removeBtn: function (id) {
+      for (var i = 0; i < removeButtons.length; i++) {
+        if (removeButtons[i].dataset.removeId === id) return removeButtons[i];
+      }
+      return null;
+    },
+    removeConfirm: removeConfirm,
+    removeCancel: removeCancel,
+    removeDialog: removeDialog,
+    removeTargetText: function () {
+      return removeTarget.textContent;
+    },
+    dialogOpen: function () {
+      return removeDialog.classes.open === true;
+    },
+    /** Escape, as app.js's bindDialogDismiss listens for it. */
+    pressEscape: function () {
+      (docListeners.keydown || []).slice().forEach(function (fn) {
+        fn({ key: "Escape" });
+      });
+    },
+    /** A click on the backdrop itself, not on the panel inside it. */
+    clickBackdrop: function () {
+      removeDialog.fire("click", { target: removeDialog });
+    },
+    /** A click that bubbled up from the panel — must not dismiss. */
+    clickInsideDialog: function () {
+      removeDialog.fire("click", { target: removeConfirm });
+    },
     powerCell: function (id) {
       return this.row(id).querySelector(".power-cell").textContent;
     },
+    /* Read off the tbody rather than the build-time row list, so a row the
+       delete path detached really is gone from what this reports. */
     visibleIds: function () {
-      return rowsByIndex
+      return tbody.children
         .filter(function (tr) {
           return !tr.hidden;
         })
@@ -556,6 +672,7 @@ function gearSpec(overrides) {
     payloadKey: "piece",
     sorts: GEAR_SORTS,
     chips: ["cavalry", "infantry"],
+    removable: true,
     rescan: {
       url: "/api/gear/rescan",
       reload: "/inventory/gear",
@@ -593,16 +710,30 @@ function gearRow(id, name, opts) {
     rarity: opts.rarity,
     power: opts.power,
     incomplete: !!opts.incomplete,
+    // Column order as the template renders it: slot and rarity are pickers,
+    // enhancement and mastery typed boxes, and all four are lockable.
     inputs: [
+      {
+        kind: "select", field: "slot", sortKey: "slot",
+        blank: "clear_slot", label: name + " slot",
+        lockable: true, value: opts.slot === undefined ? "" : opts.slot,
+      },
+      {
+        kind: "select", field: "rarity", sortKey: "rarity",
+        blank: "clear_rarity", label: name + " rarity", rarityTint: true,
+        lockable: true, value: opts.rarity === undefined ? "" : opts.rarity,
+      },
       {
         field: "enhancement_level", sortKey: "enhancement",
         blank: "clear_enhancement", label: name + " enhancement",
-        required: true, min: "0", max: "200", value: opts.enhancement,
+        required: true, lockable: true, min: "0", max: "200",
+        value: opts.enhancement,
       },
       {
         field: "mastery_level", sortKey: "mastery",
         blank: "clear_mastery", label: name + " mastery",
-        required: !!opts.masteryRequired, min: "0", max: "20", value: opts.mastery,
+        required: !!opts.masteryRequired, lockable: true,
+        min: "0", max: "20", value: opts.mastery,
       },
     ],
   };
@@ -621,9 +752,13 @@ function heroesSpec() {
       note: "OCR rescan started — leave the Heroes roster open",
     },
     rows: [
-      heroRow("Helga", { troop: "infantry", rarity: "legendary", power: 1000000, stars: "2", pellets: "0" }),
+      heroRow("Helga", {
+        troop: "infantry", rarity: "legendary", power: 1000000,
+        level: "40", stars: "2", pellets: "0",
+      }),
       heroRow("Gordon", {
-        troop: "cavalry", rarity: "epic", power: null, stars: "3", pellets: "1",
+        troop: "cavalry", rarity: "epic", power: null,
+        level: "", stars: "3", pellets: "1",
         incomplete: true, incompleteLocked: true,
       }),
     ],
@@ -640,6 +775,11 @@ function heroRow(name, opts) {
     incomplete: !!opts.incomplete,
     incompleteLocked: !!opts.incompleteLocked,
     inputs: [
+      {
+        field: "level", sortKey: "level", blank: "null",
+        label: name + " level", lockable: true,
+        min: "1", max: "80", value: opts.level,
+      },
       {
         field: "stars", sortKey: "stars", blank: "null",
         label: name + " stars", required: true, min: "0", max: "5", value: opts.stars,
@@ -1578,6 +1718,418 @@ async function suiteHeroesPage() {
     "a hero name is URL-encoded into the patch path",
     "/api/heroes/" + encodeURIComponent("Helga") === "/api/heroes/Helga"
   );
+
+  // Level joined the numeric sorts. Left out, sortValue falls through to the
+  // string branch and "9" outranks "40" — which looks like a working sort
+  // until a roster spans both sides of ten.
+  var s = makePage(heroesSpec());
+  boot(s);
+  await settle();
+  s.input("Helga", "level").value = "9";
+  s.input("Helga", "level").fire("input");
+  s.input("Gordon", "level").value = "40";
+  s.input("Gordon", "level").fire("input");
+  s.header("level").fire("click");
+  check(
+    "level sorts as a number, not as text",
+    s.domOrder().join(",") === "Helga,Gordon",
+    s.domOrder().join(",")
+  );
+}
+
+/* The two fixed-vocabulary columns restored from the pre-merge gear page.
+   A picker has no half-typed state, so it is the one control whose *blank*
+   is a chosen value and has to reach the server on its own. */
+async function suitePickers() {
+  var d = makePage(gearSpec());
+  boot(d);
+  await settle();
+
+  var rarity = d.input("cell0", "rarity");
+  check("the rarity column is a picker, not a typed box", rarity.tagName === "SELECT", rarity.tagName);
+
+  rarity.value = "epic";
+  rarity.fire("change");
+  check("changing it sends nothing yet", d.calls.length === 0, "calls=" + d.calls.length);
+  check(
+    "and is debounced on the same 400ms the boxes use",
+    d.pendingDelays().length === 1 && d.pendingDelays()[0] === 400,
+    d.pendingDelays().join(",")
+  );
+  d.runTimers();
+  await settle();
+  check(
+    "the chosen value goes out as the API's own string",
+    d.calls.length === 1 && d.lastCall().body.rarity === "epic",
+    JSON.stringify(d.lastCall().body)
+  );
+  check(
+    "alongside the rest of the row, exactly as a box edit would",
+    d.lastCall().body.slot === "helmet" && d.lastCall().body.enhancement_level === 51,
+    JSON.stringify(d.lastCall().body)
+  );
+  record("picker_body", JSON.stringify(d.lastCall().body));
+  check(
+    "the sortable column follows the picker",
+    d.row("cell0").dataset.rarity === "epic",
+    d.row("cell0").dataset.rarity
+  );
+  check(
+    "and so does the rarity tint the column has always had",
+    rarity.classes.epic === true && rarity.classes.mythic === false,
+    JSON.stringify(rarity.classes)
+  );
+
+  // The release control: "—" is a real choice, not an unfinished one, so it
+  // must not sit and wait for a blur that a tap-and-look-away never sends.
+  var before = d.calls.length;
+  var slot = d.input("cell0", "slot");
+  slot.value = "";
+  slot.fire("change");
+  d.runTimers();
+  await settle();
+  check(
+    "choosing — sends straight away rather than waiting for a blur",
+    d.calls.length === before + 1,
+    "calls=+" + (d.calls.length - before)
+  );
+  check(
+    "as the API's own clear flag, never an empty string",
+    d.lastCall().body.clear_slot === true && d.lastCall().body.slot === undefined,
+    JSON.stringify(d.lastCall().body)
+  );
+  record("picker_clear_body", JSON.stringify(d.lastCall().body));
+
+  // A picker's value is not a number, so the numeric validator must not be
+  // allowed anywhere near it: treated as unsendable, every save on the row
+  // would be refused before it was ever built.
+  d.clearToasts();
+  before = d.calls.length;
+  var enh = d.input("cell0", "enhancement_level");
+  enh.value = "60";
+  enh.fire("blur");
+  await settle();
+  check(
+    "a picker is never mistaken for an out-of-range number",
+    d.calls.length === before + 1 && d.toasts.length === 0,
+    "calls=+" + (d.calls.length - before) + " toasts=" + JSON.stringify(d.toasts)
+  );
+
+  // And it takes the same rejection treatment as a box.
+  d.replyWith({
+    ok: false, status: 400, statusText: "Bad Request",
+    json: function () { return Promise.resolve({ detail: "rarity must be one of ..." }); },
+  });
+  rarity.value = "red";
+  rarity.fire("change");
+  d.runTimers();
+  await settle();
+  check(
+    "a rejected picker save marks the row unsaved like any other",
+    d.row("cell0").dataset.unsaved === "1",
+    String(d.row("cell0").dataset.unsaved)
+  );
+  check(
+    "and the toast carries the server's reason",
+    d.toasts.some(function (t) { return /rarity must be one of/.test(t.msg) && !t.ok; }),
+    JSON.stringify(d.toasts)
+  );
+}
+
+/* The store's lock model, made visible. There is no lock flag: for gear
+   slot/rarity/enhancement/mastery and hero level, holding a value *is* the
+   lock, and emptying the field is the only release. The pin therefore has to
+   track what the store holds — never what the box shows. */
+async function suiteLocks() {
+  var d = makePage(gearSpec());
+  boot(d);
+  await settle();
+
+  check(
+    "a field that arrived with a value is pinned",
+    d.pinned("cell0", "enhancement_level") === "1" &&
+      d.pinned("cell0", "rarity") === "1",
+    d.pinned("cell0", "enhancement_level") + "/" + d.pinned("cell0", "rarity")
+  );
+  check(
+    "a field that arrived empty is not",
+    d.pinned("cell2", "enhancement_level") === "undefined",
+    d.pinned("cell2", "enhancement_level")
+  );
+
+  // Releasing: empty the box, and the store confirms it now holds null.
+  d.jsonReply({ piece: { power: null, enhancement_level: null, mastery_level: 2, rarity: "mythic", slot: "helmet" } });
+  var enh = d.input("cell0", "enhancement_level");
+  enh.value = "";
+  enh.fire("blur");
+  await settle();
+  check(
+    "clearing a field the store accepts releases its pin",
+    d.pinned("cell0", "enhancement_level") === "undefined",
+    d.pinned("cell0", "enhancement_level")
+  );
+  check(
+    "and leaves the other fields on that row pinned",
+    d.pinned("cell0", "mastery_level") === "1" && d.pinned("cell0", "rarity") === "1",
+    d.pinned("cell0", "mastery_level") + "/" + d.pinned("cell0", "rarity")
+  );
+  record("lock_after_clear", d.pinned("cell0", "enhancement_level"));
+
+  // Filling it again pins it again — from the server's value, not the box's.
+  d.jsonReply({ piece: { power: 190000, enhancement_level: 61, mastery_level: 2, rarity: "mythic", slot: "helmet" } });
+  enh.value = "61";
+  enh.fire("blur");
+  await settle();
+  check(
+    "storing a value pins the field again",
+    d.pinned("cell0", "enhancement_level") === "1",
+    d.pinned("cell0", "enhancement_level")
+  );
+
+  // The load-bearing half: a clear the store refused must not look released.
+  // Read the pin off the box instead of the response and this goes red.
+  d.replyWith({
+    ok: false, status: 400, statusText: "Bad Request",
+    json: function () { return Promise.resolve({ detail: "nope" }); },
+  });
+  enh.value = "";
+  enh.fire("blur");
+  await settle();
+  check(
+    "a clear the store rejected leaves the pin exactly where it was",
+    d.pinned("cell0", "enhancement_level") === "1",
+    d.pinned("cell0", "enhancement_level")
+  );
+  record("lock_after_rejected_clear", d.pinned("cell0", "enhancement_level"));
+
+  // A response that says nothing about a field says nothing about its lock.
+  d.jsonReply({ piece: { power: 5 } });
+  enh.value = "62";
+  enh.fire("blur");
+  await settle();
+  check(
+    "a field the response does not carry keeps its pin: absent is not null",
+    d.pinned("cell0", "enhancement_level") === "1",
+    d.pinned("cell0", "enhancement_level")
+  );
+
+  // A picker releases the same way, through its own clear flag.
+  d.jsonReply({ piece: { power: 5, slot: null, rarity: "mythic", enhancement_level: 62, mastery_level: 2 } });
+  var slot = d.input("cell0", "slot");
+  slot.value = "";
+  slot.fire("change");
+  d.runTimers();
+  await settle();
+  check(
+    "choosing — releases the picker's pin once the store confirms it",
+    d.pinned("cell0", "slot") === "undefined",
+    d.pinned("cell0", "slot")
+  );
+
+  // Heroes: `level` is HeroStore's only locked field.
+  var h = makePage(heroesSpec());
+  boot(h);
+  await settle();
+  check(
+    "a stored hero level is pinned, an unread one is not",
+    h.pinned("Helga", "level") === "1" && h.pinned("Gordon", "level") === "undefined",
+    h.pinned("Helga", "level") + "/" + h.pinned("Gordon", "level")
+  );
+  var level = h.input("Helga", "level");
+  level.value = "";
+  level.fire("blur");
+  await settle();
+  check(
+    "blanking it sends the null that releases the lock",
+    h.lastCall().body.level === null && "level" in h.lastCall().body,
+    JSON.stringify(h.lastCall().body)
+  );
+  record("hero_level_release_body", JSON.stringify(h.lastCall().body));
+  h.jsonReply({ hero: { power: 1000000, level: null, stars: 2, pellets: 0 } });
+  level.value = "55";
+  level.fire("blur");
+  await settle();
+  check(
+    "and the pin follows the store, not the box",
+    h.pinned("Helga", "level") === "undefined" && level.value === "55",
+    h.pinned("Helga", "level") + " box=" + level.value
+  );
+  // Stars and pellets are stored the same way and are *not* locked fields —
+  // a rescan overwrites them freely — so their cells carry no pin markup and
+  // must never be marked as though they did.
+  check(
+    "a column the store does not lock never grows a pin",
+    h.pinned("Helga", "stars") === "undefined" &&
+      h.pinned("Helga", "pellets") === "undefined",
+    h.pinned("Helga", "stars") + "/" + h.pinned("Helga", "pellets")
+  );
+}
+
+/* DELETE /api/gear/{piece_id} has no undo. The row button only arms the
+   dialog; nothing but the dialog's own button ever issues the request. */
+async function suiteRemove() {
+  var d = makePage(gearSpec());
+  d.seedTrust("gear", { flags: { cell1: "new" }, new: 1, changed: 0, incomplete: 0 });
+  boot(d);
+  await settle();
+
+  d.removeBtn("cell1").fire("click");
+  check("tapping the row's button sends nothing at all", d.calls.length === 0, "calls=" + d.calls.length);
+  check("it opens the confirmation instead", d.dialogOpen(), String(d.dialogOpen()));
+  check(
+    "which names the piece it is about to destroy",
+    d.removeTargetText() === "Scout's Cap",
+    d.removeTargetText()
+  );
+  check(
+    "and the row is still on the table",
+    d.visibleIds().indexOf("cell1") !== -1,
+    d.visibleIds().join(",")
+  );
+
+  /* Every way out disarms, so a later stray tap on a confirm button whose
+     dialog is long gone cannot delete the piece it used to name. Each pass
+     re-arms from a *different* row and asserts it really did re-arm first:
+     without that precondition, a mutation that stopped the dialog opening at
+     all would satisfy every "it is closed" check below at once. */
+  d.removeCancel.fire("click");
+  check("Cancel closes it", d.dialogOpen() === false, String(d.dialogOpen()));
+  d.removeConfirm.fire("click");
+  await settle();
+  check(
+    "and disarms it: a confirm tap after cancelling deletes nothing",
+    d.calls.length === 0,
+    "calls=" + d.calls.length
+  );
+
+  d.removeBtn("cell0").fire("click");
+  check("another row arms it again", d.dialogOpen(), String(d.dialogOpen()));
+  d.pressEscape();
+  check("Escape closes it too", d.dialogOpen() === false, String(d.dialogOpen()));
+  d.removeConfirm.fire("click");
+  await settle();
+  check("and disarms it as well", d.calls.length === 0, "calls=" + d.calls.length);
+
+  d.removeBtn("cell2").fire("click");
+  check("and a third row arms it again", d.dialogOpen(), String(d.dialogOpen()));
+  d.clickInsideDialog();
+  check(
+    "a click that bubbled out of the panel does not dismiss it",
+    d.dialogOpen(),
+    String(d.dialogOpen())
+  );
+  d.clickBackdrop();
+  check("a click on the backdrop itself does", d.dialogOpen() === false, String(d.dialogOpen()));
+  d.removeConfirm.fire("click");
+  await settle();
+  check("disarmed by that too", d.calls.length === 0, "calls=" + d.calls.length);
+  record("remove_calls_before_confirm", d.calls.length);
+
+  // The deliberate second tap.
+  d.removeBtn("cell1").fire("click");
+  d.hangNextFetch();
+  d.removeConfirm.fire("click");
+  await settle();
+  check(
+    "confirming DELETEs the row's own API URL",
+    d.calls.length === 1 &&
+      d.lastCall().method === "DELETE" &&
+      d.lastCall().url === "/api/gear/cell1",
+    d.lastCall().method + " " + d.lastCall().url
+  );
+  d.removeConfirm.fire("click");
+  await settle();
+  check(
+    "an impatient double-tap sends one DELETE, not two",
+    d.calls.length === 1,
+    "calls=" + d.calls.length
+  );
+  d.releaseFetch();
+  await settle();
+  check("the dialog closes on success", d.dialogOpen() === false, String(d.dialogOpen()));
+  check(
+    "the row leaves the table",
+    d.visibleIds().join(",") === "cell0,cell2",
+    d.visibleIds().join(",")
+  );
+  check(
+    "and its trust flag leaves sessionStorage with it, rather than pinning the banner open over a row nobody can see",
+    d.stored("gear") === null,
+    JSON.stringify(d.stored("gear"))
+  );
+  check(
+    "the deletion is confirmed by name",
+    d.toasts.some(function (t) { return t.ok && /Scout's Cap/.test(t.msg); }),
+    JSON.stringify(d.toasts)
+  );
+  d.chip("all").fire("click");
+  check(
+    "and the row count now describes a two-row table",
+    d.visibleIds().length === 2 && d.countText() === "",
+    d.visibleIds().join(",") + " count=" + d.countText()
+  );
+
+  // A refused delete must leave the table exactly as it was.
+  d.clearToasts();
+  d.removeBtn("cell0").fire("click");
+  d.replyWith({
+    ok: false, status: 404, statusText: "Not Found",
+    json: function () { return Promise.resolve({ detail: "piece not found: cell0" }); },
+  });
+  d.removeConfirm.fire("click");
+  await settle();
+  check(
+    "a refused delete keeps the row",
+    d.visibleIds().indexOf("cell0") !== -1,
+    d.visibleIds().join(",")
+  );
+  check(
+    "says why",
+    d.toasts.some(function (t) { return !t.ok && /piece not found/.test(t.msg); }),
+    JSON.stringify(d.toasts)
+  );
+  check(
+    "and leaves the dialog open and re-armed rather than dropping the user back on an unchanged table",
+    d.dialogOpen() && d.removeConfirm.disabled === false,
+    "open=" + d.dialogOpen() + " disabled=" + d.removeConfirm.disabled
+  );
+
+  // Deleting the last row a filter matches has to re-run the filter, or the
+  // table sits there empty with no empty state and reads as broken.
+  var f = makePage(gearSpec());
+  boot(f);
+  await settle();
+  f.chip("troop:cavalry").fire("click");
+  check(
+    "one row matches the active filter",
+    f.visibleIds().join(",") === "cell0",
+    f.visibleIds().join(",")
+  );
+  f.removeBtn("cell0").fire("click");
+  f.removeConfirm.fire("click");
+  await settle();
+  check(
+    "deleting the last row a filter matched leaves the empty state, not a blank table",
+    f.visibleIds().length === 0 && f.noMatchesShown(),
+    f.visibleIds().join(",") + " empty=" + f.noMatchesShown()
+  );
+
+  // The heroes table has no delete markup at all. The guard for that is in
+  // the source, and it has to be an early return rather than a crash: wiring
+  // a null confirm button would throw out of the IIFE and take the whole
+  // table's auto-save down with it, on the page that has no delete anyway.
+  var h = makePage(heroesSpec());
+  boot(h);
+  await settle();
+  var stars = h.input("Helga", "stars");
+  stars.value = "4";
+  stars.fire("blur");
+  await settle();
+  check(
+    "a page with no delete dialog still wires the rest of its table",
+    h.calls.length === 1 && h.lastCall().url === "/api/heroes/Helga",
+    "calls=" + h.calls.length + " last=" + h.lastCall().url
+  );
 }
 
 /* --- run ------------------------------------------------------------------- */
@@ -1594,6 +2146,9 @@ async function suiteHeroesPage() {
     await suiteSorting();
     await suiteRescan();
     await suiteHeroesPage();
+    await suitePickers();
+    await suiteLocks();
+    await suiteRemove();
   } catch (err) {
     check("harness ran to completion", false, String((err && err.stack) || err));
   }
