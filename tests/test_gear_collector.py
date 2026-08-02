@@ -34,6 +34,10 @@ def _png() -> bytes:
 
 def test_collect_gear_pages_then_stops(tmp_path):
     cfg = load_gear_config()
+    # Config may set max_pages=1 for live runs; exercise paging explicitly.
+    from dataclasses import replace
+
+    cfg = replace(cfg, grid=replace(cfg.grid, max_pages=2))
     device = RecordingDevice(png_bytes=_png())
     store = GearStore(tmp_path)
 
@@ -105,3 +109,122 @@ def test_collect_gear_dedupes_same_identity(tmp_path):
     )
     assert len(pieces) == 1
     assert pieces[0].name == "Same Piece"
+
+
+def test_collect_gear_emits_progress_events(tmp_path):
+    cfg = load_gear_config()
+    device = RecordingDevice(png_bytes=_png())
+    store = GearStore(tmp_path)
+
+    events: list[tuple[str, object]] = []
+
+    def on_progress(ev: str, payload: object) -> None:
+        events.append((ev, payload))
+
+    def fake_scrape(device, cfg, *, page, index, ocr_fn=None, sleep_fn=None, **_kw):
+        if page == 0 and index == 0:
+            return GearRecord(
+                piece_id="page0-cell0",
+                name="Alpha Helm",
+                enhancement_level=10,
+                inventory_page=0,
+                inventory_index=0,
+            )
+        return None
+
+    collect_gear(
+        device,
+        cfg,
+        store,
+        sleep_fn=lambda _s: None,
+        scrape_fn=fake_scrape,
+        on_progress=on_progress,
+    )
+    piece_events = [e for e in events if e[0] in {"piece", "kept"}]
+    assert len(piece_events) == 1
+    ev_type, payload = piece_events[0]
+    assert ev_type == "piece"
+    assert isinstance(payload, dict)
+    assert payload["piece_id"] == "page0-cell0"
+
+
+def test_collect_gear_emits_kept_when_lock_preserved(tmp_path):
+    """'kept' event emitted when OCR has None level but prior record has it locked."""
+    cfg = load_gear_config()
+    device = RecordingDevice(png_bytes=_png())
+    store = GearStore(tmp_path)
+
+    # Seed a prior record with enhancement_level=30
+    store.upsert(
+        GearRecord(
+            piece_id="page0-cell0",
+            name="Alpha Helm",
+            enhancement_level=30,
+            mastery_level=0,
+            inventory_page=0,
+            inventory_index=0,
+        )
+    )
+
+    events: list[tuple[str, object]] = []
+
+    def on_progress(ev: str, payload: object) -> None:
+        events.append((ev, payload))
+
+    def fake_scrape(device, cfg, *, page, index, ocr_fn=None, sleep_fn=None, **_kw):
+        if page == 0 and index == 0:
+            return GearRecord(
+                piece_id="page0-cell0",
+                name="Alpha Helm",
+                enhancement_level=None,  # OCR missed enhancement
+                inventory_page=0,
+                inventory_index=0,
+            )
+        return None
+
+    collect_gear(
+        device,
+        cfg,
+        store,
+        sleep_fn=lambda _s: None,
+        scrape_fn=fake_scrape,
+        on_progress=on_progress,
+    )
+    kept_events = [e for e in events if e[0] == "kept"]
+    assert len(kept_events) == 1, "expected one 'kept' event"
+
+
+def test_collect_gear_emits_duplicate_event(tmp_path):
+    cfg = load_gear_config()
+    device = RecordingDevice(png_bytes=_png())
+    store = GearStore(tmp_path)
+
+    events: list[tuple[str, object]] = []
+
+    def on_progress(ev: str, payload: object) -> None:
+        events.append((ev, payload))
+
+    def fake_scrape(device, cfg, *, page, index, ocr_fn=None, sleep_fn=None, **_kw):
+        if page == 0 and index < 2:
+            return GearRecord(
+                piece_id=f"page0-cell{index}",
+                name="Same Piece",
+                enhancement_level=30,
+                mastery_level=2,
+                rarity="mythic",
+                power=100,
+                inventory_page=0,
+                inventory_index=index,
+            )
+        return None
+
+    collect_gear(
+        device,
+        cfg,
+        store,
+        sleep_fn=lambda _s: None,
+        scrape_fn=fake_scrape,
+        on_progress=on_progress,
+    )
+    dup_events = [e for e in events if e[0] == "duplicate"]
+    assert len(dup_events) == 1

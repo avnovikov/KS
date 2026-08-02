@@ -1,0 +1,82 @@
+{# Shared tab bar. Expects: active ("gear"|"heroes"|"troops"|"optimize"), gear_enabled, heroes_enabled, troops_enabled #}
+<style>
+  .tab-bar {
+    display: inline-flex;
+    gap: 0.2rem;
+    padding: 0.2rem;
+    margin: 0.65rem 0 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.22);
+  }
+  .tab-bar a,
+  .tab-bar span.tab {
+    display: inline-block;
+    padding: 0.4rem 0.95rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 550;
+    text-decoration: none;
+    color: var(--muted);
+    border: 1px solid transparent;
+  }
+  .tab-bar a:hover {
+    color: var(--text);
+    background: rgba(108, 178, 255, 0.08);
+  }
+  .tab-bar .tab.is-active {
+    color: var(--text);
+    background: var(--panel);
+    border-color: var(--border);
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+  }
+  .tab-bar .tab.is-disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+</style>
+{% set troops_on = troops_enabled if troops_enabled is defined else false %}
+{% set show_tabs = gear_enabled or heroes_enabled or troops_on %}
+{% if show_tabs %}
+<nav class="tab-bar" aria-label="Inventory screens" role="tablist">
+  {% if gear_enabled %}
+    {% if active == "gear" %}
+    <span class="tab is-active" role="tab" aria-selected="true">Gear inventory</span>
+    {% else %}
+    <a class="tab" href="/gear" role="tab" aria-selected="false">Gear inventory</a>
+    {% endif %}
+  {% else %}
+    <span class="tab is-disabled" title="Start UI with --gear to enable" role="tab" aria-disabled="true">Gear inventory</span>
+  {% endif %}
+
+  {% if heroes_enabled %}
+    {% if active == "heroes" %}
+    <span class="tab is-active" role="tab" aria-selected="true">Heroes inventory</span>
+    {% else %}
+    <a class="tab" href="/heroes" role="tab" aria-selected="false">Heroes inventory</a>
+    {% endif %}
+  {% else %}
+    <span class="tab is-disabled" title="Start UI with --heroes to enable" role="tab" aria-disabled="true">Heroes inventory</span>
+  {% endif %}
+
+  {% if troops_on %}
+    {% if active == "troops" %}
+    <span class="tab is-active" role="tab" aria-selected="true">Troops inventory</span>
+    {% else %}
+    <a class="tab" href="/troops" role="tab" aria-selected="false">Troops inventory</a>
+    {% endif %}
+  {% else %}
+    <span class="tab is-disabled" title="config/troops.yaml not found" role="tab" aria-disabled="true">Troops inventory</span>
+  {% endif %}
+
+  {% if heroes_enabled %}
+    {% if active == "optimize" %}
+    <span class="tab is-active" role="tab" aria-selected="true">Optimize</span>
+    {% else %}
+    <a class="tab" href="/optimize" role="tab" aria-selected="false">Optimize</a>
+    {% endif %}
+  {% else %}
+    <span class="tab is-disabled" title="Start UI with --heroes to enable Optimize" role="tab" aria-disabled="true">Optimize</span>
+  {% endif %}
+</nav>
+{% endif %}

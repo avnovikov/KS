@@ -1,4 +1,4 @@
-"""Assign best owned gear sets per troop class (fungible within class)."""
+"""Assign owned gear: fungible class sets (marches) or exclusive pieces (arena)."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import yaml
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.gear_store import GearStore
 from ks.heroes.models import HeroRecord
+from ks.heroes.optimize.gear_stats import expedition_stat_fraction
 from ks.heroes.optimize.scoring import normalize_troop
 from ks.heroes.optimize.types import CatalogEntry
 
@@ -94,34 +95,31 @@ def piece_score(
     profile: str = "early_game_growth",
     weights: dict[str, float] | None = None,
 ) -> float:
+    """Score a piece from formula expedition % (rarity+level+mastery).
+
+    OCR ``stats`` are not used for scoring — only rarity, enhancement, mastery,
+    troop, and slot. Power is a last-resort fallback when no formula exists
+    (e.g. grey/green) or troop/slot cannot be inferred.
+    """
     troop = normalize_troop(piece.troop_type)
     slot = infer_slot(piece)
     wmap = weights or load_profile_weights(profile)
     if troop is None or slot is None:
         return float(piece.power or 0) / 100_000.0
 
-    kind, weight_key = _SLOT_STAT[(troop, slot)]
+    _kind, weight_key = _SLOT_STAT[(troop, slot)]
     weight = float(wmap.get(weight_key, 1.0))
-    stats = piece.stats
-    pct = 0.0
-    if stats is not None:
-        if kind == "lethality" and stats.lethality is not None:
-            pct = float(stats.lethality)
-        elif kind == "health" and stats.health is not None:
-            pct = float(stats.health)
-        else:
-            # Prefer matching expedition label if present.
-            for label, value in (stats.expedition or {}).items():
-                low = label.lower()
-                if kind == "lethality" and "lethal" in low:
-                    pct = float(value)
-                    break
-                if kind == "health" and "health" in low:
-                    pct = float(value)
-                    break
-    if pct <= 0 and piece.power:
+    frac = expedition_stat_fraction(
+        piece.rarity,
+        piece.enhancement_level,
+        piece.mastery_level,
+    )
+    if frac is not None and frac > 0:
+        # Formula returns fraction; historical scores used percent points.
+        return weight * (frac * 100.0)
+    if piece.power:
         return weight * (float(piece.power) / 100_000.0)
-    return weight * pct
+    return 0.0
 
 
 def best_sets_by_troop(

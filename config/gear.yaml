@@ -12,9 +12,11 @@ delays_ms:
 save_screenshots: true
 
 grid:
-  # One screen only: 4 columns × 5 rows (no paging — inventory fits one page).
+  # 4 columns × 6 rows — rows 1-5 are the main inventory; row 6 (y≈1720) catches
+  # grey common pieces that appear at the bottom. Single page only (no swipe:
+  # paging re-opened overlapping cells and double-scanned everything).
   max_pages: 1
-  # 4 columns × 5 rows of backpack gear tiles
+  # 4 columns × 6 rows of backpack gear tiles
   cells:
     - {x: 135, y: 400}
     - {x: 405, y: 400}
@@ -36,6 +38,11 @@ grid:
     - {x: 405, y: 1480}
     - {x: 675, y: 1480}
     - {x: 945, y: 1480}
+    # Row 6 — grey/common pieces visible at the bottom of a taller inventory.
+    - {x: 135, y: 1720}
+    - {x: 405, y: 1720}
+    - {x: 675, y: 1720}
+    - {x: 945, y: 1720}
   page_swipe:
     x1: 540
     y1: 1500
@@ -51,9 +58,10 @@ nav:
 ocr:
   # Full Gear Details modal body
   detail_panel: {x: 80, y: 240, w: 920, h: 1100}
-  # Optional focused crops (icon badges / title)
-  enhancement: {x: 220, y: 330, w: 90, h: 50}
-  mastery: {x: 150, y: 430, w: 100, h: 40}
+  # Optional focused crops (icon badges / title).
+  # Enhancement +N is the orange chip on the gear icon top-right (detail phase).
+  enhancement: {x: 230, y: 300, w: 90, h: 55}
+  mastery: {x: 120, y: 450, w: 110, h: 40}
   name: {x: 320, y: 320, w: 420, h: 50}
   rarity: {x: 320, y: 370, w: 200, h: 40}
   power: {x: 320, y: 410, w: 220, h: 45}

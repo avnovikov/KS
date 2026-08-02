@@ -68,3 +68,25 @@ heroes:
     catalog = load_catalog(pro, yaml_path)
     assert catalog["Howard"].widget_type == "none"
     assert catalog["Howard"].troop == "infantry"
+
+
+def test_catalog_loads_diana_as_source_of_truth() -> None:
+    from pathlib import Path
+
+    from ks.heroes.optimize.catalog import arena_heroes_from_catalog
+
+    root = Path(__file__).resolve().parents[1]
+    catalog = load_catalog(None, root / "config" / "hero_catalog.yaml")
+    diana = catalog["Diana"]
+    assert diana.troop in {"archer", "archers"}
+    assert diana.rarity == "epic"
+    assert diana.gen == 1
+    assert diana.obtain == "Desert Trial Event"
+    assert diana.arena_role == "back_dps"
+    assert diana.arena_value == 70
+    assert "stamina" in diana.arena_tags
+    assert any(e.kind == "stamina_cost_down" for e in diana.effects)
+    assert any(e.kind == "wilderness_march_speed" for e in diana.effects)
+    arena_heroes = arena_heroes_from_catalog(catalog)
+    assert "Diana" in arena_heroes
+    assert arena_heroes["Diana"]["arena_value"] == 70

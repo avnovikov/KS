@@ -9,7 +9,8 @@ from pathlib import Path
 
 from ks.heroes.gear_models import GearRecord
 
-# Detail-modal icon region (1080×1920 portrait calibrations in gear.yaml).
+# Hardcoded detail-modal icon crop for 1080×1920 portrait screenshots
+# (not loaded from gear.yaml — that file only has OCR panel boxes).
 _DETAIL_ICON_BOX = (100, 280, 200, 200)  # x, y, w, h
 
 _STATIC_GEAR_PIECES = Path(__file__).resolve().parent / "static" / "gear-pieces"
@@ -61,6 +62,12 @@ def icon_filename(piece_id: str) -> str:
     return f"{safe}.svg"
 
 
+def icon_png_filename(piece_id: str) -> str:
+    """Sanitized PNG basename (blocks path traversal via piece_id)."""
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", piece_id)
+    return f"{safe}.png"
+
+
 def _normalize_troop_key(troop: str | None) -> str | None:
     if not troop:
         return None
@@ -105,17 +112,21 @@ def bundled_piece_icon(piece: GearRecord) -> Path | None:
 
 def ensure_piece_icon(piece: GearRecord, gear_dir: Path) -> str:
     """Ensure an icon is available; return URL path under /static or /icons."""
+    png_name = icon_png_filename(piece.piece_id)
     bundled = bundled_piece_icon(piece)
     if bundled is not None:
         # Also copy into gear_dir/icons for offline browse of that inventory
         out_dir = icons_dir_for(gear_dir)
-        dest = out_dir / f"{piece.piece_id}.png"
-        if not dest.is_file() or dest.stat().st_size != bundled.stat().st_size:
-            shutil.copy2(bundled, dest)
+        dest = out_dir / png_name
+        try:
+            if not dest.is_file() or dest.stat().st_size != bundled.stat().st_size:
+                shutil.copy2(bundled, dest)
+        except OSError as exc:
+            print(f"warn: could not copy bundled icon for {piece.piece_id}: {exc}")
         return f"/static/gear-pieces/{bundled.name}"
 
     out_dir = icons_dir_for(gear_dir)
-    png_override = out_dir / f"{piece.piece_id}.png"
+    png_override = out_dir / png_name
     if png_override.is_file():
         return f"/icons/{png_override.name}"
 
@@ -155,9 +166,12 @@ def _try_crop_detail_icon(
     x2, y2 = min(img.shape[1], x + w), min(img.shape[0], y + h)
     crop = img[y1:y2, x1:x2]
     if crop.size == 0:
+        print(f"warn: empty icon crop for {piece.piece_id}")
         return None
-    dest = out_dir / f"{piece.piece_id}.png"
-    cv2.imwrite(str(dest), crop)
+    dest = out_dir / icon_png_filename(piece.piece_id)
+    if not cv2.imwrite(str(dest), crop):
+        print(f"warn: failed to write icon crop {dest}")
+        return None
     return dest
 
 

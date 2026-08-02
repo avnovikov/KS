@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.bear_damage import (
     BeartrapBuffs,
@@ -23,6 +25,45 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 
+@dataclass(frozen=True)
+class _HeroFeatures:
+    """Per-hero ILP inputs, keyed by hero name."""
+
+    troop_of: dict[str, str]
+    strengths: dict[str, float]
+    escorts: dict[str, int]
+    widget: dict[str, str]
+
+
+@dataclass
+class _TroopVariables:
+    """The ILP problem plus its hero-pick and troop-count decision variables.
+
+    Not frozen: `prob += constraint` reassigns `variables.prob` in place as
+    helpers incrementally add constraints and the objective.
+    """
+
+    prob: pulp.LpProblem
+    hero_selected: dict[str, pulp.LpVariable]
+    infantry: pulp.LpVariable
+    cavalry: pulp.LpVariable
+    archers: pulp.LpVariable
+
+
+@dataclass(frozen=True)
+class _ObjectiveTerms:
+    """Expected personal-points value, split into its named components."""
+
+    combat: pulp.LpAffineExpression
+    occupation: float
+    first_control: float
+    loot: float
+
+    @property
+    def expected(self) -> pulp.LpAffineExpression:
+        return self.combat + self.occupation + self.first_control + self.loot
+
+
 def _use_bear_damage(event: EventProfile | None, mode: str) -> bool:
     return bool(event and event.name == "beartrap" and mode == "rally_lead")
 
@@ -40,34 +81,55 @@ def _inventory_levels(troops: TroopsConfig) -> dict[str, dict[int, int]]:
     return out
 
 
-def solve_mode(
-    heroes: list[HeroRecord],
-    catalog: dict[str, CatalogEntry],
-    troops: TroopsConfig,
-    scenario: Scenario,
-    *,
-    event: EventProfile | None = None,
-    troop_stats: TroopStatsTable | None = None,
-    truegold: int = 0,
-    one_per_troop_type: bool = True,
-    gear_bonus_by_troop: dict[str, float] | None = None,
-    beartrap_buffs: BeartrapBuffs | None = None,
+def _empty_troops() -> dict[str, int]:
+    return {"infantry": 0, "cavalry": 0, "archers": 0}
+
+
+def _infeasible_solution(
+    scenario: Scenario, troops: TroopsConfig, status: str = "Infeasible"
 ) -> ModeSolution:
+    return ModeSolution(
+        mode=scenario.mode,
+        hero_names=(),
+        troops=_empty_troops(),
+        effective_capacity=troops.march_capacity,
+        expected_personal_points=float("-inf"),
+        breakdown={},
+        status=status,
+    )
+
+
+def _select_usable_heroes(
+    heroes: list[HeroRecord], catalog: dict[str, CatalogEntry]
+) -> list[HeroRecord]:
     usable = [h for h in heroes if h.name in catalog]
-    if len(usable) < 3:
-        return ModeSolution(
-            mode=scenario.mode,
-            hero_names=(),
-            troops={"infantry": 0, "cavalry": 0, "archers": 0},
-            effective_capacity=troops.march_capacity,
-            expected_personal_points=float("-inf"),
-            breakdown={},
-            status="Infeasible",
+    dropped = sorted({h.name for h in heroes} - {h.name for h in usable})
+    if dropped:
+        print(
+            f"warn: dropped {len(dropped)} hero(es) not in catalog: "
+            f"{', '.join(dropped[:12])}{'…' if len(dropped) > 12 else ''}"
+        )
+    return usable
+
+
+def _warn_missing_escorts(usable: list[HeroRecord]) -> None:
+    missing = [h.name for h in usable if h.escorts is None]
+    if missing:
+        print(
+            "warn: missing escorts OCR for "
+            f"{', '.join(missing[:12])}"
+            f"{'…' if len(missing) > 12 else ''}; treating as 0"
         )
 
-    troop_of = {
-        h.name: (normalize_troop(catalog[h.name].troop) or "") for h in usable
-    }
+
+def _compute_hero_features(
+    usable: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    scenario: Scenario,
+    event: EventProfile | None,
+    gear_bonus_by_troop: dict[str, float] | None,
+) -> _HeroFeatures:
+    troop_of = {h.name: (normalize_troop(catalog[h.name].troop) or "") for h in usable}
     # Gear is fungible within troop class: score power using best geared hero
     # of that class (widgets / skills / stars stay on the selected hero).
     class_power = max_power_by_troop(usable, catalog)
@@ -83,14 +145,21 @@ def solve_mode(
         )
         for h in usable
     }
+    _warn_missing_escorts(usable)
     escorts = {h.name: int(h.escorts or 0) for h in usable}
-    widget = {
-        h.name: (catalog[h.name].widget_type or "none") for h in usable
-    }
+    widget = {h.name: (catalog[h.name].widget_type or "none") for h in usable}
+    return _HeroFeatures(troop_of=troop_of, strengths=strengths, escorts=escorts, widget=widget)
 
-    bear_mode = _use_bear_damage(event, scenario.mode) and troop_stats is not None
 
-    prob = pulp.LpProblem(f"heroes_{scenario.mode}", pulp.LpMaximize)
+def _build_ilp_variables(
+    usable: list[HeroRecord],
+    troops: TroopsConfig,
+    escorts: dict[str, int],
+    mode: str,
+    *,
+    bear_mode: bool = False,
+) -> _TroopVariables:
+    prob = pulp.LpProblem(f"heroes_{mode}", pulp.LpMaximize)
     x = pulp.LpVariable.dicts("hero", [h.name for h in usable], cat="Binary")
     t_i = pulp.LpVariable("t_infantry", lowBound=0, upBound=troops.infantry, cat="Integer")
     t_c = pulp.LpVariable("t_cavalry", lowBound=0, upBound=troops.cavalry, cat="Integer")
@@ -100,148 +169,241 @@ def solve_mode(
 
     # Capacity: march_capacity + escorts of selected heroes
     cap = troops.march_capacity + pulp.lpSum(x[n] * escorts[n] for n in x)
-    if not bear_mode:
-        prob += t_i + t_c + t_a <= cap
-    else:
+    if bear_mode:
         # Troop formation is filled post-solve via damage greedy; keep vars at 0.
         prob += t_i + t_c + t_a == 0
-
-    if scenario.require_widget:
-        matching = [n for n, w in widget.items() if w == scenario.require_widget]
-        if not matching:
-            return ModeSolution(
-                mode=scenario.mode,
-                hero_names=(),
-                troops={"infantry": 0, "cavalry": 0, "archers": 0},
-                effective_capacity=troops.march_capacity,
-                expected_personal_points=float("-inf"),
-                breakdown={},
-                status="Infeasible",
-            )
-        prob += pulp.lpSum(x[n] for n in matching) >= 1
-
-    if one_per_troop_type:
-        by_type: dict[str, list[str]] = {"infantry": [], "cavalry": [], "archers": []}
-        for n, t in troop_of.items():
-            if t == "infantry":
-                by_type["infantry"].append(n)
-            elif t == "cavalry":
-                by_type["cavalry"].append(n)
-            elif t in ("archer", "archers"):
-                by_type["archers"].append(n)
-        for names in by_type.values():
-            if names:
-                prob += pulp.lpSum(x[n] for n in names) <= 1
-
-    hero_str = pulp.lpSum(x[n] * strengths[n] for n in x)
-
-    if bear_mode:
-        # Maximize lineup hero strength; damage score applied after greedy fill.
-        prob += hero_str
     else:
-        weights = scenario.formation_weights or {
-            "infantry": 1.0,
-            "cavalry": 1.0,
-            "archers": 1.0,
-        }
-        if troop_stats is not None:
-            combat_w = inventory_combat_weights(
-                {
-                    "infantry": troops.levels("infantry"),
-                    "cavalry": troops.levels("cavalry"),
-                    "archers": troops.levels("archers"),
-                },
-                troop_stats,
-                truegold=truegold,
-                mode=scenario.mode,
-            )
-            w_i = float(weights.get("infantry", 1.0)) * float(combat_w["infantry"])
-            w_c = float(weights.get("cavalry", 1.0)) * float(combat_w["cavalry"])
-            w_a = float(weights.get("archers", 1.0)) * float(combat_w["archers"])
-        else:
-            w_i = float(weights.get("infantry", 1.0))
-            w_c = float(weights.get("cavalry", 1.0))
-            w_a = float(weights.get("archers", 1.0))
+        prob += t_i + t_c + t_a <= cap
 
-        troop_str = w_i * t_i + w_c * t_c + w_a * t_a
-        # Scale troop contribution so heroes still matter but formation fills capacity.
-        strength = hero_str + 0.001 * troop_str
+    return _TroopVariables(prob=prob, hero_selected=x, infantry=t_i, cavalry=t_c, archers=t_a)
 
-        combat = (scenario.combat_rate / 10_000.0) * scenario.enemy_power_scale * (
-            0.01 * strength
+
+def _apply_widget_requirement(
+    variables: _TroopVariables,
+    widget: dict[str, str],
+    required_widget: str | None,
+) -> bool:
+    """Require at least one selected hero to carry `required_widget`.
+
+    Returns False when no usable hero can ever satisfy the requirement, which
+    signals the caller to short-circuit with an infeasible solution instead
+    of handing pulp an unsatisfiable constraint.
+    """
+    if not required_widget:
+        return True
+    matching = [n for n, w in widget.items() if w == required_widget]
+    if not matching:
+        return False
+    variables.prob += pulp.lpSum(variables.hero_selected[n] for n in matching) >= 1
+    return True
+
+
+def _apply_one_hero_per_troop_type(variables: _TroopVariables, troop_of: dict[str, str]) -> None:
+    by_type: dict[str, list[str]] = {"infantry": [], "cavalry": [], "archers": []}
+    for name, troop in troop_of.items():
+        if troop == "infantry":
+            by_type["infantry"].append(name)
+        elif troop == "cavalry":
+            by_type["cavalry"].append(name)
+        elif troop in ("archer", "archers"):
+            by_type["archers"].append(name)
+    for names in by_type.values():
+        if names:
+            variables.prob += pulp.lpSum(variables.hero_selected[n] for n in names) <= 1
+
+
+def _troop_combat_weights(
+    scenario: Scenario,
+    troops: TroopsConfig,
+    troop_stats: TroopStatsTable | None,
+    truegold: int,
+) -> tuple[float, float, float]:
+    weights = scenario.formation_weights or {"infantry": 1.0, "cavalry": 1.0, "archers": 1.0}
+    if troop_stats is None:
+        return (
+            float(weights.get("infantry", 1.0)),
+            float(weights.get("cavalry", 1.0)),
+            float(weights.get("archers", 1.0)),
         )
-        occupation = scenario.minutes_held * scenario.personal_rate
-        first = scenario.p_first * scenario.first_bonus
-        loot = scenario.loot_expected
-        expected = combat + occupation + first + loot
-        prob += expected
+    combat_w = inventory_combat_weights(
+        {
+            "infantry": troops.levels("infantry"),
+            "cavalry": troops.levels("cavalry"),
+            "archers": troops.levels("archers"),
+        },
+        troop_stats,
+        truegold=truegold,
+        mode=scenario.mode,
+    )
+    return (
+        float(weights.get("infantry", 1.0)) * float(combat_w["infantry"]),
+        float(weights.get("cavalry", 1.0)) * float(combat_w["cavalry"]),
+        float(weights.get("archers", 1.0)) * float(combat_w["archers"]),
+    )
 
-    status = prob.solve(pulp.PULP_CBC_CMD(msg=False))
-    status_name = pulp.LpStatus.get(status, str(status))
-    if status_name != "Optimal":
-        return ModeSolution(
-            mode=scenario.mode,
-            hero_names=(),
-            troops={"infantry": 0, "cavalry": 0, "archers": 0},
-            effective_capacity=troops.march_capacity,
-            expected_personal_points=float("-inf"),
-            breakdown={},
-            status=status_name,
-        )
 
+def _build_objective(
+    variables: _TroopVariables,
+    strengths: dict[str, float],
+    troop_weights: tuple[float, float, float],
+    scenario: Scenario,
+) -> _ObjectiveTerms:
+    """Add the expected-personal-points objective to `variables.prob` and return its terms.
+
+    occupation/first_control/loot are constants per scenario; only combat
+    scales with hero+troop strength. Kept as a single linear expression
+    (no mode-specific branching) so the ILP stays a straight LP relaxation.
+    """
+    w_i, w_c, w_a = troop_weights
+    x = variables.hero_selected
+    hero_str = pulp.lpSum(x[n] * strengths[n] for n in x)
+    troop_str = w_i * variables.infantry + w_c * variables.cavalry + w_a * variables.archers
+    # Scale troop contribution so heroes still matter but formation fills capacity.
+    strength = hero_str + 0.001 * troop_str
+
+    combat = (scenario.combat_rate / 10_000.0) * scenario.enemy_power_scale * (0.01 * strength)
+    terms = _ObjectiveTerms(
+        combat=combat,
+        occupation=scenario.minutes_held * scenario.personal_rate,
+        first_control=scenario.p_first * scenario.first_bonus,
+        loot=scenario.loot_expected,
+    )
+    variables.prob += terms.expected
+    return terms
+
+
+def _build_bear_hero_objective(
+    variables: _TroopVariables,
+    strengths: dict[str, float],
+) -> None:
+    """Maximize lineup hero strength; damage score is applied after greedy fill."""
+    x = variables.hero_selected
+    variables.prob += pulp.lpSum(x[n] * strengths[n] for n in x)
+
+
+def _extract_optimal_solution(
+    variables: _TroopVariables,
+    features: _HeroFeatures,
+    troops: TroopsConfig,
+    terms: _ObjectiveTerms,
+    scenario: Scenario,
+) -> ModeSolution:
+    x = variables.hero_selected
     chosen = tuple(sorted(n for n in x if pulp.value(x[n]) and pulp.value(x[n]) > 0.5))
-    eff_cap = troops.march_capacity + sum(escorts[n] for n in chosen)
-
-    if bear_mode:
-        assert troop_stats is not None
-        buffs = beartrap_buffs or BeartrapBuffs()
-        lineup_strength = sum(strengths[n] for n in chosen)
-        skillmod = buffs.effective_skillmod(lineup_strength)
-        fill_cap = min(
-            eff_cap,
-            troops.infantry + troops.cavalry + troops.archers,
-        )
-        counts, filled_levels, dmg = greedy_fill_march(
-            _inventory_levels(troops),
-            capacity=fill_cap,
-            table=troop_stats,
-            truegold=truegold,
-            skillmod=skillmod,
-            trap_attack_bonus=buffs.trap_attack_bonus,
-            host_attack_pct=buffs.host_attack_pct,
-        )
-        breakdown = dmg.breakdown()
-        breakdown["hero_strength"] = float(lineup_strength)
-        _ = filled_levels
-        return ModeSolution(
-            mode=scenario.mode,
-            hero_names=chosen,
-            troops=dict(counts),
-            effective_capacity=eff_cap,
-            expected_personal_points=float(dmg.score),
-            breakdown=breakdown,
-            status="Optimal",
-        )
-
-    ti = int(round(pulp.value(t_i) or 0))
-    tc = int(round(pulp.value(t_c) or 0))
-    ta = int(round(pulp.value(t_a) or 0))
-    occupation = scenario.minutes_held * scenario.personal_rate
-    first = scenario.p_first * scenario.first_bonus
-    loot = scenario.loot_expected
-    combat_val = float(pulp.value(prob.objective) or 0.0) - occupation - first - loot
+    ti = int(round(pulp.value(variables.infantry) or 0))
+    tc = int(round(pulp.value(variables.cavalry) or 0))
+    ta = int(round(pulp.value(variables.archers) or 0))
+    eff_cap = troops.march_capacity + sum(features.escorts[n] for n in chosen)
     breakdown = {
-        "combat": float(combat_val),
-        "occupation": float(occupation),
-        "first_control": float(first),
-        "loot": float(loot),
+        "combat": float(pulp.value(terms.combat) or 0.0),
+        "occupation": float(terms.occupation),
+        "first_control": float(terms.first_control),
+        "loot": float(terms.loot),
     }
     return ModeSolution(
         mode=scenario.mode,
         hero_names=chosen,
         troops={"infantry": ti, "cavalry": tc, "archers": ta},
         effective_capacity=eff_cap,
-        expected_personal_points=float(pulp.value(prob.objective) or 0.0),
+        expected_personal_points=float(pulp.value(variables.prob.objective) or 0.0),
         breakdown=breakdown,
         status="Optimal",
     )
+
+
+def _extract_bear_damage_solution(
+    variables: _TroopVariables,
+    features: _HeroFeatures,
+    troops: TroopsConfig,
+    scenario: Scenario,
+    *,
+    troop_stats: TroopStatsTable,
+    truegold: int,
+    beartrap_buffs: BeartrapBuffs | None,
+) -> ModeSolution:
+    x = variables.hero_selected
+    chosen = tuple(sorted(n for n in x if pulp.value(x[n]) and pulp.value(x[n]) > 0.5))
+    eff_cap = troops.march_capacity + sum(features.escorts[n] for n in chosen)
+    buffs = beartrap_buffs or BeartrapBuffs()
+    lineup_strength = sum(features.strengths[n] for n in chosen)
+    skillmod = buffs.effective_skillmod(lineup_strength)
+    fill_cap = min(eff_cap, troops.infantry + troops.cavalry + troops.archers)
+    counts, _filled_levels, dmg = greedy_fill_march(
+        _inventory_levels(troops),
+        capacity=fill_cap,
+        table=troop_stats,
+        truegold=truegold,
+        skillmod=skillmod,
+        trap_attack_bonus=buffs.trap_attack_bonus,
+        host_attack_pct=buffs.host_attack_pct,
+    )
+    breakdown = dmg.breakdown()
+    breakdown["hero_strength"] = float(lineup_strength)
+    return ModeSolution(
+        mode=scenario.mode,
+        hero_names=chosen,
+        troops=dict(counts),
+        effective_capacity=eff_cap,
+        expected_personal_points=float(dmg.score),
+        breakdown=breakdown,
+        status="Optimal",
+    )
+
+
+def solve_mode(
+    heroes: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    troops: TroopsConfig,
+    scenario: Scenario,
+    *,
+    event: EventProfile | None = None,
+    troop_stats: TroopStatsTable | None = None,
+    truegold: int = 0,
+    one_per_troop_type: bool = True,
+    gear_bonus_by_troop: dict[str, float] | None = None,
+    beartrap_buffs: BeartrapBuffs | None = None,
+) -> ModeSolution:
+    usable = _select_usable_heroes(heroes, catalog)
+    if len(usable) < 3:
+        return _infeasible_solution(scenario, troops)
+
+    bear_mode = _use_bear_damage(event, scenario.mode) and troop_stats is not None
+    features = _compute_hero_features(usable, catalog, scenario, event, gear_bonus_by_troop)
+    variables = _build_ilp_variables(
+        usable,
+        troops,
+        features.escorts,
+        scenario.mode,
+        bear_mode=bear_mode,
+    )
+
+    if not _apply_widget_requirement(variables, features.widget, scenario.require_widget):
+        return _infeasible_solution(scenario, troops)
+
+    if one_per_troop_type:
+        _apply_one_hero_per_troop_type(variables, features.troop_of)
+
+    if bear_mode:
+        _build_bear_hero_objective(variables, features.strengths)
+    else:
+        troop_weights = _troop_combat_weights(scenario, troops, troop_stats, truegold)
+        terms = _build_objective(variables, features.strengths, troop_weights, scenario)
+
+    status = variables.prob.solve(pulp.PULP_CBC_CMD(msg=False))
+    status_name = pulp.LpStatus.get(status, str(status))
+    if status_name != "Optimal":
+        return _infeasible_solution(scenario, troops, status=status_name)
+
+    if bear_mode:
+        assert troop_stats is not None
+        return _extract_bear_damage_solution(
+            variables,
+            features,
+            troops,
+            scenario,
+            troop_stats=troop_stats,
+            truegold=truegold,
+            beartrap_buffs=beartrap_buffs,
+        )
+
+    return _extract_optimal_solution(variables, features, troops, terms, scenario)

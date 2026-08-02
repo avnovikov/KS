@@ -340,7 +340,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     arena = sub.add_parser(
         "arena",
-        help="Pick Arena attack formation (5 heroes, 2 front + 3 back).",
+        help="Pick Arena attack or defense formation (5 heroes, 2F+3B).",
     )
     arena.add_argument(
         "--heroes",
@@ -370,8 +370,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--side",
         type=str,
         default="attack",
-        choices=["attack"],
-        help="Arena side (only attack / generic offense for now).",
+        choices=["attack", "defense"],
+        help="Arena side: attack (offense) or defense (offline).",
     )
     arena.add_argument(
         "--gear",
@@ -394,13 +394,43 @@ def build_parser() -> argparse.ArgumentParser:
 
     ui = sub.add_parser(
         "ui",
-        help="Local FastAPI UI for gear inventory (edit enhancement/mastery).",
+        help="Local FastAPI UI for gear and/or heroes roster edits.",
     )
     ui.add_argument(
         "--gear",
         type=Path,
-        default=ROOT / "artifacts" / "gear" / "full-run",
-        help="Gear collect dir (or gear.json path).",
+        default=None,
+        help="Gear collect dir (or gear.json). Omit to disable /gear.",
+    )
+    ui.add_argument(
+        "--heroes",
+        type=Path,
+        default=None,
+        help="Heroes collect dir (or heroes.json). Omit to disable /heroes.",
+    )
+    ui.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_GEAR_CONFIG,
+        help="Path to gear.yaml for gear OCR rescan (default: config/gear.yaml).",
+    )
+    ui.add_argument(
+        "--heroes-config",
+        type=Path,
+        default=DEFAULT_HEROES_CONFIG,
+        help="Path to heroes.yaml for heroes OCR rescan (default: config/heroes.yaml).",
+    )
+    ui.add_argument(
+        "--troops",
+        type=Path,
+        default=None,
+        help="Path to troops.yaml (default: config/troops.yaml).",
+    )
+    ui.add_argument(
+        "--serial",
+        type=str,
+        default=None,
+        help="ADB serial override for OCR rescan.",
     )
     ui.add_argument(
         "--host",
@@ -878,7 +908,7 @@ def _cmd_bear_damage(args: argparse.Namespace) -> int:
 
 
 def _cmd_arena(args: argparse.Namespace) -> int:
-    from ks.heroes.optimize.arena import load_arena_roles, optimize_arena_attack
+    from ks.heroes.optimize.arena import load_arena_roles, optimize_arena
     from ks.heroes.optimize.catalog import load_catalog
 
     try:
@@ -888,15 +918,14 @@ def _cmd_arena(args: argparse.Namespace) -> int:
             pro_path.parent.mkdir(parents=True, exist_ok=True)
             pro_path.write_text('{"heroes": []}\n', encoding="utf-8")
         catalog = load_catalog(pro_path, args.catalog)
-        roles = load_arena_roles(args.roles)
+        roles = load_arena_roles(args.roles, catalog=catalog)
         gear_pieces = None
         if args.gear is not None:
             from ks.heroes.optimize.gear_assign import load_gear_pieces
 
             gear_pieces = load_gear_pieces(args.gear)
-        if args.side != "attack":
-            raise ValueError(f"unsupported arena side {args.side!r}")
-        result = optimize_arena_attack(
+        result = optimize_arena(
+            args.side,
             heroes,
             catalog,
             roles,
@@ -939,15 +968,56 @@ def _cmd_arena(args: argparse.Namespace) -> int:
 def _cmd_ui(args: argparse.Namespace) -> int:
     from ks.heroes.ui import run_ui
 
-    gear = Path(args.gear)
-    if not gear.exists():
-        print(
-            f"error: gear path not found: {gear}\n"
-            "Re-run collect-gear or pass --gear <dir>.",
-            file=sys.stderr,
-        )
-        return 1
-    run_ui(gear, host=str(args.host), port=int(args.port))
+    gear = Path(args.gear) if args.gear is not None else None
+    heroes = Path(args.heroes) if args.heroes is not None else None
+    if gear is None and heroes is None:
+        # Keep prior default when neither flag is passed.
+        gear = ROOT / "artifacts" / "gear" / "full-run"
+
+    if gear is not None:
+        if not gear.exists():
+            print(
+                f"error: gear path not found: {gear}\n"
+                "Re-run collect-gear or pass --gear <dir>.",
+                file=sys.stderr,
+            )
+            return 1
+        gear_json = gear if gear.is_file() else gear / "gear.json"
+        if gear.is_dir() and not gear_json.is_file():
+            print(
+                f"error: missing {gear_json}\n"
+                "Re-run collect-gear or pass --gear <dir-with-gear.json>.",
+                file=sys.stderr,
+            )
+            return 1
+
+    if heroes is not None:
+        if not heroes.exists():
+            print(
+                f"error: heroes path not found: {heroes}\n"
+                "Re-run collect or pass --heroes <dir>.",
+                file=sys.stderr,
+            )
+            return 1
+        heroes_json = heroes if heroes.is_file() else heroes / "heroes.json"
+        if heroes.is_dir() and not heroes_json.is_file():
+            print(
+                f"error: missing {heroes_json}\n"
+                "Re-run collect or pass --heroes <dir-with-heroes.json>.",
+                file=sys.stderr,
+            )
+            return 1
+
+    run_ui(
+        gear,
+        heroes_dir=heroes,
+        troops_path=Path(args.troops) if args.troops is not None else None,
+        host=str(args.host),
+        port=int(args.port),
+        gear_config=Path(args.config),
+        heroes_config=Path(args.heroes_config),
+        serial=args.serial,
+    )
     return 0
 
 

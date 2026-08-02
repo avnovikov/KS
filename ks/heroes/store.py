@@ -10,13 +10,34 @@ from ks.heroes.models import HeroRecord
 # Fields often set by hand / follow-up edits; keep prior value if update leaves them empty.
 _PRESERVE_IF_NONE = ("level", "pellets", "stars", "escorts", "power", "rarity", "troop_type")
 
+# Fields never overwritten by OCR unless the caller explicitly opts in.
+_LOCKED_UNLESS_OVERWRITE: frozenset[str] = frozenset({"level"})
 
-def _merge_preserved(prev: HeroRecord, incoming: HeroRecord) -> HeroRecord:
-    updates = {
-        field: getattr(prev, field)
-        for field in _PRESERVE_IF_NONE
-        if getattr(incoming, field) is None and getattr(prev, field) is not None
-    }
+
+def _merge_preserved(
+    prev: HeroRecord,
+    incoming: HeroRecord,
+    overwrite: frozenset[str] = frozenset(),
+) -> HeroRecord:
+    """Fill locked/preserved fields from prev onto incoming.
+
+    Locked fields keep a non-None prior value unless listed in ``overwrite``.
+    Other ``_PRESERVE_IF_NONE`` fields fill only when incoming is None.
+    """
+    updates: dict[str, object] = {}
+    for field in _PRESERVE_IF_NONE:
+        if field in overwrite:
+            continue
+        if field in _LOCKED_UNLESS_OVERWRITE:
+            prev_val = getattr(prev, field)
+            if prev_val is not None:
+                updates[field] = prev_val
+            continue
+        incoming_val = getattr(incoming, field)
+        if incoming_val is None:
+            prev_val = getattr(prev, field)
+            if prev_val is not None:
+                updates[field] = prev_val
     return replace(incoming, **updates) if updates else incoming
 
 
@@ -97,24 +118,38 @@ class HeroStore:
         raw = json.loads(self.json_path.read_text(encoding="utf-8"))
         heroes = raw.get("heroes") if isinstance(raw, dict) else raw
         if not isinstance(heroes, list):
-            return
+            raise ValueError(
+                f"{self.json_path} must be a list or "
+                f'{{"heroes": [...]}}; refusing to load (would wipe on upsert)'
+            )
         for item in heroes:
             hero = HeroRecord.from_dict(item)
             self._heroes[hero.name] = hero
 
-    def upsert(self, hero: HeroRecord) -> None:
+    def upsert(self, hero: HeroRecord, overwrite: frozenset[str] | None = None) -> HeroRecord:
+        """Merge and persist hero; return the final stored record.
+
+        Locked fields (level) are preserved unless included in ``overwrite``.
+        Other curated fields fall back to the prior value when incoming is None.
+        """
         if not hero.name:
             raise ValueError("hero.name must be non-empty")
-        # Preserve manually curated fields when a partial scrape/update omits them.
+        ow = frozenset(overwrite) if overwrite is not None else frozenset()
         prev = self._heroes.get(hero.name)
         if prev is not None:
-            hero = _merge_preserved(prev, hero)
+            hero = _merge_preserved(prev, hero, overwrite=ow)
         self._heroes[hero.name] = hero
         self._write_json()
         self._write_sqlite(hero)
+        return hero
 
     def all_heroes(self) -> list[HeroRecord]:
         return sorted(self._heroes.values(), key=lambda h: (h.roster_page, h.roster_index, h.name))
+
+    def reload(self) -> None:
+        """Re-read heroes.json into memory (picks up external OCR writes)."""
+        self._heroes.clear()
+        self._load_existing_json()
 
     def flush(self) -> None:
         self._write_json()

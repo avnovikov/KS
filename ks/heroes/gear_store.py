@@ -4,9 +4,52 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 from ks.heroes.gear_models import GearRecord
+
+# Fields preserved from a prior record when the incoming value is None.
+_PRESERVE_IF_NONE: frozenset[str] = frozenset({
+    "name", "troop_type", "slot", "rarity", "enhancement_level",
+    "mastery_level", "power", "equipped", "equipped_hero",
+})
+
+# Fields never overwritten by rescan unless the caller explicitly opts in.
+_LOCKED_UNLESS_OVERWRITE: frozenset[str] = frozenset(
+    {"enhancement_level", "mastery_level", "rarity", "slot"}
+)
+
+
+def _merge_preserved(
+    prev: GearRecord,
+    incoming: GearRecord,
+    overwrite: frozenset[str] = frozenset(),
+) -> GearRecord:
+    """Return incoming with locked/preserved fields filled from prev.
+
+    Locked fields always keep the prior value unless listed in ``overwrite``.
+    When a field is in ``overwrite``, the incoming value wins — including
+    explicit ``None`` (UI clear). Other ``_PRESERVE_IF_NONE`` fields fill only
+    when incoming is None.
+    """
+    updates: dict[str, object] = {}
+    for field in _PRESERVE_IF_NONE:
+        if field in overwrite:
+            continue
+        if field in _LOCKED_UNLESS_OVERWRITE:
+            prev_val = getattr(prev, field)
+            if prev_val is not None:
+                updates[field] = prev_val
+            continue
+        incoming_val = getattr(incoming, field)
+        if incoming_val is None:
+            prev_val = getattr(prev, field)
+            if prev_val is not None:
+                updates[field] = prev_val
+    if not updates:
+        return incoming
+    return replace(incoming, **updates)
 
 
 class GearStore:
@@ -62,23 +105,66 @@ class GearStore:
         raw = json.loads(self.json_path.read_text(encoding="utf-8"))
         items = raw.get("gear") if isinstance(raw, dict) else raw
         if not isinstance(items, list):
-            return
+            raise ValueError(
+                f"{self.json_path} must be a list or "
+                f'{{"gear": [...]}}; refusing to load (would wipe on upsert)'
+            )
         for item in items:
             piece = GearRecord.from_dict(item)
             self._pieces[piece.piece_id] = piece
 
-    def upsert(self, piece: GearRecord) -> None:
+    def get(self, piece_id: str) -> GearRecord | None:
+        """Return the stored record for piece_id, or None."""
+        return self._pieces.get(piece_id)
+
+    def upsert(self, piece: GearRecord, overwrite: frozenset[str] | None = None) -> GearRecord:
+        """Merge and persist piece; return the final stored record.
+
+        When a prior record exists, locked fields (enhancement_level,
+        mastery_level, rarity, slot) are preserved unless included in
+        ``overwrite``. Other _PRESERVE_IF_NONE fields fall back to the prior
+        value when the incoming field is None.
+        """
         if not piece.piece_id:
             raise ValueError("piece.piece_id must be non-empty")
+        ow = frozenset(overwrite) if overwrite is not None else frozenset()
+        prev = self._pieces.get(piece.piece_id)
+        if prev is not None:
+            piece = _merge_preserved(prev, piece, overwrite=ow)
         self._pieces[piece.piece_id] = piece
         self._write_json()
         self._write_sqlite(piece)
+        return piece
+
+    def delete(self, piece_id: str) -> bool:
+        """Remove piece from memory, JSON, and SQLite. Returns True if found."""
+        if piece_id not in self._pieces:
+            return False
+        del self._pieces[piece_id]
+        self._write_json()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM gear_stats WHERE piece_id = ?", (piece_id,))
+            conn.execute("DELETE FROM gear WHERE piece_id = ?", (piece_id,))
+        return True
 
     def all_pieces(self) -> list[GearRecord]:
         return sorted(
             self._pieces.values(),
             key=lambda p: (p.inventory_page, p.inventory_index, p.piece_id),
         )
+
+    def clear(self) -> None:
+        """Drop all pieces from memory, JSON, and SQLite (keeps schema)."""
+        self._pieces.clear()
+        self._write_json()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM gear_stats")
+            conn.execute("DELETE FROM gear")
+
+    def reload(self) -> None:
+        """Re-read gear.json into memory (picks up external OCR writes)."""
+        self._pieces.clear()
+        self._load_existing_json()
 
     def flush(self) -> None:
         self._write_json()

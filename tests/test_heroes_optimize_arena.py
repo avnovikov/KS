@@ -14,15 +14,37 @@ def test_arena_attack_picks_five_with_two_front() -> None:
         HeroRecord(name="Gordon", stars=2, pellets=5, power=230000),
     ]
     catalog = {
-        "Helga": CatalogEntry(name="Helga", troop="infantry", rarity="legendary"),
-        "Howard": CatalogEntry(name="Howard", troop="infantry", rarity="epic"),
-        "Jabel": CatalogEntry(name="Jabel", troop="cavalry", rarity="legendary"),
-        "Chenko": CatalogEntry(name="Chenko", troop="cavalry", rarity="epic"),
-        "Saul": CatalogEntry(name="Saul", troop="archer", rarity="legendary"),
-        "Diana": CatalogEntry(name="Diana", troop="archer", rarity="epic"),
-        "Gordon": CatalogEntry(name="Gordon", troop="cavalry", rarity="epic"),
+        "Helga": CatalogEntry(
+            name="Helga", troop="infantry", rarity="legendary",
+            arena_role="front_fighter", arena_value=90, arena_tags=("cc", "aoe", "tank"),
+        ),
+        "Howard": CatalogEntry(
+            name="Howard", troop="infantry", rarity="epic",
+            arena_role="front_tank", arena_value=85, arena_tags=("tank", "team_def"),
+        ),
+        "Jabel": CatalogEntry(
+            name="Jabel", troop="cavalry", rarity="legendary",
+            arena_role="back_cc", arena_value=92, arena_tags=("cc", "aoe"),
+        ),
+        "Chenko": CatalogEntry(
+            name="Chenko", troop="cavalry", rarity="epic",
+            arena_role="back_dps", arena_value=88, arena_tags=("aoe", "dps"),
+        ),
+        "Saul": CatalogEntry(
+            name="Saul", troop="archer", rarity="legendary",
+            arena_role="back_cc", arena_value=80, arena_tags=("cc", "dps"),
+        ),
+        "Diana": CatalogEntry(
+            name="Diana", troop="archer", rarity="epic",
+            arena_role="back_dps", arena_value=70, arena_tags=("dps", "aoe", "stamina"),
+            obtain="Desert Trial Event",
+        ),
+        "Gordon": CatalogEntry(
+            name="Gordon", troop="cavalry", rarity="epic",
+            arena_role="back_support", arena_value=75, arena_tags=("heal",),
+        ),
     }
-    roles = load_arena_roles("config/arena_roles.yaml")
+    roles = load_arena_roles("config/arena_roles.yaml", catalog=catalog)
     result = optimize_arena_attack(heroes, catalog, roles)
     assert result.status == "Optimal"
     assert len(result.heroes) == 5

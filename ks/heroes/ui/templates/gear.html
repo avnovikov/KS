@@ -27,9 +27,22 @@
       padding: 1.25rem 1.5rem;
       border-bottom: 1px solid var(--border);
       background: linear-gradient(180deg, #2a303a, var(--bg));
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 0.75rem 1.25rem;
     }
+    .header-text { min-width: 12rem; }
     h1 { margin: 0 0 0.35rem; font-size: 1.35rem; font-weight: 600; }
     .meta { color: var(--muted); font-size: 0.85rem; }
+    .header-actions { display: flex; align-items: center; gap: 0.6rem; }
+    button.rescan {
+      padding: 0.45rem 0.85rem;
+      font-size: 0.85rem;
+      white-space: nowrap;
+    }
+    button.rescan.busy { border-color: var(--muted); color: var(--muted); }
     main { padding: 1rem 1.5rem 2rem; overflow-x: auto; }
     table {
       width: 100%;
@@ -52,6 +65,14 @@
       text-transform: uppercase;
       letter-spacing: 0.04em;
     }
+    th.sortable {
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    th.sortable:hover { color: var(--accent); }
+    th.sortable[aria-sort="ascending"]::after { content: " ↑"; color: var(--accent); }
+    th.sortable[aria-sort="descending"]::after { content: " ↓"; color: var(--accent); }
     tr:hover td { background: rgba(108, 178, 255, 0.04); }
     input[type="number"] {
       width: 4.5rem;
@@ -77,6 +98,56 @@
     .rarity.epic { color: #c39bd3; }
     .rarity.blue, .rarity.rare { color: #85c1e9; }
     .rarity.green, .rarity.uncommon { color: #82e0aa; }
+    .rarity.grey, .rarity.gray, .rarity.common, .rarity.white { color: #9aa0a6; }
+    select.rarity-select,
+    select.slot-select {
+      padding: 0.25rem 0.45rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-transform: capitalize;
+      min-width: 5.5rem;
+    }
+    select.slot-select { font-weight: 500; }
+    select.rarity-select.rarity-grey {
+      color: #c5c9ce;
+      border-color: #9aa0a6;
+      background: rgba(154, 160, 166, 0.18);
+    }
+    select.rarity-select.rarity-green {
+      color: #82e0aa;
+      border-color: #58d68d;
+      background: rgba(130, 224, 170, 0.16);
+    }
+    select.rarity-select.rarity-blue {
+      color: #85c1e9;
+      border-color: #5dade2;
+      background: rgba(133, 193, 233, 0.16);
+    }
+    select.rarity-select.rarity-epic {
+      color: #c39bd3;
+      border-color: #af7ac5;
+      background: rgba(195, 155, 211, 0.16);
+    }
+    select.rarity-select.rarity-mythic {
+      color: #f0c674;
+      border-color: #f5b041;
+      background: rgba(240, 198, 116, 0.16);
+    }
+    select.rarity-select.rarity-red {
+      color: #f1959b;
+      border-color: #ec7063;
+      background: rgba(241, 149, 155, 0.16);
+    }
+    select.rarity-select option.grey { color: #9aa0a6; }
+    select.rarity-select option.green { color: #82e0aa; }
+    select.rarity-select option.blue { color: #85c1e9; }
+    select.rarity-select option.epic { color: #c39bd3; }
+    select.rarity-select option.mythic { color: #f0c674; }
+    select.rarity-select option.red { color: #f1959b; }
     .name-cell {
       display: flex;
       align-items: center;
@@ -106,30 +177,71 @@
     }
     #toast.ok { border-color: var(--ok); color: var(--ok); display: block; }
     #toast.err { border-color: var(--err); color: var(--err); display: block; }
+    #rescan-log {
+      margin-top: 1rem;
+      padding: 0.65rem 0.9rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel);
+      font-size: 0.8rem;
+      color: var(--muted);
+      max-height: 10rem;
+      overflow-y: auto;
+      display: none;
+    }
+    #rescan-log.active { display: block; }
+    #rescan-log .log-line { margin: 0.15rem 0; }
+    #rescan-log .log-line.piece { color: var(--ok); }
+    #rescan-log .log-line.kept { color: var(--accent); }
+    #rescan-log .log-line.duplicate { color: var(--muted); }
+    #rescan-log .log-line.error { color: var(--err); }
+    button.consume {
+      border-color: var(--err);
+      color: var(--err);
+      font-size: 0.75rem;
+      padding: 0.2rem 0.5rem;
+    }
+    button.consume:hover { background: rgba(241, 149, 155, 0.12); }
   </style>
 </head>
 <body>
   <header>
-    <h1>Gear inventory</h1>
-    <div class="meta">{{ gear_dir }} · {{ pieces|length }} pieces</div>
+    <div class="header-text">
+      <h1>KS Inventory</h1>
+      <div class="meta">{{ gear_dir }} · {{ pieces|length }} pieces</div>
+      {% set active = "gear" %}
+      {% include "_nav_tabs.html" %}
+    </div>
+    <div class="header-actions">
+      <button type="button" class="rescan" id="rescan-btn"
+              title="Replace inventory via ADB OCR (Backpack &gt; Gear must be open)">
+        Rescan from OCR
+      </button>
+    </div>
   </header>
+  <div id="rescan-log" aria-live="polite"></div>
   <main>
-    <table>
+    <table id="gear-table">
       <thead>
         <tr>
           <th>Name</th>
-          <th>Troop</th>
-          <th>Slot</th>
-          <th>Rarity</th>
-          <th>Enhancement</th>
+          <th class="sortable" data-sort="troop" scope="col" title="Sort by troop">Troop</th>
+          <th class="sortable" data-sort="slot" scope="col" title="Sort by slot">Slot</th>
+          <th class="sortable" data-sort="rarity" scope="col" title="Sort by rarity">Rarity</th>
+          <th class="sortable" data-sort="enhancement" scope="col" title="Sort by enhancement">Enhancement</th>
           <th>Mastery</th>
-          <th>Power</th>
+          <th class="sortable" data-sort="power" scope="col" title="Sort by power">Power</th>
           <th></th>
         </tr>
       </thead>
       <tbody>
         {% for p in pieces %}
-        <tr data-piece-id="{{ p.piece_id }}">
+        <tr data-piece-id="{{ p.piece_id }}"
+            data-troop="{{ (p.troop_type or '')|lower }}"
+            data-slot="{{ (p.slot or '')|lower }}"
+            data-rarity="{{ (p.rarity or '')|lower }}"
+            data-enhancement="{{ p.enhancement_level if p.enhancement_level is not none else '' }}"
+            data-power="{{ p.power if p.power is not none else '' }}">
           <td>
             <div class="name-cell">
               <img src="{{ icons.get(p.piece_id, '') }}" alt="" />
@@ -137,8 +249,37 @@
             </div>
           </td>
           <td>{{ p.troop_type or "—" }}</td>
-          <td>{{ p.slot or "—" }}</td>
-          <td class="rarity {{ (p.rarity or '')|lower }}">{{ p.rarity or "—" }}</td>
+          <td>
+            {% set s = (p.slot or '')|lower %}
+            {% set s_norm = 'helmet' if s in ['helm', 'hat', 'head']
+                 else 'chest' if s in ['armor', 'shroud']
+                 else 'gloves' if s in ['gauntlet', 'gauntlets', 'bracers']
+                 else 'boots' if s == 'greaves'
+                 else s %}
+            <select name="slot" class="slot-select">
+              <option value="" {% if not s_norm %}selected{% endif %}>—</option>
+              {% for opt in ['helmet', 'chest', 'gloves', 'boots'] %}
+              <option value="{{ opt }}"
+                {% if s_norm == opt %}selected{% endif %}>{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </td>
+          <td>
+            {% set r = (p.rarity or '')|lower %}
+            {% set r_norm = 'grey' if r in ['gray','common','white']
+                 else 'green' if r == 'uncommon'
+                 else 'blue' if r == 'rare'
+                 else 'epic' if r == 'purple'
+                 else 'mythic' if r == 'gold'
+                 else r %}
+            <select name="rarity" class="rarity-select{% if r_norm %} rarity-{{ r_norm }}{% endif %}">
+              <option value="" {% if not r_norm %}selected{% endif %}>—</option>
+              {% for opt in ['grey', 'green', 'blue', 'epic', 'mythic', 'red'] %}
+              <option value="{{ opt }}" class="{{ opt }}"
+                {% if r_norm == opt %}selected{% endif %}>{{ opt }}</option>
+              {% endfor %}
+            </select>
+          </td>
           <td>
             <input type="number" min="0" max="200" name="enhancement"
                    value="{{ p.enhancement_level if p.enhancement_level is not none else '' }}" />
@@ -148,7 +289,10 @@
                    value="{{ p.mastery_level if p.mastery_level is not none else '' }}" />
           </td>
           <td class="power-cell">{{ p.power if p.power is not none else "—" }}</td>
-          <td><button type="button" class="save">Save</button></td>
+          <td>
+            <button type="button" class="save">Save</button>
+            <button type="button" class="consume" data-piece-id="{{ p.piece_id }}" title="Mark piece as consumed (delete from inventory)">✕</button>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -156,6 +300,7 @@
   </main>
   <div id="toast"></div>
   <script>
+    const POWER_CURVES = {{ power_curves_json | safe }};
     const toast = document.getElementById("toast");
     function showToast(msg, ok) {
       toast.textContent = msg;
@@ -163,36 +308,310 @@
       clearTimeout(showToast._t);
       showToast._t = setTimeout(() => { toast.className = ""; toast.style.display = "none"; }, 2500);
     }
+
+    function estimatePower(rarity, enhancement, mastery) {
+      if (!rarity || enhancement == null || enhancement === "") return null;
+      const curve = POWER_CURVES[rarity.toLowerCase()];
+      if (!curve) return null;
+      const enh = Math.max(0, Math.min(Number(enhancement), curve.length - 1));
+      const base = curve[enh] || 0;
+      const mast = Number(mastery || 0);
+      return Math.round(base * (1.0 + 0.1 * mast));
+    }
+
+    const RARITY_RANK = {
+      mythic: 5, gold: 5, red: 5,
+      epic: 4, purple: 4,
+      rare: 3, blue: 3,
+      uncommon: 2, green: 2,
+      common: 1, grey: 1, gray: 1, white: 1,
+    };
+    const SLOT_RANK = { helmet: 1, helm: 1, chest: 2, gloves: 3, boots: 4 };
+    const TROOP_RANK = { infantry: 1, cavalry: 2, archers: 3, archer: 3 };
+
+    function sortValue(row, key) {
+      const raw = row.dataset[key] || "";
+      if (key === "power" || key === "enhancement") {
+        if (raw === "") return -1;
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : -1;
+      }
+      if (key === "rarity") return RARITY_RANK[raw] || 0;
+      if (key === "slot") return SLOT_RANK[raw] || 99;
+      if (key === "troop") return TROOP_RANK[raw] || 99;
+      return raw;
+    }
+
+    function sortTable(key, dir) {
+      const table = document.getElementById("gear-table");
+      const tbody = table.querySelector("tbody");
+      const rows = Array.from(tbody.querySelectorAll("tr"));
+      const mult = dir === "asc" ? 1 : -1;
+      rows.sort((a, b) => {
+        const va = sortValue(a, key);
+        const vb = sortValue(b, key);
+        if (va < vb) return -1 * mult;
+        if (va > vb) return 1 * mult;
+        return (a.dataset.pieceId || "").localeCompare(b.dataset.pieceId || "");
+      });
+      rows.forEach((row) => tbody.appendChild(row));
+      table.querySelectorAll("th.sortable").forEach((th) => {
+        if (th.dataset.sort === key) th.setAttribute("aria-sort", dir === "asc" ? "ascending" : "descending");
+        else th.removeAttribute("aria-sort");
+      });
+    }
+
+    document.querySelectorAll("#gear-table th.sortable").forEach((th) => {
+      th.addEventListener("click", () => {
+        const key = th.dataset.sort;
+        const current = th.getAttribute("aria-sort");
+        const dir = current === "ascending" ? "desc" : "asc";
+        sortTable(key, dir);
+      });
+    });
+
+    const rescanLog = document.getElementById("rescan-log");
+    function logLine(text, cls) {
+      const div = document.createElement("div");
+      div.className = "log-line" + (cls ? " " + cls : "");
+      div.textContent = text;
+      rescanLog.appendChild(div);
+      rescanLog.scrollTop = rescanLog.scrollHeight;
+    }
+
+    const rescanBtn = document.getElementById("rescan-btn");
+    if (rescanBtn) {
+      rescanBtn.addEventListener("click", () => {
+        const ok = window.confirm(
+          "Replace the entire gear inventory from ADB OCR?\n\n" +
+          "Leave Backpack > Gear open on the device. This clears the current set."
+        );
+        if (!ok) return;
+        rescanBtn.disabled = true;
+        rescanBtn.classList.add("busy");
+        rescanBtn.textContent = "Scanning…";
+        rescanLog.innerHTML = "";
+        rescanLog.classList.add("active");
+        logLine("OCR rescan started — leave Backpack > Gear open");
+
+        const es = new EventSource("/api/gear/rescan", { withCredentials: false });
+        // POST via fetch isn't compatible with EventSource; we call the SSE endpoint.
+        // The server accepts POST via route; for GET-based SSE we use the stream directly.
+        // Note: EventSource always uses GET. To support SSE on POST, trigger with fetch instead.
+        es.close();  // Immediately close the EventSource (POST route requires fetch).
+
+        fetch("/api/gear/rescan", { method: "POST", cache: "no-store" })
+          .then(async (res) => {
+            if (!res.ok || !res.body) {
+              const data = await res.json().catch(() => ({}));
+              const detail = data.detail || res.statusText;
+              throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+            }
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+            let lastEvent = "";
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const parts = buffer.split("\n\n");
+              buffer = parts.pop();
+              for (const block of parts) {
+                let evType = lastEvent;
+                let evData = "";
+                for (const line of block.split("\n")) {
+                  if (line.startsWith("event:")) evType = line.slice(6).trim();
+                  else if (line.startsWith("data:")) evData = line.slice(5).trim();
+                }
+                lastEvent = "";
+                if (evType === "piece") {
+                  const d = JSON.parse(evData || "{}");
+                  logLine(`✓ ${d.name || d.piece_id} +${d.enhancement_level ?? "?"} pwr=${d.power ?? "?"}`, "piece");
+                } else if (evType === "kept") {
+                  const d = JSON.parse(evData || "{}");
+                  logLine(`⊙ kept ${d.name || d.piece_id} (level locked)`, "kept");
+                } else if (evType === "duplicate") {
+                  const d = JSON.parse(evData || "{}");
+                  logLine(`⟳ dup ${d.piece_id || d.key || ""}`, "duplicate");
+                } else if (evType === "done") {
+                  const d = JSON.parse(evData || "{}");
+                  logLine(`Done · ${d.count ?? 0} pieces`, "piece");
+                  showToast(`Rescan done · ${d.count ?? 0} pieces`, true);
+                  if ("caches" in window) {
+                    caches.keys().then((keys) => Promise.all(keys.map((k) => caches.delete(k)))).catch(() => {});
+                  }
+                  const bust = d.cache_bust || String(Date.now());
+                  setTimeout(() => window.location.replace(`/gear?v=${encodeURIComponent(bust)}`), 600);
+                } else if (evType === "error") {
+                  const d = JSON.parse(evData || "{}");
+                  logLine(`Error: ${d.detail || evData}`, "error");
+                  showToast(d.detail || "Rescan failed", false);
+                  rescanBtn.disabled = false;
+                  rescanBtn.classList.remove("busy");
+                  rescanBtn.textContent = "Rescan from OCR";
+                }
+              }
+            }
+          })
+          .catch((err) => {
+            logLine(`Error: ${err.message || err}`, "error");
+            showToast(String(err.message || err), false);
+            rescanBtn.disabled = false;
+            rescanBtn.classList.remove("busy");
+            rescanBtn.textContent = "Rescan from OCR";
+          });
+      });
+    }
+
     document.querySelectorAll("button.save").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const row = btn.closest("tr");
-        const id = row.dataset.pieceId;
-        const enh = row.querySelector('input[name="enhancement"]').value;
-        const mast = row.querySelector('input[name="mastery"]').value;
-        const body = {};
-        if (enh !== "") body.enhancement_level = Number(enh);
-        if (mast === "") body.clear_mastery = true;
-        else body.mastery_level = Number(mast);
         btn.disabled = true;
         try {
-          const res = await fetch(`/api/gear/${encodeURIComponent(id)}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          });
-          const data = await res.json().catch(() => ({}));
-          if (!res.ok) throw new Error(data.detail || res.statusText);
-          const powerCell = row.querySelector(".power-cell");
-          if (powerCell && data.piece && data.piece.power != null) {
-            powerCell.textContent = Number(data.piece.power).toLocaleString();
-          }
-          showToast(`Saved ${data.piece?.name || id} · power ${data.piece?.power ?? "—"}`, true);
+          await saveGearRow(row);
         } catch (err) {
           showToast(String(err.message || err), false);
         } finally {
           btn.disabled = false;
         }
       });
+    });
+
+    document.querySelectorAll("button.consume").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.pieceId;
+        const row = btn.closest("tr");
+        const name = row.querySelector(".name-cell span")?.textContent || id;
+        if (!window.confirm(`Mark "${name}" as consumed and remove from inventory?`)) return;
+        btn.disabled = true;
+        try {
+          const res = await fetch(`/api/gear/${encodeURIComponent(id)}`, {
+            method: "DELETE",
+            cache: "no-store",
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.detail || res.statusText);
+          row.remove();
+          showToast(`Removed ${name}`, true);
+        } catch (err) {
+          showToast(String(err.message || err), false);
+          btn.disabled = false;
+        }
+      });
+    });
+
+    const RARITY_CLASSES = ["rarity-grey", "rarity-green", "rarity-blue", "rarity-epic", "rarity-mythic", "rarity-red"];
+    function paintRaritySelect(sel) {
+      if (!sel) return;
+      RARITY_CLASSES.forEach((c) => sel.classList.remove(c));
+      if (sel.value) sel.classList.add(`rarity-${sel.value}`);
+    }
+
+    async function saveGearRow(row, { rarityOnly = false, slotOnly = false } = {}) {
+      const id = row.dataset.pieceId;
+      const enh = row.querySelector('input[name="enhancement"]').value;
+      const mast = row.querySelector('input[name="mastery"]').value;
+      const raritySel = row.querySelector('select[name="rarity"]');
+      const slotSel = row.querySelector('select[name="slot"]');
+      const rarity = raritySel ? raritySel.value : "";
+      const slot = slotSel ? slotSel.value : "";
+      const body = {};
+      if (!rarityOnly && !slotOnly) {
+        if (enh === "") body.clear_enhancement = true;
+        else body.enhancement_level = Number(enh);
+        if (mast === "") body.clear_mastery = true;
+        else body.mastery_level = Number(mast);
+      }
+      if (!slotOnly) {
+        if (rarity === "") body.clear_rarity = true;
+        else body.rarity = rarity;
+      }
+      if (!rarityOnly) {
+        if (slot === "") body.clear_slot = true;
+        else body.slot = slot;
+      }
+      const res = await fetch(`/api/gear/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      const powerCell = row.querySelector(".power-cell");
+      if (powerCell && data.piece && data.piece.power != null) {
+        powerCell.textContent = Number(data.piece.power).toLocaleString();
+        row.dataset.power = String(data.piece.power);
+      }
+      if (data.piece) {
+        row.dataset.enhancement =
+          data.piece.enhancement_level == null ? "" : String(data.piece.enhancement_level);
+        row.dataset.rarity = (data.piece.rarity || "").toLowerCase();
+        row.dataset.slot = (data.piece.slot || "").toLowerCase();
+        if (raritySel) {
+          raritySel.value = (data.piece.rarity || "").toLowerCase();
+          paintRaritySelect(raritySel);
+        }
+        if (slotSel) {
+          slotSel.value = (data.piece.slot || "").toLowerCase();
+        }
+        const iconImg = row.querySelector(".name-cell img");
+        if (iconImg && data.piece.icon_url) {
+          iconImg.src = data.piece.icon_url;
+        }
+      }
+      showToast(`Saved ${data.piece?.name || id} · ${data.piece?.slot || "—"} · ${data.piece?.rarity || "—"} · power ${data.piece?.power ?? "—"}`, true);
+      return data;
+    }
+
+    // Live power preview: update power cell when rarity/enhancement/mastery change.
+    // Rarity/slot changes auto-persist those fields only so level edits stay on Save.
+    document.querySelectorAll("#gear-table tbody tr").forEach((row) => {
+      const raritySel = row.querySelector('select[name="rarity"]');
+      const slotSel = row.querySelector('select[name="slot"]');
+      const enhInput = row.querySelector('input[name="enhancement"]');
+      const mastInput = row.querySelector('input[name="mastery"]');
+      const powerCell = row.querySelector(".power-cell");
+      if (!enhInput || !mastInput || !powerCell) return;
+      function updateLivePower() {
+        const rarity = (raritySel && raritySel.value) || row.dataset.rarity || "";
+        const est = estimatePower(rarity, enhInput.value, mastInput.value);
+        if (est != null) powerCell.textContent = est.toLocaleString();
+      }
+      enhInput.addEventListener("input", updateLivePower);
+      mastInput.addEventListener("input", updateLivePower);
+      if (raritySel) {
+        paintRaritySelect(raritySel);
+        raritySel.addEventListener("change", async () => {
+          paintRaritySelect(raritySel);
+          updateLivePower();
+          raritySel.disabled = true;
+          try {
+            await saveGearRow(row, { rarityOnly: true });
+          } catch (err) {
+            showToast(String(err.message || err), false);
+            // Revert select to last saved rarity on failure.
+            raritySel.value = row.dataset.rarity || "";
+            paintRaritySelect(raritySel);
+            updateLivePower();
+          } finally {
+            raritySel.disabled = false;
+          }
+        });
+      }
+      if (slotSel) {
+        slotSel.addEventListener("change", async () => {
+          slotSel.disabled = true;
+          try {
+            await saveGearRow(row, { slotOnly: true });
+          } catch (err) {
+            showToast(String(err.message || err), false);
+            slotSel.value = row.dataset.slot || "";
+          } finally {
+            slotSel.disabled = false;
+          }
+        });
+      }
     });
   </script>
 </body>

@@ -1,4 +1,4 @@
-"""Local FastAPI UI for heroes / gear inventory."""
+"""Local FastAPI UI for gear inventory (enhancement/mastery edits)."""
 
 from ks.heroes.ui.app import create_app, run_ui
 
