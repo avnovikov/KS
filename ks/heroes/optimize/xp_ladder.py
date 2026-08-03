@@ -11,7 +11,7 @@ import yaml
 _ROOT = Path(__file__).resolve().parents[3]
 _OPT = _ROOT / "config" / "hero_gear_optimizer"
 
-# Denominations largest-first for covering a cost.
+# Prefer large densoms only when they reduce waste; iteration order for DP.
 _FODDER_ORDER = ("purple", "part_100", "blue", "green", "grey")
 
 
@@ -99,6 +99,65 @@ def xp_cost_next_level(ladder: dict[str, Any], current_level: int) -> int | None
     return int(by_level[nxt]["xp_cost"])
 
 
+def _spend_preference_key(spend: dict[str, int]) -> tuple[int, int]:
+    """Lower is better: fewer items (larger densoms), then fewer large leftovers used.
+
+    Min-waste already decided; this only breaks ties — e.g. prefer one 100-pt
+    plate over six small pieces when both cover 100 XP exactly.
+    """
+    n_items = sum(int(v) for v in spend.values())
+    # Secondary: prefer spending larger densoms when item counts match.
+    large_first = tuple(-int(spend.get(k, 0)) for k in _FODDER_ORDER)
+    return (n_items, *large_first)
+
+
+def _plan_cover_min_waste(
+    counts: dict[str, int],
+    cost: int,
+    vals: dict[str, int],
+) -> dict[str, int] | None:
+    """Cover ``cost`` XP with min overshoot; break ties sparing large densoms."""
+    max_unit = max(int(vals[k]) for k in counts)
+    limit = int(cost) + max_unit - 1
+    # xp -> spend counts achieving that xp
+    reachable: dict[int, dict[str, int]] = {0: {}}
+
+    for kind in reversed(_FODDER_ORDER):  # add small densoms first
+        unit = int(vals[kind])
+        have = int(counts.get(kind, 0))
+        if have <= 0 or unit <= 0:
+            continue
+        previous = reachable
+        reachable = dict(previous)
+        for xp, spend in previous.items():
+            for n in range(1, have + 1):
+                new_xp = xp + n * unit
+                if new_xp > limit:
+                    break
+                new_spend = dict(spend)
+                new_spend[kind] = int(new_spend.get(kind, 0)) + n
+                old = reachable.get(new_xp)
+                if old is None or _spend_preference_key(new_spend) < _spend_preference_key(
+                    old
+                ):
+                    reachable[new_xp] = new_spend
+
+    best_xp: int | None = None
+    best_spend: dict[str, int] | None = None
+    best_key: tuple[int, ...] | None = None
+    for xp, spend in reachable.items():
+        if xp < cost:
+            continue
+        key = (xp - cost, *_spend_preference_key(spend))
+        if best_key is None or key < best_key:
+            best_xp = xp
+            best_spend = spend
+            best_key = key
+    if best_spend is None:
+        return None
+    return {k: v for k, v in best_spend.items() if v}
+
+
 @dataclass(frozen=True)
 class FodderBag:
     grey: int = 0
@@ -126,23 +185,17 @@ class FodderBag:
         *,
         values: dict[str, int] | None = None,
     ) -> dict[str, int] | None:
-        """Greedy largest-first cover; returns counts to spend or None."""
+        """Min-waste cover of ``cost`` XP; returns counts to spend or None.
+
+        Prefers small denominations when they cover with less overshoot than a
+        plate/purple (e.g. 5 grey for 45 XP instead of one 100-pt part).
+        """
         if cost <= 0:
             return {}
         vals = values or load_fodder_xp_values()
-        remaining = int(cost)
-        available = dict(self.counts())
-        spend = {k: 0 for k in available}
-        for kind in _FODDER_ORDER:
-            unit = int(vals[kind])
-            while available[kind] > 0 and remaining > 0:
-                # Take a unit if it helps (even if overshoot).
-                available[kind] -= 1
-                spend[kind] += 1
-                remaining -= unit
-        if remaining > 0:
+        if self.total_xp(vals) < int(cost):
             return None
-        return {k: v for k, v in spend.items() if v}
+        return _plan_cover_min_waste(self.counts(), int(cost), vals)
 
     def consume(self, spend: dict[str, int]) -> FodderBag:
         counts = self.counts()
