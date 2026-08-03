@@ -355,3 +355,181 @@ def test_collect_heroes_rematch_replaces_name(tmp_path):
     names = [h.name for h in heroes]
     assert "Beta" in names
     assert "Delta" in names
+
+
+def test_collect_power_i_naked_is_authoritative_over_detail_garbage(tmp_path):
+    """Power-i Level+Stars+Skills must replace detail-box OCR junk in the store."""
+    from ks.heroes.power_breakdown import PowerBreakdown
+    from ks.heroes.power_i_capture import PowerICapture
+    from ks.heroes.power_history import load_points
+
+    cfg = load_heroes_config()
+    device = RecordingDevice(png_bytes=_png())
+    store = HeroStore(tmp_path)
+
+    naked = 71_045 + 131_690 + 15_120  # 217_855
+
+    def fake_scrape(
+        device,
+        cfg,
+        *,
+        page,
+        index,
+        ocr_fn=None,
+        sleep_fn=None,
+        on_power_breakdown=None,
+        **_kw,
+    ):
+        if page != 0 or index != 0:
+            return None
+        if on_power_breakdown is not None:
+            on_power_breakdown(
+                PowerICapture(
+                    breakdown=PowerBreakdown(
+                        hero_power=naked,
+                        from_level=71_045,
+                        from_stars=131_690,
+                        from_skills=15_120,
+                    ),
+                    observed_name="Forrest",
+                    raw_name="Forrest",
+                )
+            )
+        return HeroRecord(
+            name="Forrest",
+            power=3_157_751,  # detail OCR garbage
+            level=58,
+            stars=3,
+            pellets=0,
+            roster_page=0,
+            roster_index=0,
+            scraped_at="t-forrest",
+        )
+
+    heroes = collect_heroes(
+        device,
+        cfg,
+        store,
+        sleep_fn=lambda _s: None,
+        scrape_fn=fake_scrape,
+    )
+    assert len(heroes) == 1
+    stored = next(h for h in store.all_heroes() if h.name == "Forrest")
+    assert stored.power == naked
+    points = load_points(tmp_path / "power_history", "Forrest")
+    assert len(points) == 1
+    assert points[0].from_level == 71_045
+    assert points[0].from_stars == 131_690
+    assert points[0].from_skills == 15_120
+
+
+def test_collect_keeps_prior_naked_when_detail_is_million_glitch(tmp_path):
+    """Without Power-i, absurd ≥1M detail OCR must not clobber stored naked power."""
+    cfg = load_heroes_config()
+    device = RecordingDevice(png_bytes=_png())
+    store = HeroStore(tmp_path)
+    store.upsert(
+        HeroRecord(
+            name="Forrest",
+            power=217_855,
+            level=58,
+            stars=3,
+            pellets=0,
+            roster_page=0,
+            roster_index=0,
+            scraped_at="t0",
+        )
+    )
+
+    def fake_scrape(device, cfg, *, page, index, ocr_fn=None, sleep_fn=None, **_kw):
+        if page != 0 or index != 0:
+            return None
+        return HeroRecord(
+            name="Forrest",
+            power=3_157_751,
+            level=58,
+            stars=3,
+            pellets=0,
+            roster_page=0,
+            roster_index=0,
+            scraped_at="t1",
+        )
+
+    collect_heroes(
+        device,
+        cfg,
+        store,
+        sleep_fn=lambda _s: None,
+        scrape_fn=fake_scrape,
+        # Force re-collect: clear seen by using a fresh collect — name already in store
+        # but not in seen, so first cell still upserts.
+    )
+    stored = next(h for h in store.all_heroes() if h.name == "Forrest")
+    assert stored.power == 217_855
+
+
+def test_collect_applies_naked_to_slot_not_wrong_observed_hero(tmp_path):
+    """Slot hero keeps Power-i naked even if tooltip name OCR points elsewhere."""
+    from ks.heroes.power_breakdown import PowerBreakdown
+    from ks.heroes.power_i_capture import PowerICapture
+
+    cfg = load_heroes_config()
+    device = RecordingDevice(png_bytes=_png())
+    store = HeroStore(tmp_path)
+    store.upsert(
+        HeroRecord(
+            name="Howard",
+            power=269_680,
+            roster_page=0,
+            roster_index=2,
+            scraped_at="t-howard",
+        )
+    )
+
+    naked = 217_855
+
+    def fake_scrape(
+        device,
+        cfg,
+        *,
+        page,
+        index,
+        ocr_fn=None,
+        sleep_fn=None,
+        on_power_breakdown=None,
+        **_kw,
+    ):
+        if page != 0 or index != 0:
+            return None
+        if on_power_breakdown is not None:
+            on_power_breakdown(
+                PowerICapture(
+                    breakdown=PowerBreakdown(
+                        hero_power=naked,
+                        from_level=71_045,
+                        from_stars=131_690,
+                        from_skills=15_120,
+                    ),
+                    observed_name="Howard",  # wrong OCR of on-screen name
+                    raw_name="Howard",
+                )
+            )
+        return HeroRecord(
+            name="Forrest",
+            power=3_157_751,
+            roster_page=0,
+            roster_index=0,
+            scraped_at="t-forrest",
+        )
+
+    collect_heroes(
+        device,
+        cfg,
+        store,
+        sleep_fn=lambda _s: None,
+        scrape_fn=fake_scrape,
+    )
+    forrest = next(h for h in store.all_heroes() if h.name == "Forrest")
+    howard = next(h for h in store.all_heroes() if h.name == "Howard")
+    assert forrest.power == naked
+    assert howard.power == 269_680  # must not be clobbered
