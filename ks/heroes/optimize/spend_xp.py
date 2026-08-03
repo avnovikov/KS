@@ -224,13 +224,29 @@ def build_event_utility(
 
 @dataclass(frozen=True)
 class _UpgradeCandidate:
-    """A single +1 level upgrade under consideration, with its ΔU and cost."""
+    """A single +1 level upgrade under consideration, with its ΔU and XP cost."""
 
     delta: float
+    xp_cost: int
     piece_id: str
     from_level: int
     to_level: int
     fodder_plan: dict[str, int]
+
+    @property
+    def delta_per_xp(self) -> float:
+        if self.xp_cost <= 0:
+            return float("-inf")
+        return self.delta / float(self.xp_cost)
+
+
+def _is_better_candidate(candidate: _UpgradeCandidate, best: _UpgradeCandidate) -> bool:
+    """Prefer higher ΔU/XP; break ties with higher raw ΔU, then lower XP cost."""
+    if candidate.delta_per_xp != best.delta_per_xp:
+        return candidate.delta_per_xp > best.delta_per_xp
+    if candidate.delta != best.delta:
+        return candidate.delta > best.delta
+    return candidate.xp_cost < best.xp_cost
 
 
 def _best_upgrade_candidate(
@@ -243,7 +259,7 @@ def _best_upgrade_candidate(
     utility_fn: UtilityFn,
     current_u: float,
 ) -> _UpgradeCandidate | None:
-    """Scan every piece for the affordable +1 level upgrade with the best ΔU."""
+    """Scan every piece for the affordable +1 with the best ΔU per XP."""
     best: _UpgradeCandidate | None = None
     for piece_id, piece in by_id.items():
         cur_lv = int(levels.get(piece_id, piece.enhancement_level or 0))
@@ -263,8 +279,11 @@ def _best_upgrade_candidate(
         if trial_u == float("-inf"):
             continue
         delta = trial_u - current_u
-        if best is None or delta > best.delta:
-            best = _UpgradeCandidate(delta, piece_id, cur_lv, cur_lv + 1, plan)
+        cand = _UpgradeCandidate(
+            delta, int(cost), piece_id, cur_lv, cur_lv + 1, plan
+        )
+        if best is None or _is_better_candidate(cand, best):
+            best = cand
     return best
 
 
@@ -306,7 +325,7 @@ def allocate_fodder_xp(
     ladder: dict[str, Any] | None = None,
     fodder_values: dict[str, int] | None = None,
 ) -> SpendResult:
-    """Greedy: repeatedly take the next +1 level with best positive ΔU."""
+    """Greedy: repeatedly take the next +1 level with best positive ΔU/XP."""
     if not gear:
         raise ValueError("gear inventory is empty")
     xp_ladder = ladder or load_xp_ladder()

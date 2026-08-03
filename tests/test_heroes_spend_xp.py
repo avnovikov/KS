@@ -1,4 +1,4 @@
-"""Tests for fodder XP allocation (knapsack-style greedy ΔU)."""
+"""Tests for fodder XP allocation (knapsack-style greedy ΔU/XP)."""
 
 from __future__ import annotations
 
@@ -76,3 +76,32 @@ def test_allocate_stops_when_no_positive_delta() -> None:
     result = allocate_fodder_xp(gear, bag, utility, event="test", max_steps=5)
     assert result.steps == ()
     assert result.leftover.grey == 10
+
+
+def test_allocate_prefers_delta_u_per_xp_over_raw_delta() -> None:
+    """Expensive +1 with higher raw ΔU must lose to cheap +1 with better ΔU/XP.
+
+    Mirrors the Arena gift-bag failure mode: Praetorian +1 (ΔU≈0.065, XP=310)
+    beat Stonewall +1 (ΔU≈0.043, XP=45) under raw-ΔU greedy.
+    """
+    ladder = load_xp_ladder()
+    # blue@7 → next costs 45; epic@41 → next costs 310
+    gear = [
+        _piece("cheap", level=7, rarity="blue", troop="infantry", slot="chest"),
+        _piece("pricey", level=41, rarity="epic", troop="infantry", slot="gloves"),
+    ]
+
+    def utility(g):
+        levels = {p.piece_id: int(p.enhancement_level or 0) for p in g}
+        # +1 cheap → ΔU=50; +1 pricey → ΔU=100 (wins raw ΔU, loses ΔU/XP)
+        u = 50.0 * (levels.get("cheap", 7) - 7) + 100.0 * (levels.get("pricey", 41) - 41)
+        return u, {"levels": levels}
+
+    bag = FodderBag(part_100=4)  # 400 XP — enough for either first step
+    result = allocate_fodder_xp(
+        gear, bag, utility, event="test", max_steps=1, ladder=ladder
+    )
+    assert result.steps, "expected one upgrade step"
+    assert result.steps[0].piece_id == "cheap"
+    assert result.steps[0].from_level == 7
+    assert result.steps[0].to_level == 8
