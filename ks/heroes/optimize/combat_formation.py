@@ -60,6 +60,9 @@ class CombatFormationResult:
             out["side"] = self.side
         if self.explanations is not None:
             out["explanations"] = self.explanations
+        survival = (self.explanations or {}).get("survival")
+        if survival is not None:
+            out["survival"] = survival
         return out
 
 
@@ -270,6 +273,11 @@ def solve_combat_formation(
     }
     gear_bonus_by_hero = _provisional_gear_bonus(usable, catalog, gear, gear_profile)
 
+    # Sanitize OCR power blow-ups before they dominate the ILP objective.
+    from ks.heroes.optimize.survival_pipeline import sanitize_hero_powers
+
+    power_by_name = sanitize_hero_powers(usable, roles=roles)
+
     _base_score_fn = base_score_fn or (
         lambda h, entry, roles, *, effective_power, gear_bonus: hero_base_score(
             h, entry, roles,
@@ -290,7 +298,7 @@ def solve_combat_formation(
             h,
             catalog.get(h.name),
             roles,
-            effective_power=h.power,
+            effective_power=power_by_name.get(h.name, h.power),
             gear_bonus=float(gear_bonus_by_hero.get(h.name, 0.0)),
         )
 

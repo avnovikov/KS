@@ -67,6 +67,7 @@ def test_optimize_page_and_api(tmp_path: Path) -> None:
     assert b"Arena" in page.content
     assert b"Conquest" in page.content
     assert b"conquest-block" in page.content
+    assert b"renderSurvivalBlock" in page.content
     assert b'href="/heroes"' in page.content
     assert b"Regenerate" in page.content
     assert b"gear-detail-modal" in page.content
@@ -108,6 +109,23 @@ def test_optimize_page_and_api(tmp_path: Path) -> None:
     assert conquest["status"] == "Optimal"
     assert set(conquest["formation"]) == {"F1", "F2", "B1", "B2", "B3"}
     assert len(conquest["heroes"]) == 5
+
+    for label, row in (
+        ("arena_attack", arena["attack"]),
+        ("arena_defense", arena["defense"]),
+        ("conquest", conquest),
+    ):
+        surv = row.get("survival")
+        assert surv, f"{label} missing survival"
+        assert "score_eff" in surv
+        assert "foes" in surv
+        sens = surv.get("sensitivity")
+        assert sens, f"{label} missing sensitivity"
+        assert sens.get("win_summary")
+        ids = {v["id"] for v in sens["variants"]}
+        assert {"baseline", "gear_f2_first", "gear_back_first", "swap_front", "swap_front_f1_gear"} <= ids
+        baseline = next(v for v in sens["variants"] if v["id"] == "baseline")
+        assert baseline["delta_score_eff"] == 0.0
 
 
 def test_optimize_gear_xp_api_smoke(tmp_path: Path) -> None:

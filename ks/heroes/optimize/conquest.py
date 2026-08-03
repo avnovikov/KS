@@ -1,4 +1,4 @@
-"""Conquest optimizer: 5 heroes, 2F+3B, Conquest-skill aware scoring."""
+"""Conquest optimizer: 5 heroes, 2F+3B, Conquest-skill aware scoring + survival."""
 
 from __future__ import annotations
 
@@ -12,9 +12,11 @@ from ks.heroes.optimize.combat_formation import (
     placement_mult,
     solve_combat_formation,
 )
+from ks.heroes.optimize.opponent_models import GEAR_FRONT_FIRST
+from ks.heroes.optimize.survival_pipeline import attach_survival
 from ks.heroes.optimize.types import CatalogEntry
 
-CONQUEST_GEAR_ORDER = ("F1", "F2", "B2", "B1", "B3")
+CONQUEST_GEAR_ORDER = GEAR_FRONT_FIRST
 _ULTIMATE_LEVEL_WEIGHT = 0.04
 
 
@@ -63,13 +65,14 @@ def optimize_conquest(
     gear: list[GearRecord] | None = None,
     gear_profile: str = "early_game_combat",
     with_explanations: bool = False,
+    with_survival: bool = True,
 ) -> CombatFormationResult:
     """Select and place the best 5-hero Conquest formation (2F + 3B).
 
-    Scoring applies attack-side placement multipliers and scales each hero's
-    base score by their ultimate skill level via ``ultimate_level_multiplier``.
+    When ``with_survival`` is true, attach a ``survival`` block comparing the
+    lineup to self-play foes from the same roster/gear.
     """
-    return solve_combat_formation(
+    result = solve_combat_formation(
         "conquest",
         heroes,
         catalog,
@@ -84,4 +87,18 @@ def optimize_conquest(
         ),
         with_explanations=with_explanations,
         explain_fn=None,
+    )
+    if not with_survival:
+        return result
+    return attach_survival(
+        result,
+        heroes,
+        catalog,
+        roles,
+        gear=gear,
+        gear_profile=gear_profile,
+        side="attack",
+        base_score_fn=_conquest_base_score,
+        gear_order=CONQUEST_GEAR_ORDER,
+        heuristic_mode="conquest",
     )

@@ -152,8 +152,8 @@
     }
     .modal.open { display: flex; }
     .modal-panel {
-      width: min(42rem, 100%);
-      max-height: min(90vh, 40rem);
+      width: min(48rem, 100%);
+      max-height: min(90vh, 44rem);
       overflow: auto;
       background: var(--panel);
       border: 1px solid var(--border);
@@ -212,6 +212,50 @@
       font-weight: 550;
     }
     .why .marginal.critical { color: var(--err); }
+    .surv {
+      margin-top: 0.55rem;
+      padding-top: 0.45rem;
+      border-top: 1px dashed var(--border);
+      font-size: 0.72rem;
+      color: var(--muted);
+      text-align: left;
+    }
+    .surv .surv-score {
+      color: var(--text);
+      font-weight: 550;
+      margin-bottom: 0.25rem;
+    }
+    .surv table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0.25rem 0 0.35rem;
+      font-size: 0.7rem;
+    }
+    .surv th, .surv td {
+      text-align: left;
+      padding: 0.12rem 0.25rem;
+      border-bottom: 1px solid rgba(58, 63, 75, 0.7);
+    }
+    .surv th { color: var(--muted); font-weight: 500; }
+    .surv .delta-pos { color: var(--ok); }
+    .surv .delta-neg { color: var(--err); }
+    .surv .win {
+      margin: 0.35rem 0 0;
+      color: var(--text);
+      font-size: 0.72rem;
+      line-height: 1.35;
+    }
+    .surv-modal {
+      margin: 0 0 0.85rem;
+      padding: 0.65rem 0.75rem;
+      border-radius: 8px;
+      background: rgba(0, 0, 0, 0.22);
+      border: 1px solid var(--border);
+    }
+    .surv-modal h3 {
+      margin: 0 0 0.35rem;
+      font-size: 0.88rem;
+    }
     .gear-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -347,6 +391,78 @@
       if (n == null || Number.isNaN(n) || !Number.isFinite(Number(n))) return "—";
       return Number(n).toFixed(1);
     }
+    function fmtS(n) {
+      if (n == null || Number.isNaN(n) || !Number.isFinite(Number(n))) return "—";
+      return Number(n).toFixed(2);
+    }
+    function fmtDelta(n) {
+      if (n == null || Number.isNaN(n) || !Number.isFinite(Number(n))) return "—";
+      const v = Number(n);
+      const sign = v > 0 ? "+" : "";
+      return sign + v.toFixed(1);
+    }
+    function deltaClass(n) {
+      if (n == null || !Number.isFinite(Number(n))) return "";
+      if (Number(n) > 0.05) return "delta-pos";
+      if (Number(n) < -0.05) return "delta-neg";
+      return "";
+    }
+    function foeFrontLabel(block) {
+      const form = (block && block.foe && block.foe.formation) || {};
+      const a = form.F1 || "?";
+      const b = form.F2 || "?";
+      return `${a}/${b}`;
+    }
+    function renderSurvivalBlock(surv, { compact } = { compact: true }) {
+      if (!surv) return "";
+      const sens = surv.sensitivity || {};
+      const foes = surv.foes || {};
+      const primary = surv.primary_foe || "naive_max_power";
+      const foeKeys = Object.keys(foes);
+      const foeRows = foeKeys
+        .map((k) => {
+          const b = foes[k] || {};
+          const mark = k === primary ? " ★" : "";
+          return (
+            `<tr><td>${esc(k.replaceAll("_", " "))}${esc(mark)}</td>` +
+            `<td>${esc(foeFrontLabel(b))}</td>` +
+            `<td>${esc(fmtS(b.s))}</td>` +
+            `<td>${esc(fmtScore(b.score_eff))}</td></tr>`
+          );
+        })
+        .join("");
+      const variants = (sens.variants || []).filter((v) => v.id !== "baseline");
+      const sensRows = variants
+        .slice()
+        .sort((a, b) => Number(b.delta_score_eff) - Number(a.delta_score_eff))
+        .map((v) => {
+          const d = v.delta_score_eff;
+          return (
+            `<tr><td>${esc(v.label || v.id)}</td>` +
+            `<td>${esc(fmtScore(v.score_eff))}</td>` +
+            `<td class="${deltaClass(d)}">${esc(fmtDelta(d))}</td>` +
+            `<td>${esc(fmtS(v.s))}</td></tr>`
+          );
+        })
+        .join("");
+      const wrapClass = compact ? "surv" : "surv surv-modal";
+      const title = compact ? "" : "<h3>Front survival vs self-play</h3>";
+      return (
+        `<div class="${wrapClass}">` +
+        title +
+        `<div class="surv-score">score_eff ${esc(fmtScore(surv.score_eff))} · s ${esc(fmtS((foes[primary] || {}).s))} · ILP ${esc(fmtScore(surv.ilp_score))}</div>` +
+        (foeRows
+          ? `<table><thead><tr><th>Foe</th><th>Front</th><th>s</th><th>eff</th></tr></thead><tbody>${foeRows}</tbody></table>`
+          : "") +
+        (sensRows
+          ? `<table><thead><tr><th>Sensitivity</th><th>eff</th><th>Δ</th><th>s</th></tr></thead><tbody>${sensRows}</tbody></table>`
+          : "") +
+        (sens.win_summary
+          ? `<p class="win">${esc(sens.win_summary)}</p>`
+          : "") +
+        `</div>`
+      );
+    }
     function heroNames(row) {
       return (row.heroes || []).map((h) => h.name || h).join(", ");
     }
@@ -445,10 +561,20 @@
       const body = document.getElementById("gear-modal-body");
       const assignment = row.gear_assignment || {};
       const names = orderedHeroNames(row);
+      const surv = row.survival || (row.explanations && row.explanations.survival) || null;
+      let survHtml = "";
+      try {
+        survHtml = renderSurvivalBlock(surv, { compact: false });
+      } catch (e) {
+        survHtml =
+          `<p class="heroes" style="color:var(--err)">Survival detail unavailable</p>`;
+      }
       if (!names.length) {
-        body.innerHTML = '<p class="empty">No heroes in this result.</p>';
+        body.innerHTML = survHtml || '<p class="empty">No heroes in this result.</p>';
       } else {
-        body.innerHTML = names.map((name) => {
+        body.innerHTML =
+          survHtml +
+          names.map((name) => {
           const pieces = assignment[name] || [];
           const why = renderWhy(explainFor(row, name));
           return (
@@ -516,19 +642,33 @@
       if (ok) card.type = "button";
       card.className = "card";
       const form = row.formation || {};
+      const surv = row.survival || (row.explanations && row.explanations.survival) || null;
       const slots = ["F1", "F2", "B1", "B2", "B3"]
         .map((s) => {
           const name = form[s] || "—";
           return `<span class="slot"><span class="k">${esc(s)}</span>${esc(name)}</span>`;
         })
         .join("");
+      const scoreLine = surv
+        ? `ILP ${esc(fmtScore(row.score))} · eff ${esc(fmtScore(surv.score_eff))} · s ${esc(fmtS(((surv.foes || {})[surv.primary_foe || "naive_max_power"] || {}).s))}`
+        : `score ${esc(fmtScore(row.score))}`;
+      let survHtml = "";
+      if (ok) {
+        try {
+          survHtml = renderSurvivalBlock(surv, { compact: true });
+        } catch (e) {
+          survHtml =
+            `<p class="heroes" style="color:var(--err)">Survival detail unavailable</p>`;
+        }
+      }
       card.innerHTML =
         `<h3>${esc(title)}</h3>` +
-        `<div class="points">score ${esc(fmtScore(row.score))}</div>` +
+        `<div class="points">${scoreLine}</div>` +
         `<p class="formation">status: ${esc(row.status || "—")}</p>` +
         (ok ? `<div class="slot-row">${slots}</div>` : "") +
+        survHtml +
         (ok
-          ? `<p class="card-hint">Click for why + gear (helm · gloves · body · boots)</p>`
+          ? `<p class="card-hint">Click for why + gear + full survival detail</p>`
           : `<p class="heroes">${esc(row.error || "No optimal formation")}</p>`);
       if (ok) {
         card.addEventListener("click", () => {

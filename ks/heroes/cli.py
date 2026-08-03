@@ -783,6 +783,7 @@ def _cmd_arena(args: argparse.Namespace) -> int:
             roles,
             gear=gear_pieces,
             gear_profile=args.gear_profile,
+            with_survival=True,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"Error: {exc}", file=sys.stderr)
@@ -793,14 +794,40 @@ def _cmd_arena(args: argparse.Namespace) -> int:
         return 1
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(result.to_dict(), indent=2) + "\n", encoding="utf-8")
+    payload = result.to_dict()
+    survival = payload.get("survival") or (result.explanations or {}).get("survival")
+    args.out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(f"side: {result.side}")
-    print(f"score: {result.score:.1f}")
+    print(f"ilp_score: {result.score:.1f}")
+    if survival and survival.get("score_eff") is not None:
+        print(
+            f"score_eff vs {survival.get('primary_foe')}: "
+            f"{float(survival['score_eff']):.1f}"
+        )
     print("formation (2 front / 3 back):")
     for slot in ("F1", "F2", "B1", "B2", "B3"):
         name = result.formation.get(slot, "?")
         reason = result.reasons.get(name, "")
         print(f"  {slot}: {name}" + (f"  ({reason})" if reason else ""))
+    if survival:
+        our = survival.get("our") or {}
+        print(
+            f"our toughness: tau_F={float(our.get('tau_F') or 0):.0f} "
+            f"tau_B={float(our.get('tau_B') or 0):.0f} "
+            f"U_front={float(our.get('U_front') or 0):.1f} "
+            f"U_back={float(our.get('U_back') or 0):.1f}"
+        )
+        print("vs self-play foes (our heroes/gear/power):")
+        for model, block in (survival.get("foes") or {}).items():
+            foe_form = (block.get("foe") or {}).get("formation") or {}
+            front = f"{foe_form.get('F1', '?')}/{foe_form.get('F2', '?')}"
+            print(
+                f"  {model}: s={float(block.get('s') or 0):.3f} "
+                f"delta={float(block.get('delta') or 0):.3f} "
+                f"O={float(block.get('O') or 0):.1f} "
+                f"score_eff={float(block.get('score_eff') or 0):.1f} "
+                f"foe_front={front}"
+            )
     if result.gear_assignment:
         print("gear:")
         for name, rows in result.gear_assignment.items():
@@ -841,6 +868,7 @@ def _cmd_conquest(args: argparse.Namespace) -> int:
             roles,
             gear=gear_pieces,
             gear_profile=args.gear_profile,
+            with_survival=True,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"Error: {exc}", file=sys.stderr)
@@ -851,13 +879,41 @@ def _cmd_conquest(args: argparse.Namespace) -> int:
         return 1
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(result.to_dict(), indent=2) + "\n", encoding="utf-8")
-    print(f"score: {result.score:.1f}")
+    payload = result.to_dict()
+    survival = (result.explanations or {}).get("survival")
+    if survival is not None:
+        payload["survival"] = survival
+    args.out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    print(f"ilp_score: {result.score:.1f}")
+    if survival and survival.get("score_eff") is not None:
+        print(
+            f"score_eff vs {survival.get('primary_foe')}: "
+            f"{float(survival['score_eff']):.1f}"
+        )
     print("conquest formation (2 front / 3 back):")
     for slot in ("F1", "F2", "B1", "B2", "B3"):
         name = result.formation.get(slot, "?")
         reason = result.reasons.get(name, "")
         print(f"  {slot}: {name}" + (f"  ({reason})" if reason else ""))
+    if survival:
+        our = survival.get("our") or {}
+        print(
+            f"our toughness: tau_F={float(our.get('tau_F') or 0):.0f} "
+            f"tau_B={float(our.get('tau_B') or 0):.0f} "
+            f"U_front={float(our.get('U_front') or 0):.1f} "
+            f"U_back={float(our.get('U_back') or 0):.1f}"
+        )
+        print("vs self-play foes (our heroes/gear/power):")
+        for model, block in (survival.get("foes") or {}).items():
+            foe_form = (block.get("foe") or {}).get("formation") or {}
+            front = f"{foe_form.get('F1','?')}/{foe_form.get('F2','?')}"
+            print(
+                f"  {model}: s={float(block.get('s') or 0):.3f} "
+                f"delta={float(block.get('delta') or 0):.3f} "
+                f"O={float(block.get('O') or 0):.1f} "
+                f"score_eff={float(block.get('score_eff') or 0):.1f} "
+                f"foe_front={front}"
+            )
     if result.gear_assignment:
         print("gear:")
         for name, rows in result.gear_assignment.items():

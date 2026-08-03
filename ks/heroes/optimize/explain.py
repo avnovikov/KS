@@ -365,6 +365,7 @@ def leave_one_out_arena(
             gear=gear,
             gear_profile=gear_profile,
             with_explanations=False,
+            with_survival=False,
         )
         if alt.status == "Optimal":
             without = float(alt.score)
