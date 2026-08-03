@@ -268,6 +268,14 @@ def _scan_roster_page(
 
         consecutive_dups = 0
         seen.add(hero.name)
+        # Detail-box OCR is not authoritative (often includes gear / digit glitches).
+        # Sanitize against any prior stored naked power before the upsert lands.
+        prev = next((h for h in store.all_heroes() if h.name == hero.name), None)
+        sanitized = _sanitize_power(
+            hero.power, previous=prev.power if prev is not None else None
+        )
+        if sanitized != hero.power:
+            hero = replace(hero, power=sanitized)
         store.upsert(hero)
         # Prefer store-merged record (preserved level) for history covariates.
         stored = next(
@@ -311,6 +319,9 @@ def collect_heroes(
     When ``record_power_history`` is True (default), live scrapes also tap
     Power-i and append lifetime observations under
     ``{store.out_dir}/power_history/`` when covariates/buckets change.
+    Power-i Level+Stars+Skills (or total−gear) is the authoritative naked
+    ``power`` for the scraped slot; detail-box OCR is sanitized against any
+    prior value and must not clobber neighbors via tooltip name OCR.
 
     Emits progress events via on_progress(event_type, payload):
       "hero"      — new hero collected
@@ -361,33 +372,23 @@ def collect_heroes(
                 observed = None
                 raw_name = ""
 
-            # Prefer on-screen name when it resolves to a known store hero —
-            # roster keep_name/templates can label the wrong cell after layout drift.
-            target = hero
-            if observed:
-                match = next(
-                    (h for h in store.all_heroes() if h.name.lower() == observed.lower()),
-                    None,
+            if (
+                observed
+                and observed.lower() != hero.name.lower()
+            ):
+                # On-screen name OCR is advisory only. Never move Power-i naked
+                # onto a different store hero — that clobbered neighbors (e.g.
+                # Forrest detail junk stayed while Howard received Forrest's buckets).
+                print(
+                    f"power-i name note slot={hero.name!r} observed={observed!r} "
+                    f"(raw={raw_name!r}); naked stays on slot"
                 )
-                if match is not None:
-                    if match.name != hero.name:
-                        print(
-                            f"power-i name correct {hero.name!r} → {match.name!r} "
-                            f"(raw={raw_name!r})"
-                        )
-                    target = replace(
-                        match,
-                        stars=hero.stars if hero.stars is not None else match.stars,
-                        pellets=hero.pellets
-                        if hero.pellets is not None
-                        else match.pellets,
-                        skills=hero.skills or match.skills,
-                        scraped_at=hero.scraped_at or match.scraped_at,
-                    )
 
+            # Power-i Level+Stars+Skills (or total−gear) is authoritative naked power.
+            target = hero
             naked = breakdown.naked_or_total_minus_gear()
             if naked is not None:
-                target = replace(target, power=int(naked))
+                target = replace(hero, power=int(naked))
                 store.upsert(target)
                 print(f"naked power {target.name} ← {naked} (Power-i Level+Stars+Skills)")
 

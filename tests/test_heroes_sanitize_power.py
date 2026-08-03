@@ -26,3 +26,8 @@ def test_strips_leading_digit_glitch_vs_previous() -> None:
 
 def test_rejects_implausible_keeps_previous() -> None:
     assert _sanitize_power(9_999_999, previous=100_000) == 100_000
+
+
+def test_rejects_forrest_style_million_glitch_keeps_naked() -> None:
+    # Detail OCR read ~Howard total with an extra digit; keep prior naked.
+    assert _sanitize_power(3_157_751, previous=217_855) == 217_855
