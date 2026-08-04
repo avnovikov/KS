@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.events import default_kind_weights
 from ks.heroes.optimize.types import CatalogEntry, EffectTag, EventProfile
 from ks.heroes.stars_vision import PELLETS_PER_STAR
+
+if TYPE_CHECKING:  # pragma: no cover — runtime import is function-local
+    from ks.heroes.optimize.stat_contributions import StatContribution
 
 
 def star_progress_factor(stars: int | None, pellets: int | None = None) -> float:
@@ -113,9 +118,22 @@ def hero_strength(
     mode: str,
     *,
     event: EventProfile | None = None,
-    effective_power: int | None = None,
-    gear_bonus: float = 0.0,
+    contribution: "StatContribution | None" = None,
 ) -> float:
+    """Mode-weighted effect score plus the hero's expedition contribution.
+
+    ``contribution`` must be an expedition-family ``StatContribution``; it
+    replaces the old ``effective_power`` + ``gear_bonus`` pair, so power and
+    gear percents enter through one estimated split rather than a raw scrape
+    plus a 0.15-scaled heuristic.
+    """
+    # Local import: scoring is an ancestor of stat_contributions (via both
+    # gear_assign and skill_effects), so a module-level import is circular.
+    from ks.heroes.optimize.stat_contributions import (
+        EXPEDITION,
+        contribution_strength,
+    )
+
     weights, op_weights = _resolve_mode_weights(mode, event)
     total = sum(
         _effect_tag_value(tag, hero, mode, weights, op_weights)
@@ -123,9 +141,11 @@ def hero_strength(
     )
     total += _widget_priority_bonus(entry, mode)
 
-    power = effective_power if effective_power is not None else hero.power
-    if power:
-        total += power / 1_000_000.0
-    if gear_bonus:
-        total += float(gear_bonus)
+    if contribution is not None:
+        if contribution.family != EXPEDITION:
+            raise ValueError(
+                "hero_strength needs an expedition contribution; got "
+                f"{contribution.family!r}"
+            )
+        total += contribution_strength(contribution)
     return total

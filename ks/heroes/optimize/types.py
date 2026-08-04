@@ -147,6 +147,8 @@ class RecommendResult:
     alternatives: tuple[dict[str, Any], ...] = ()
     troops_by_level: dict[str, dict[int, int]] | None = None
     gear_assignment: dict[str, list[dict[str, Any]]] | None = None
+    stat_family: str = "expedition"
+    formation_totals: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out = {
@@ -158,6 +160,8 @@ class RecommendResult:
             "expected_personal_points": self.expected_personal_points,
             "breakdown": dict(self.breakdown),
             "alternatives": list(self.alternatives),
+            "stat_family": self.stat_family,
+            "formation_totals": self.formation_totals,
         }
         if self.troops_by_level is not None:
             out["troops_by_level"] = {
