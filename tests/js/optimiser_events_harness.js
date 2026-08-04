@@ -1847,10 +1847,11 @@ async function suiteLocale() {
 }
 
 /* Task 7's frozen contract puts `stat_family`, `formation_totals` and
- * `contributions` on every mode/formation row. Conquest carries the whole
- * board strip *and* the sheet table in one pass, since that is the row the
- * new checks below need clicked open anyway; Sword/Bear share `eventMode`,
- * so they got the same three keys for free above. */
+ * `contributions` on every mode/formation row. Both the strip and the
+ * per-hero table render straight onto the board — a player reads the split
+ * every time they look at a lineup, not only when they drill into one
+ * hero's sheet — so Conquest's checks all read `boardEl` directly; Sword/
+ * Bear share `eventMode`, so they got the same three keys for free above. */
 async function suiteStatContributions() {
   var d = makePage({ bundle: goodBundle() });
   await boot(d);
@@ -1878,28 +1879,39 @@ async function suiteStatContributions() {
     }),
     conquestBoard.slice(0, 400)
   );
+  check(
+    "the board carries a contribution table",
+    conquestBoard.indexOf("contrib-table") !== -1,
+    conquestBoard.slice(0, 400)
+  );
+  check(
+    "the contribution table has a row per placed hero",
+    (conquestBoard.match(/<tr/g) || []).length >= 2,
+    conquestBoard.slice(0, 400)
+  );
+  check(
+    "the contribution table totals the formation",
+    conquestBoard.toLowerCase().indexOf("formation") !== -1,
+    conquestBoard.slice(0, 400)
+  );
+  check(
+    "an estimated split says so",
+    conquestBoard.toLowerCase().indexOf("estimated") !== -1,
+    conquestBoard.slice(0, 400)
+  );
+  check(
+    "the table shows skills and gear as deltas, not bare numbers",
+    conquestBoard.indexOf("skills · +") !== -1 &&
+      conquestBoard.indexOf(" gear") !== -1,
+    conquestBoard.slice(0, 400)
+  );
 
   d.openFirstHero();
   var sheet = modalBody.innerHTML;
   record("conquest_sheet_html", sheet);
   check(
-    "the hero sheet carries a contribution table",
-    sheet.indexOf("contrib-table") !== -1,
-    sheet.slice(0, 400)
-  );
-  check(
-    "the contribution table has a row per placed hero",
-    (sheet.match(/<tr/g) || []).length >= 2,
-    sheet.slice(0, 400)
-  );
-  check(
-    "the contribution table totals the formation",
-    sheet.toLowerCase().indexOf("formation") !== -1,
-    sheet.slice(0, 400)
-  );
-  check(
-    "an estimated split says so",
-    sheet.toLowerCase().indexOf("estimated") !== -1,
+    "the hero sheet does not repeat the contribution table",
+    sheet.indexOf("contrib-table") === -1,
     sheet.slice(0, 400)
   );
 }

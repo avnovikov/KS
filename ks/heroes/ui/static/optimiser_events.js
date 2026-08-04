@@ -364,8 +364,7 @@
     var explain = explainFor(entry.row, name);
     if (explain && explain.slot) context.push(explain.slot);
     modalSub.textContent = context.join(" · ");
-    modalBody.innerHTML =
-      renderWhy(explain) + renderContributionTable(entry.row) + renderGearGrid(assignment[name]);
+    modalBody.innerHTML = renderWhy(explain) + renderGearGrid(assignment[name]);
     modal.hidden = false;
     modal.classList.add("open");
     if (modalClose && typeof modalClose.focus === "function") modalClose.focus();
@@ -560,11 +559,9 @@
       return (
         esc(fmtShare(share.total, fam)) +
         '<br><span class="contrib-split">' +
-        esc(
-          fmtShare(share.hero, fam) + " · " +
-          fmtShare(share.skills, fam) + " · " +
-          fmtShare(share.gear, fam)
-        ) +
+        esc(fmtShare(share.hero, fam)) + " hero · +" +
+        esc(fmtShare(share.skills, fam)) + " skills · +" +
+        esc(fmtShare(share.gear, fam)) + " gear" +
         "</span>"
       );
     }
@@ -612,7 +609,7 @@
     if (totals && totals.estimated) flags.push("estimated");
     if (totals && totals.skills_incomplete) flags.push("skills partial");
     var note =
-      '<p class="contrib-note">each cell: total, then hero · skills · gear' +
+      '<p class="contrib-note">each cell: total, then hero · skills delta (+) · gear delta (+)' +
       (flags.length ? " · " + esc(flags.join(" · ")) : "") +
       "</p>";
     return (
@@ -666,18 +663,27 @@
       }
       boardEl.appendChild(boardRowEl("Front", FRONT_SLOTS, placed(FRONT_SLOTS), entry));
       boardEl.appendChild(boardRowEl("Back", BACK_SLOTS, placed(BACK_SLOTS), entry));
-      return;
+    } else {
+      // No F/B structure (the sword/bear events march three heroes together).
+      var heroes = (row.heroes || []).filter(function (hero) {
+        return heroName(hero);
+      });
+      if (!heroes.length) {
+        appendText("p", "empty", "No heroes in this result.");
+        return;
+      }
+      boardEl.appendChild(boardRowEl("March", null, heroes, entry));
     }
 
-    // No F/B structure (the sword/bear events march three heroes together).
-    var heroes = (row.heroes || []).filter(function (hero) {
-      return heroName(hero);
-    });
-    if (!heroes.length) {
-      appendText("p", "empty", "No heroes in this result.");
-      return;
+    // Per-hero split lives on the board itself, not behind a tap into the
+    // hero sheet — it's the number a player checks every time they look at
+    // a lineup, not an occasional drill-down.
+    var table = renderContributionTable(row);
+    if (table) {
+      var tableEl = document.createElement("div");
+      tableEl.innerHTML = table;
+      boardEl.appendChild(tableEl);
     }
-    boardEl.appendChild(boardRowEl("March", null, heroes, entry));
   }
 
   function renderNote() {

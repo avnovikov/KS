@@ -727,28 +727,30 @@ def test_degenerate_bundles_do_not_render_a_broken_board(js_run: dict) -> None:
 
 
 def test_the_board_shows_where_strength_came_from(js_run: dict) -> None:
-    """Design decision C: formation totals on the board, per-hero in the sheet."""
+    """Formation totals AND the per-hero split both live on the board itself
+    — a player reads this on every lineup, not only behind a tap into one
+    hero's sheet."""
     _assert_ran(
         js_run,
         [
             "the board carries a stat contribution strip",
             "the strip names the stat family",
             "the strip splits power into hero, skills and gear",
+            "the board carries a contribution table",
+            "the contribution table has a row per placed hero",
+            "the contribution table totals the formation",
+            "an estimated split says so",
+            "the table shows skills and gear as deltas, not bare numbers",
         ],
     )
     board = js_run["data"]["conquest_board_html"]
     assert "contrib-strip" in board
+    assert "contrib-table" in board
 
 
-def test_the_hero_sheet_breaks_the_split_down_per_hero(js_run: dict) -> None:
-    _assert_ran(
-        js_run,
-        [
-            "the hero sheet carries a contribution table",
-            "the contribution table has a row per placed hero",
-            "the contribution table totals the formation",
-            "an estimated split says so",
-        ],
-    )
+def test_the_hero_sheet_does_not_duplicate_the_contribution_table(
+    js_run: dict,
+) -> None:
+    _assert_ran(js_run, ["the hero sheet does not repeat the contribution table"])
     sheet = js_run["data"]["conquest_sheet_html"]
-    assert "contrib-table" in sheet
+    assert "contrib-table" not in sheet
