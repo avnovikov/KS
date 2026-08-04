@@ -38,3 +38,15 @@ defense_placement:
   heal_tag_bonus: 1.25
   team_def_tag_bonus: 1.1
   glass_dps_penalty: 0.92
+# Front-collapse degradation vs self-play foes (our heroes/gear/power).
+# See docs/superpowers/specs/2026-08-03-arena-front-survival-opponent-models-design.md
+survival:
+  enabled: true
+  primary_foe: naive_max_power
+  foes:
+  - naive_max_power
+  - troop_balanced_naive
+  - heuristic_foe
+  lambda_tau: 5.0
+  power_sanitize_max: 2000000
+  power_sanitize_median_factor: 20

@@ -60,6 +60,9 @@ class CombatFormationResult:
             out["side"] = self.side
         if self.explanations is not None:
             out["explanations"] = self.explanations
+        survival = (self.explanations or {}).get("survival")
+        if survival is not None:
+            out["survival"] = survival
         return out
 
 
@@ -169,18 +172,43 @@ def placement_mult(
     return mult
 
 
+def gear_bonus_from_assignment(
+    gear_asg: dict[str, dict[str, GearRecord]],
+    *,
+    profile: str,
+) -> dict[str, float]:
+    """Score already-assigned pieces (0.15 × piece_score); never re-pools."""
+    weights = load_profile_weights(profile)
+    out: dict[str, float] = {}
+    for name, slots in gear_asg.items():
+        out[name] = 0.15 * sum(
+            piece_score(piece, profile=profile, weights=weights)
+            for piece in slots.values()
+        )
+    return out
+
+
 def _provisional_gear_bonus(
     usable: list[HeroRecord],
     catalog: dict[str, CatalogEntry],
     gear: list[GearRecord] | None,
     gear_profile: str,
+    *,
+    power_by_name: dict[str, int | None] | None = None,
 ) -> dict[str, float]:
     gear_bonus_by_hero: dict[str, float] = {h.name: 0.0 for h in usable}
     if not gear:
         return gear_bonus_by_hero
-    weights = load_profile_weights(gear_profile)
+
+    def _claim_power(row: HeroRecord) -> int:
+        if power_by_name is not None and row.name in power_by_name:
+            value = power_by_name[row.name]
+            if value is not None:
+                return int(value)
+        return int(row.power or 0)
+
     score_priority = [
-        h.name for h in sorted(usable, key=lambda row: -(row.power or 0))
+        h.name for h in sorted(usable, key=lambda row: -_claim_power(row))
     ]
     provisional = assign_exclusive_sets(
         usable,
@@ -190,12 +218,10 @@ def _provisional_gear_bonus(
         priority=score_priority,
         profile=gear_profile,
     )
-    for name, slots in provisional.items():
-        gear_bonus_by_hero[name] = 0.15 * sum(
-            piece_score(piece, profile=gear_profile, weights=weights)
-            for piece in slots.values()
-        )
-    return gear_bonus_by_hero
+    return {
+        **gear_bonus_by_hero,
+        **gear_bonus_from_assignment(provisional, profile=gear_profile),
+    }
 
 
 def _reason(
@@ -268,7 +294,17 @@ def solve_combat_formation(
         or "infantry"
         for h in usable
     }
-    gear_bonus_by_hero = _provisional_gear_bonus(usable, catalog, gear, gear_profile)
+    # Sanitize OCR power blow-ups before gear claim priority and the ILP objective.
+    from ks.heroes.optimize.survival_pipeline import sanitize_hero_powers
+
+    power_by_name = sanitize_hero_powers(usable, roles=roles)
+    gear_bonus_by_hero = _provisional_gear_bonus(
+        usable,
+        catalog,
+        gear,
+        gear_profile,
+        power_by_name=power_by_name,
+    )
 
     _base_score_fn = base_score_fn or (
         lambda h, entry, roles, *, effective_power, gear_bonus: hero_base_score(
@@ -290,7 +326,7 @@ def solve_combat_formation(
             h,
             catalog.get(h.name),
             roles,
-            effective_power=h.power,
+            effective_power=power_by_name.get(h.name, h.power),
             gear_bonus=float(gear_bonus_by_hero.get(h.name, 0.0)),
         )
 

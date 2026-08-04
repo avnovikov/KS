@@ -13,3 +13,15 @@ placement:
   archers_back: 1.15
   carry_slot_bonus: 1.10
   front_tank_bonus: 1.15
+# Front-collapse degradation vs self-play foes (our heroes/gear/power).
+# See docs/superpowers/specs/2026-08-03-arena-front-survival-opponent-models-design.md
+survival:
+  enabled: true
+  primary_foe: naive_max_power
+  foes:
+  - naive_max_power
+  - troop_balanced_naive
+  - heuristic_foe
+  lambda_tau: 5.0
+  power_sanitize_max: 2000000
+  power_sanitize_median_factor: 20
