@@ -9,7 +9,12 @@ from ks.heroes.optimize.bear_damage import (
     greedy_fill_march,
 )
 from ks.heroes.optimize.scoring import hero_strength, max_power_by_troop, normalize_troop
-from ks.heroes.optimize.stat_contributions import EXPEDITION, hero_contribution
+from ks.heroes.optimize.stat_contributions import (
+    EXPEDITION,
+    StatContribution,
+    expedition_labels,
+    hero_contribution,
+)
 from ks.heroes.optimize.troop_stats import TroopStatsTable, inventory_combat_weights
 from ks.heroes.optimize.types import (
     CatalogEntry,
@@ -35,6 +40,11 @@ class _HeroFeatures:
     strengths: dict[str, float]
     escorts: dict[str, int]
     widget: dict[str, str]
+    # This hero's own troop-percentage bonus (Attack+Lethality, or
+    # Health+Defense in garrison), from skills/gear — see
+    # _hero_troop_bonus_pct. Scales that troop's combat weight in the
+    # objective when this hero is the one selected for its troop slot.
+    troop_bonus_pct: dict[str, float]
 
 
 @dataclass
@@ -124,6 +134,39 @@ def _warn_missing_escorts(usable: list[HeroRecord]) -> None:
         )
 
 
+def _troop_bonus_stat_names(mode: str) -> tuple[str, str]:
+    """Which two expedition percent stats scale a troop's combat weight.
+
+    TroopUnitStats defines offense = attack*lethality, toughness =
+    health*defense (troop_stats.py); the additive approximation used here
+    (Attack% + Lethality%, or Health% + Defense%) matches how
+    contribution_strength already folds percent stats additively elsewhere,
+    rather than introducing a different, multiplicative treatment only here.
+    """
+    if mode == "garrison":
+        return ("Health", "Defense")
+    return ("Attack", "Lethality")
+
+
+def _hero_troop_bonus_pct(
+    contribution: StatContribution, troop: str, mode: str
+) -> float:
+    """This hero's own Attack+Lethality (or Health+Defense) percent total.
+
+    A hero's expedition contribution only ever carries its own troop's four
+    labels (e.g. "Cavalry Attack"), so this sums whichever two of those match
+    the stats relevant to ``mode``.
+    """
+    stat_names = _troop_bonus_stat_names(mode)
+    total = 0.0
+    for label in expedition_labels(troop):
+        if any(label.endswith(" " + stat) for stat in stat_names):
+            share = contribution.stats.get(label)
+            if share is not None:
+                total += share.total
+    return total
+
+
 def _compute_hero_features(
     usable: list[HeroRecord],
     catalog: dict[str, CatalogEntry],
@@ -138,27 +181,32 @@ def _compute_hero_features(
     # hero of that class (widgets / skills / stars stay on the selected hero).
     class_power = max_power_by_troop(usable, catalog)
     gear = gear_by_troop or {}
-    strengths = {
-        h.name: hero_strength(
+    strengths: dict[str, float] = {}
+    troop_bonus_pct: dict[str, float] = {}
+    for h in usable:
+        troop = troop_of[h.name]
+        contribution = hero_contribution(
             h,
             catalog[h.name],
-            scenario.mode,
-            event=event,
-            contribution=hero_contribution(
-                h,
-                catalog[h.name],
-                family=EXPEDITION,
-                gear_pieces=gear.get(troop_of[h.name]),
-                power=class_power.get(troop_of[h.name], h.power),
-                catalog=catalog,
-            ),
+            family=EXPEDITION,
+            gear_pieces=gear.get(troop),
+            power=class_power.get(troop, h.power),
+            catalog=catalog,
         )
-        for h in usable
-    }
+        strengths[h.name] = hero_strength(
+            h, catalog[h.name], scenario.mode, event=event, contribution=contribution
+        )
+        troop_bonus_pct[h.name] = _hero_troop_bonus_pct(contribution, troop, scenario.mode)
     _warn_missing_escorts(usable)
     escorts = {h.name: int(h.escorts or 0) for h in usable}
     widget = {h.name: (catalog[h.name].widget_type or "none") for h in usable}
-    return _HeroFeatures(troop_of=troop_of, strengths=strengths, escorts=escorts, widget=widget)
+    return _HeroFeatures(
+        troop_of=troop_of,
+        strengths=strengths,
+        escorts=escorts,
+        widget=widget,
+        troop_bonus_pct=troop_bonus_pct,
+    )
 
 
 def _build_ilp_variables(
@@ -252,11 +300,76 @@ def _troop_combat_weights(
     )
 
 
+def _troop_bonus_term(
+    variables: _TroopVariables,
+    troop_of: dict[str, str],
+    troop_bonus_pct: dict[str, float],
+    troops: TroopsConfig,
+    troop_weights: tuple[float, float, float],
+) -> pulp.LpAffineExpression | float:
+    """Linearize each selected hero's own troop-percentage bonus × that
+    troop's deployed count via McCormick envelopes, so a hero's Attack/
+    Lethality (or Health/Defense) gear+skill percent scales their own troop
+    type's combat weight during hero SELECTION itself — not as a flat,
+    troop-count-blind nudge folded into that hero's pick score, and not as a
+    post-hoc correction applied after the formation is already chosen.
+
+    Exact only when at most one hero per troop type can be selected (this
+    module's ``one_per_troop_type`` default, applied by every caller today):
+    the auxiliary variable for a troop type equals that troop's deployed
+    count only while its one bonus-carrying hero is selected, and 0
+    otherwise — this is what the four McCormick inequalities below encode
+    for a binary × bounded-continuous product. With that precondition
+    violated, multiple same-troop heroes' bonuses would each independently
+    read against the *full* troop count and overstate the total bonus, so
+    this term is skipped entirely rather than risk that.
+    """
+    w_i, w_c, w_a = troop_weights
+    x = variables.hero_selected
+    troop_var = {
+        "infantry": variables.infantry,
+        "cavalry": variables.cavalry,
+        "archers": variables.archers,
+    }
+    troop_weight = {"infantry": w_i, "cavalry": w_c, "archers": w_a}
+    troop_bound = {
+        "infantry": troops.infantry,
+        "cavalry": troops.cavalry,
+        "archers": troops.archers,
+    }
+
+    eligible = [
+        name
+        for name, troop in troop_of.items()
+        if troop in troop_var
+        and troop_bonus_pct.get(name, 0.0) > 0.0
+        and troop_bound[troop] > 0
+    ]
+    if not eligible:
+        return 0.0
+
+    y = pulp.LpVariable.dicts("troop_bonus", eligible, lowBound=0)
+    terms = []
+    for name in eligible:
+        troop = troop_of[name]
+        bound = troop_bound[troop]
+        t_var = troop_var[troop]
+        # y[name] == t_var when x[name]==1 (this hero selected), 0 otherwise.
+        variables.prob += y[name] <= t_var
+        variables.prob += y[name] <= bound * x[name]
+        variables.prob += y[name] >= t_var - bound * (1 - x[name])
+        terms.append((troop_weight[troop] * troop_bonus_pct[name] / 100.0) * y[name])
+    return pulp.lpSum(terms)
+
+
 def _build_objective(
     variables: _TroopVariables,
-    strengths: dict[str, float],
+    features: _HeroFeatures,
+    troops: TroopsConfig,
     troop_weights: tuple[float, float, float],
     scenario: Scenario,
+    *,
+    one_per_troop_type: bool = True,
 ) -> _ObjectiveTerms:
     """Add the expected-personal-points objective to `variables.prob` and return its terms.
 
@@ -266,8 +379,12 @@ def _build_objective(
     """
     w_i, w_c, w_a = troop_weights
     x = variables.hero_selected
-    hero_str = pulp.lpSum(x[n] * strengths[n] for n in x)
+    hero_str = pulp.lpSum(x[n] * features.strengths[n] for n in x)
     troop_str = w_i * variables.infantry + w_c * variables.cavalry + w_a * variables.archers
+    if one_per_troop_type:
+        troop_str = troop_str + _troop_bonus_term(
+            variables, features.troop_of, features.troop_bonus_pct, troops, troop_weights
+        )
     # Scale troop contribution so heroes still matter but formation fills capacity.
     strength = hero_str + 0.001 * troop_str
 
@@ -397,7 +514,14 @@ def solve_mode(
         _build_bear_hero_objective(variables, features.strengths)
     else:
         troop_weights = _troop_combat_weights(scenario, troops, troop_stats, truegold)
-        terms = _build_objective(variables, features.strengths, troop_weights, scenario)
+        terms = _build_objective(
+            variables,
+            features,
+            troops,
+            troop_weights,
+            scenario,
+            one_per_troop_type=one_per_troop_type,
+        )
 
     status = variables.prob.solve(pulp.PULP_CBC_CMD(msg=False))
     status_name = pulp.LpStatus.get(status, str(status))
