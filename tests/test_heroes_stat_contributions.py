@@ -160,17 +160,33 @@ def test_expedition_gear_falls_back_to_formula_when_ocr_missing() -> None:
 
 
 def test_shares_are_never_negative() -> None:
+    # "Damage Up" maps to kind damage_up, which defaults to the conquest
+    # family — so the extreme 900% actually reaches the conquest split.
     hero = _hero(
         stats=HeroStats(conquest={"Hero Attack": 10}),
         skills=(
-            SkillRecord(slot=0, upgrade_preview="Attack Up: 900%", current_bonus=900.0),
+            SkillRecord(slot=0, upgrade_preview="Damage Up: 900%", current_bonus=900.0),
         ),
     )
     c = hero_contribution(hero, None, family=CONQUEST)
     attack = c.stats["Hero Attack"]
+    assert attack.skills > 0.0, "900% skill must actually reach the split"
+    assert attack.skills < 10.0
     assert attack.hero >= 0.0
-    assert attack.skills >= 0.0
     assert attack.total == pytest.approx(10.0)
+
+
+def test_gear_pieces_accepts_slot_mapping_from_assignment() -> None:
+    as_list = hero_contribution(
+        _hero(), None, family=CONQUEST, gear_pieces=[_piece()]
+    )
+    as_mapping = hero_contribution(
+        _hero(), None, family=CONQUEST, gear_pieces={"helmet": _piece()}
+    )
+    assert as_mapping.power.gear == pytest.approx(as_list.power.gear)
+    assert as_mapping.stats["Hero Attack"].gear == pytest.approx(
+        as_list.stats["Hero Attack"].gear
+    )
 
 
 def test_skills_incomplete_flag_propagates() -> None:
