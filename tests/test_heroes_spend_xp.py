@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from ks.heroes.gear_models import GearRecord
-from ks.heroes.optimize.spend_xp import allocate_fodder_xp, apply_levels
+from ks.heroes.models import HeroRecord, HeroStats
+from ks.heroes.optimize.spend_xp import allocate_fodder_xp, apply_levels, build_event_utility
 from ks.heroes.optimize.xp_ladder import FodderBag, load_xp_ladder
 
 
@@ -105,3 +110,83 @@ def test_allocate_prefers_delta_u_per_xp_over_raw_delta() -> None:
     assert result.steps[0].piece_id == "cheap"
     assert result.steps[0].from_level == 7
     assert result.steps[0].to_level == 8
+
+
+_ROOT = Path(__file__).resolve().parents[1]
+
+# Names must exist in config/hero_catalog.yaml so the real catalog resolves;
+# optimize_arena drops heroes the catalog does not know and needs five.
+_ROSTER = [
+    ("Helga", "infantry", "legendary", 3, 500_000),
+    ("Howard", "infantry", "epic", 3, 390_000),
+    ("Jabel", "cavalry", "legendary", 4, 650_000),
+    ("Chenko", "cavalry", "epic", 3, 400_000),
+    ("Saul", "archer", "legendary", 2, 250_000),
+    ("Diana", "archer", "epic", 3, 450_000),
+    ("Gordon", "cavalry", "epic", 2, 230_000),
+]
+
+
+def _heroes() -> list[HeroRecord]:
+    return [
+        HeroRecord(
+            name=name,
+            troop_type=troop,
+            rarity=rarity,
+            stars=stars,
+            pellets=0,
+            power=power,
+            escorts=5,
+            stats=HeroStats(
+                conquest={
+                    "Hero Attack": power // 300,
+                    "Hero Defense": power // 350,
+                    "Hero Health": power // 40,
+                    "Escort Attack": power // 900,
+                    "Escort Defense": power // 1050,
+                    "Escort Health": power // 120,
+                }
+            ),
+        )
+        for name, troop, rarity, stars, power in _ROSTER
+    ]
+
+
+def _gear() -> list[GearRecord]:
+    return [
+        _piece(f"{troop}-{slot}", level=20, troop=troop, slot=slot)
+        for troop in ("infantry", "cavalry", "archers")
+        for slot in ("helmet", "chest", "gloves", "boots")
+    ]
+
+
+def test_arena_utility_summary_carries_contributions() -> None:
+    utility = build_event_utility("arena_attack", _heroes(), config_root=_ROOT)
+    _util, summary = utility(_gear())
+    assert summary["stat_family"] == "conquest"
+    totals = summary["formation_totals"]
+    assert set(totals["power"]) == {"hero", "skills", "gear", "total"}
+    assert totals["power"]["total"] == pytest.approx(
+        totals["power"]["hero"] + totals["power"]["skills"] + totals["power"]["gear"]
+    )
+
+
+def test_event_utility_summary_carries_contributions() -> None:
+    utility = build_event_utility("swordland", _heroes(), config_root=_ROOT)
+    _util, summary = utility(_gear())
+    assert summary["stat_family"] == "expedition"
+    assert summary["formation_totals"] is not None
+
+
+def test_levelling_gear_raises_gear_share_of_totals() -> None:
+    utility = build_event_utility("arena_attack", _heroes(), config_root=_ROOT)
+    base_gear = _gear()
+    _u0, s0 = utility(base_gear)
+    bumped = apply_levels(
+        base_gear, {p.piece_id: (p.enhancement_level or 0) + 20 for p in base_gear}
+    )
+    _u1, s1 = utility(bumped)
+    assert (
+        s1["formation_totals"]["power"]["gear"]
+        > s0["formation_totals"]["power"]["gear"]
+    )
