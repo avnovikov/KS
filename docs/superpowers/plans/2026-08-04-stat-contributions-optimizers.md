@@ -1,1147 +1,102 @@
-# Stat Contributions Across Event Lineups & Optimisers — Implementation Plan
+# Stat Contributions Across Event Lineups & Optimisers — Implementation Plan (v2, rebased on origin/main)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Split every hero's power and combat stats into hero / skills / gear shares for the event-correct family (conquest vs expedition), make every optimiser score from those shares, and surface them on the Event lineups cards and detail modal.
+**Goal:** Split every hero's power and combat stats into hero / skills / gear shares for the event-correct family (conquest vs expedition), make every optimiser score from those shares, and surface them on the Event lineups board and hero sheet.
 
-**Architecture:** Two new leaf modules own all estimation — `skill_effects.py` turns scraped skill text into family-tagged percent bonuses, `stat_contributions.py` composes hero + skills + gear into a `StatContribution` and exposes per-family strength scalars. Every scorer (`scoring`, `combat_formation`, `arena`, `conquest`, `front_survival`, `opponent_models`, `survival_pipeline`, `spend_xp`) drops its `effective_power` + `gear_bonus` heuristic pair and takes a `StatContribution` instead. `optimize_run.py` attaches `stat_family` / `formation_totals` / per-hero `contributions` to every section payload, and `optimize_events.html` renders them.
+**Architecture:** Two leaf modules already own all estimation — `skill_effects.py` turns scraped skill text into family-tagged percent bonuses, `stat_contributions.py` composes hero + skills + gear into a `StatContribution` and exposes per-family strength scalars. Both are merged (Tasks 1-2). This plan wires them through every scorer: the `effective_power` + `gear_bonus` keyword pair is retired in favour of a `StatContribution`, the API payload carries `stat_family` / `formation_totals` / per-hero `contributions`, and `optimiser_events.js` renders them inside the existing Apple-light design system.
 
-**Tech Stack:** Python 3.11+, dataclasses, `pulp` (CBC) ILP, PyYAML, pytest, FastAPI + Jinja2 templates, vanilla JS in the template.
+**Tech Stack:** Python 3.11+, dataclasses, `pulp` (CBC) ILP, PyYAML, pytest, FastAPI + Jinja2, vanilla ES5-style JS in `ks/heroes/ui/static/`.
+
+## v2 — why this plan was rewritten
+
+v1 was derived against a branch **89 commits behind `origin/main`**. Main had since rewritten `model.py` (+445 lines), `explain.py` (+239), `recommend.py` (+222), `spend_xp.py` (+166), `optimize_run.py` (+156), `gear_assign.py` (+101), `combat_formation.py` (+58), and **deleted** `ks/heroes/ui/templates/optimize_events.html` — v1 Task 8's entire target — replacing it with `templates/optimiser_events.html` + `static/optimiser_events.js` and a 726-line JS test suite. Tasks 1-2 were unaffected (new files only) and rebased cleanly. Every task below is re-derived against main's actual code. (v1 is recoverable at commit `5bc8f6b`.)
 
 ## Global Constraints
 
-- Branch / base worktree: `feature/stat-contributions-optimizers` at `/Users/alexei/KS/.worktrees/feature-stat-contributions-optimizers`. All task worktrees branch from it.
-- Module layout follows `ks.<module>`; prefer small cohesive modules (repo convention).
-- Test files mirror feature names: `tests/test_heroes_<area>.py`.
-- No new runtime dependencies. `pulp`, `pyyaml` only.
-- Run `pytest` from repo root with `.venv` active before claiming any task done.
-- `estimated` is always `True` on every `StatContribution` produced by rule A — the in-game "from hero / from skills / from gear" popup scrape is explicitly out of scope.
+- Base worktree: `/Users/alexei/KS/.worktrees/feature-stat-contributions-optimizers`, branch `feature/stat-contributions-optimizers`, rebased on `origin/main`.
+- Run tests with `uv run pytest` from the worktree root — the ambient `python3` lacks `discord`/`h3` and fails collection on 5 unrelated files.
+- **Known pre-existing failure**, present on unmodified `origin/main`, not to be fixed here: `tests/test_heroes_optimize_gear_assign.py::test_best_sets_picks_highest_score_per_slot`.
+- No new runtime dependencies.
+- `estimated` is always `True` on every `StatContribution` (rule A is an estimate; scraping the in-game popup is out of scope).
 - Conquest stat labels are exactly: `Hero Attack`, `Hero Defense`, `Hero Health`, `Escort Attack`, `Escort Defense`, `Escort Health`.
-- Expedition stat labels are `<TroopPrefix> <Stat>` where TroopPrefix ∈ {`Infantry`, `Cavalry`, `Archer`} (note: **`Archer`**, singular — that is what gear OCR emits) and Stat ∈ {`Attack`, `Defense`, `Health`, `Lethality`}.
-- Conquest shares are **flat ints/floats and sum**; expedition shares are **percent points and sum additively** (a formation rollup of `40.0` + `41.94` is `81.94`, meaning +81.94%).
-- Invariant for every `Share`: `hero >= 0`, `skills >= 0`, `gear >= 0`, and `total == hero + skills + gear`.
-- Tests assert wiring and invariants, never frozen pre-change score values.
+- Expedition stat labels are `<TroopPrefix> <Stat>`, TroopPrefix ∈ {`Infantry`, `Cavalry`, `Archer`} (**singular `Archer`** — what gear OCR emits), Stat ∈ {`Attack`, `Defense`, `Health`, `Lethality`}.
+- Conquest shares are flat values that sum; expedition shares are percent points that sum additively.
+- Invariant for every `Share`: `hero >= 0`, `skills >= 0`, `gear >= 0`, `total == hero + skills + gear`.
+- Tests assert wiring and invariants, never frozen pre-change score values. **ILP scores will change — that is the point.**
+- **Circular-import rule (measured):** `scoring.py` and `gear_assign.py` MUST NOT import `stat_contributions` at module level. Two 2-hop cycles exist: `scoring → stat_contributions → gear_assign → scoring`, and `scoring → stat_contributions → skill_effects → scoring`. Use a function-local import (the codebase already does this at `recommend.py:101`, `explain.py:213`, `explain.py:411`). Module-level imports are safe in `model.py`, `explain.py`, `recommend.py`, `combat_formation.py`, `front_survival.py`, `opponent_models.py`, `survival_pipeline.py`, `spend_xp.py`, `optimize_run.py`.
+- **The six PR #26 invariants pinned by `tests/test_heroes_pr26_bugbot.py` must survive.** Listed under "PR #26 invariants" below; every task that touches them says so.
 
----
+## Measured calibration note (state it, don't hide it)
 
-## File Structure
+Replacing `40.0 * power/1e6 + gear_bonus + rarity_bonus` with `40.0 * contribution_strength(...)`, measured on the live roster with a 4-piece infantry set assigned:
 
-| File | Responsibility |
-|------|----------------|
-| `ks/heroes/optimize/skill_effects.py` | **New.** Parse scraped skill `upgrade_preview` labels → canonical effect kinds; sum `current_bonus` percents per kind; decide which kinds belong to which family, using catalog `applies_to` as source of truth. Nothing else knows how to read a skill. |
-| `ks/heroes/optimize/stat_contributions.py` | **New.** `Share` / `StatContribution` types, event→family map, conquest + expedition label sets, rule-A estimator, formation rollup, per-family strength scalars. The only module that decides hero/skills/gear split. |
-| `ks/heroes/optimize/scoring.py` | `hero_strength` takes a `StatContribution` instead of `effective_power` + `gear_bonus`. |
-| `ks/heroes/optimize/model.py` | `solve_mode` builds expedition contributions per hero and feeds `hero_strength`. |
-| `ks/heroes/optimize/recommend.py` | Builds contributions after final gear assignment; exposes `stat_family`, `formation_totals`, per-hero `contributions` on `RecommendResult`. |
-| `ks/heroes/optimize/types.py` | `RecommendResult` gains `stat_family` / `formation_totals` / hero-row contributions in `to_dict`. |
-| `ks/heroes/optimize/combat_formation.py` | `hero_base_score` takes a `StatContribution`; `_provisional_gear_bonus` → `_provisional_contributions`; result carries `contributions` + `formation_totals`. |
-| `ks/heroes/optimize/arena.py`, `conquest.py` | Adapt `base_score_fn` protocol to `contribution=`; surface contributions in `to_dict`. |
-| `ks/heroes/optimize/front_survival.py` | `hero_tau` / `formation_tau` read contribution-backed `Hero Health` / `Hero Defense` totals. |
-| `ks/heroes/optimize/opponent_models.py` | Foe offense uses foe contributions instead of `_provisional_gear_bonus`. |
-| `ks/heroes/optimize/survival_pipeline.py` | Threads contributions through `slot_utilities`, `roster_pressure_scale`, `evaluate_vs_foe`, `attach_survival`. |
-| `ks/heroes/optimize/spend_xp.py` | `U(gear)` summaries carry `stat_family` + `formation_totals` rebuilt under candidate gear levels. |
-| `ks/heroes/ui/optimize_run.py` | Bundle sections get `stat_family` + `formation_totals`; hero rows get `contributions`. |
-| `ks/heroes/ui/templates/optimize_events.html` | Compact formation totals on cards; per-hero contribution table in the modal. |
-| `tests/test_heroes_skill_effects.py` | **New.** Skill label parsing, percent summing, family filter. |
-| `tests/test_heroes_stat_contributions.py` | **New.** Rule-A arithmetic, rollup, family map, strength scalars, edge cases. |
-| `tests/test_heroes_optimize_contributions_wiring.py` | **New.** Integration: every optimiser path emits contributions and non-negative invariants hold. |
+| Hero | old power term | old gear | old rarity | old sum | new `40×cs` |
+|------|---------------|----------|-----------|---------|-------------|
+| Jabel | 17.11 | 9.28 | 8.0 | **34.39** | **59.08** |
+| Diana | 14.12 | 9.28 | 4.0 | **27.39** | **52.10** |
+| Howard | 11.82 | 9.28 | 4.0 | **25.10** | **50.43** |
+| Forrest | 8.71 | 9.28 | 0.0 | **17.99** | **44.95** |
+| Helga | 7.15 | 9.28 | 8.0 | **24.43** | **41.18** |
 
-## Execution Waves (worktree parallelism)
+The strength term roughly **doubles** and its spread **compresses** (1.9× → 1.4×). Against `arena_value * star` (~40-95), strength moves from ~25-40% of the base score to ~40-55%: lineups become more stat-driven and less role-driven. This follows directly from locked Decision 3 ("rewrite every scorer around contributions") and is why the plan forbids asserting old score values. Do not silently re-tune the `40.0` coefficient to hide it; restoring the old balance would be a separate, explicit decision.
+
+## PR #26 invariants (must survive every task)
+
+From `tests/test_heroes_pr26_bugbot.py`:
+
+1. `test_gear_bonus_uses_assigned_pieces_not_repooled` — a per-hero gear signal derived from an **already-assigned** gear map must never flatten pieces back into a pool and re-assign by roster power.
+2. `test_heuristic_offense_honors_conquest_base_score` — foe heuristic offense for Conquest must apply `ultimate_level_multiplier`.
+3. `test_sanitize_hero_powers_catalog_usable_median` — the sanitize median must be computed over the same catalog-usable cohort the ILP uses.
+4. `test_slot_utilities_include_gear_bonus` — `slot_utilities`' `U_front`/`U_back` must include the gear signal. **v1 of this plan would have broken this by passing `gear_bonus=0.0`; v2 passes gear-bearing contributions instead.**
+5. `test_provisional_gear_priority_uses_sanitized_power` — provisional gear-claim priority must rank by sanitized, not raw OCR, power.
+6. `test_opponent_from_formation_keeps_explicit_assignment_bonus` — `opponent_from_formation` must honour an explicit `gear_assignment` rather than deriving its own.
+
+Also pinned, by `tests/test_heroes_survival_api.py`: `GET /api/optimize` must return, for `arena.attack`, `arena.defense` and `conquest`, a `survival` block with `score_eff` and `foes`, plus `sensitivity` with a non-empty `win_summary` and exactly the variant ids `{baseline, gear_f2_first, gear_back_first, swap_front, swap_front_f1_gear}`, with `baseline.delta_score_eff == 0.0`.
+
+## Execution Waves
 
 | Wave | Tasks | Worktree(s) |
 |------|-------|-------------|
-| 0 (foundation, sequential) | 1, 2 | base worktree `feature-stat-contributions-optimizers` |
-| 1 (parallel) | 3 (expedition path), 4 (conquest path) | `sc-expedition`, `sc-conquest` |
-| 2 (parallel, after wave 1 merged) | 5 (survival), 6 (spend_xp) | `sc-survival`, `sc-spendxp` |
-| 3 (parallel, after wave 2 merged) | 7 (API payload), 8 (UI) | `sc-api`, `sc-ui` |
+| 1 (parallel) | 3 expedition, 4 conquest | `sc-expedition`, `sc-conquest` |
+| 2 (parallel, after wave 1 merged) | 5 survival + sanitize, 6 spend_xp | `sc-survival`, `sc-spendxp` |
+| 3 (parallel, after wave 2 merged) | 7 API, 8 UI | `sc-api`, `sc-ui` |
+| 4 | 9 regression suite | base worktree |
 
-Wave 3 tasks touch disjoint files and the JSON shape is frozen in Task 7's **Interfaces** block, so they are safe to run concurrently.
+Wave 3 parallelises safely because Task 7's **Interfaces** block freezes the JSON contract Task 8 renders.
 
 ---
 
-## Task 1: Skill effect extraction (`skill_effects.py`)
+## Task 3: Expedition scoring path
+
+**Worktree:** `sc-expedition` — parallel with Task 4.
 
 **Files:**
-- Create: `ks/heroes/optimize/skill_effects.py`
-- Test: `tests/test_heroes_skill_effects.py`
+- Modify: `ks/heroes/optimize/scoring.py:110-131` (`hero_strength`)
+- Modify: `ks/heroes/optimize/model.py:125-151` (`_compute_hero_features`), `:363` (`solve_mode` keyword), `:371` (call site)
+- Modify: `ks/heroes/optimize/explain.py:210` / `:281` (keyword), `:226` (forward), `:300-313` (`hero_strength` call)
+- Modify: `ks/heroes/optimize/recommend.py:62` / `:98` (keyword), `:74` / `:113` (forward), `:141-157` (`_build_gear_assignment`), `:177` (gear map), `:209-220` (result)
+- Modify: `ks/heroes/optimize/types.py:138-169` (`RecommendResult`)
+- Modify: `ks/heroes/optimize/gear_assign.py:160-167` (delete)
+- Test: `tests/test_heroes_optimize_scoring.py`, `tests/test_heroes_optimize_recommend.py`
 
 **Interfaces:**
-- Consumes: `ks.heroes.models.HeroRecord`, `ks.heroes.optimize.types.CatalogEntry`, `ks.heroes.optimize.scoring.star_progress_factor`.
+- Consumes: `EXPEDITION`, `hero_contribution`, `formation_contribution`, `contribution_strength`, `family_for_event`, `StatContribution`.
 - Produces:
-  - `CONQUEST: str = "conquest"`, `EXPEDITION: str = "expedition"`
-  - `skill_kind(label: str | None) -> str | None`
-  - `skill_percents(hero: HeroRecord) -> tuple[dict[str, float], bool]` → `(kind → summed percent, skills_incomplete)`
-  - `catalog_percents(entry: CatalogEntry | None, stars: int | None, pellets: int | None) -> dict[str, float]`
-  - `kind_family(kind: str, catalog: dict[str, CatalogEntry] | None = None) -> str | None`
-  - `family_percents(hero, entry, *, family, catalog=None) -> tuple[dict[str, float], bool]`
+  - `hero_strength(hero, entry, mode, *, event=None, contribution=None) -> float` — `effective_power` and `gear_bonus` **removed**.
+  - `solve_mode(..., gear_by_troop: dict[str, dict[str, GearRecord]] | None = None, ...)` replaces `gear_bonus_by_troop`.
+  - `leave_one_out_mode(..., gear_by_troop=...)`, `explain_selected_heroes(..., gear_by_troop=...)` likewise.
+  - `RecommendResult` gains `stat_family: str = "expedition"` and `formation_totals: dict[str, Any] | None = None`, both emitted by `to_dict()`; each row in `.heroes` gains `"contributions"`.
+  - `gear_assign.gear_bonus_by_troop` **deleted**.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing scoring tests**
 
-Create `tests/test_heroes_skill_effects.py`:
+Append to `tests/test_heroes_optimize_scoring.py` (it already defines `_entry`):
 
 ```python
 import pytest
 
-from ks.heroes.models import HeroRecord, SkillRecord
-from ks.heroes.optimize.skill_effects import (
-    CONQUEST,
-    EXPEDITION,
-    catalog_percents,
-    family_percents,
-    kind_family,
-    skill_kind,
-    skill_percents,
-)
-from ks.heroes.optimize.types import CatalogEntry, EffectTag
-
-
-def _skill(slot: int, preview: str | None, bonus: float | None) -> SkillRecord:
-    return SkillRecord(slot=slot, upgrade_preview=preview, current_bonus=bonus)
-
-
-def test_skill_kind_maps_known_labels() -> None:
-    assert skill_kind("Attack Up: 8%/12%/15%/20%/24%") == "attack_up"
-    assert skill_kind("Damage Taken Chance Down: 8%/16%") == "damage_taken_down"
-    assert skill_kind("Area of Effect Damage Up: 180%/198%") == "aoe_damage_up"
-    assert skill_kind("Lethality Up:5%/10%/15%") == "lethality_up"
-
-
-def test_skill_kind_ignores_economy_labels() -> None:
-    assert skill_kind("Mill Income: 5%/10%/15%") is None
-    assert skill_kind("Bread Gathering Speed: 5%/10%") is None
-    assert skill_kind(None) is None
-    assert skill_kind("") is None
-
-
-def test_skill_percents_sums_per_kind_and_flags_missing() -> None:
-    hero = HeroRecord(
-        name="Forrest",
-        skills=(
-            _skill(2, "Attack Up: 8%/12%/15%/20%/24%", 16.0),
-            _skill(3, "Lethality Up:5%/10%/15%/20%/25%", 15.0),
-            _skill(1, "Defense Up: 25%/37.5%/50%", 50.0),
-            _skill(5, "Damage Taken Down: 4%/8%/12%", 6.0),
-        ),
-    )
-    percents, incomplete = skill_percents(hero)
-    assert percents == {
-        "attack_up": 16.0,
-        "lethality_up": 15.0,
-        "defense_up": 50.0,
-        "damage_taken_down": 6.0,
-    }
-    assert incomplete is False
-
-
-def test_skill_percents_flags_incomplete_when_bonus_missing() -> None:
-    hero = HeroRecord(
-        name="Quinn",
-        skills=(
-            _skill(0, "Damage Up: 400%/440%", None),
-            _skill(2, "Attack Up: 8%/12%", 12.0),
-        ),
-    )
-    percents, incomplete = skill_percents(hero)
-    assert percents == {"attack_up": 12.0}
-    assert incomplete is True
-
-
-def test_skill_percents_flags_incomplete_when_no_skills() -> None:
-    percents, incomplete = skill_percents(HeroRecord(name="Nobody"))
-    assert percents == {}
-    assert incomplete is True
-
-
-def test_catalog_percents_scales_max_value_by_stars() -> None:
-    entry = CatalogEntry(
-        name="Amadeus",
-        effects=(
-            EffectTag("attack_up", 25.0, "expedition"),
-            EffectTag("rally_attack", 15.0, "widget"),
-        ),
-    )
-    full = catalog_percents(entry, 5, 0)
-    assert full["attack_up"] == pytest.approx(25.0)
-    assert "rally_attack" not in full
-    half = catalog_percents(entry, 0, 0)
-    assert half["attack_up"] < full["attack_up"]
-
-
-def test_kind_family_uses_catalog_applies_to() -> None:
-    catalog = {
-        "A": CatalogEntry(name="A", effects=(EffectTag("attack_up", 25.0, "conquest"),)),
-    }
-    assert kind_family("attack_up", catalog) == CONQUEST
-    assert kind_family("attack_up", None) == EXPEDITION
-
-
-def test_kind_family_excludes_widget_only_kinds() -> None:
-    catalog = {
-        "A": CatalogEntry(name="A", effects=(EffectTag("rally_attack", 15.0, "widget"),)),
-    }
-    assert kind_family("rally_attack", catalog) is None
-
-
-def test_family_percents_filters_to_requested_family() -> None:
-    hero = HeroRecord(
-        name="Forrest",
-        stars=3,
-        pellets=0,
-        skills=(
-            _skill(2, "Attack Up: 8%/12%", 16.0),
-            _skill(0, "Area of Effect Damage Up: 55%/60%", 65.0),
-        ),
-    )
-    entry = CatalogEntry(name="Forrest", effects=())
-    exp, _ = family_percents(hero, entry, family=EXPEDITION)
-    con, _ = family_percents(hero, entry, family=CONQUEST)
-    assert exp == {"attack_up": 16.0}
-    assert con == {"aoe_damage_up": 65.0}
-
-
-def test_family_percents_falls_back_to_catalog_when_scrape_empty() -> None:
-    hero = HeroRecord(name="Amadeus", stars=5, pellets=0, skills=())
-    entry = CatalogEntry(
-        name="Amadeus",
-        effects=(EffectTag("attack_up", 25.0, "expedition"),),
-    )
-    percents, incomplete = family_percents(hero, entry, family=EXPEDITION)
-    assert percents["attack_up"] == pytest.approx(25.0)
-    assert incomplete is True
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `pytest tests/test_heroes_skill_effects.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'ks.heroes.optimize.skill_effects'`
-
-- [ ] **Step 3: Write the implementation**
-
-Create `ks/heroes/optimize/skill_effects.py`:
-
-```python
-"""Turn scraped hero skills into family-tagged percent bonuses.
-
-Scraped skills carry no machine-readable kind — only an ``upgrade_preview``
-string such as ``"Attack Up: 8%/12%/15%/20%/24%"`` plus a ``current_bonus``
-percent. This module is the single place that reads that text, so no scorer
-has to guess what a skill does.
-
-Family membership (conquest vs expedition) comes from the catalog's
-``applies_to`` field when a kind appears there; kinds the catalog never
-mentions fall back to ``_DEFAULT_KIND_FAMILY``. ``widget`` effects are march
-/ rally buffs and belong to neither hero-stat family.
-"""
-
-from __future__ import annotations
-
-from ks.heroes.models import HeroRecord
-from ks.heroes.optimize.scoring import star_progress_factor
-from ks.heroes.optimize.types import CatalogEntry
-
-CONQUEST = "conquest"
-EXPEDITION = "expedition"
-
-# Skill preview label (lowercased, text before the first ":") → catalog kind.
-# Labels absent here are economy/utility skills and contribute no combat stat.
-_SKILL_LABEL_KINDS: dict[str, str] = {
-    "attack up": "attack_up",
-    "defense up": "defense_up",
-    "health up": "health_up",
-    "lethality up": "lethality_up",
-    "damage taken down": "damage_taken_down",
-    "damage taken chance down": "damage_taken_down",
-    "enemy troops attack down": "opp_damage_down",
-    "attack speed up": "attack_speed_up",
-    "crit rate": "crit_rate_up",
-    "damage up": "damage_up",
-    "area of effect damage up": "aoe_damage_up",
-    "2nd wave damage up": "damage_up",
-    "heal up": "heal_up",
-}
-
-# Fallback family for kinds the catalog never tags with applies_to.
-_DEFAULT_KIND_FAMILY: dict[str, str] = {
-    "attack_up": EXPEDITION,
-    "defense_up": EXPEDITION,
-    "health_up": EXPEDITION,
-    "lethality_up": EXPEDITION,
-    "damage_taken_down": EXPEDITION,
-    "opp_damage_down": EXPEDITION,
-    "damage_up": CONQUEST,
-    "aoe_damage_up": CONQUEST,
-    "heal_up": CONQUEST,
-    "attack_speed_up": CONQUEST,
-    "crit_rate_up": CONQUEST,
-    "defender_attack": CONQUEST,
-    "defender_defense": CONQUEST,
-    "defender_health": CONQUEST,
-}
-
-_WIDGET = "widget"
-
-
-def skill_kind(label: str | None) -> str | None:
-    """Canonical effect kind for a skill ``upgrade_preview`` line, or None."""
-    if not label:
-        return None
-    head = label.split(":", 1)[0].strip().lower()
-    if not head:
-        return None
-    return _SKILL_LABEL_KINDS.get(head)
-
-
-def skill_percents(hero: HeroRecord) -> tuple[dict[str, float], bool]:
-    """Sum scraped ``current_bonus`` per kind.
-
-    Returns ``(kind → percent, skills_incomplete)``. ``skills_incomplete`` is
-    True when the hero has no skills at all, or when any skill is missing its
-    ``current_bonus`` (the split for that skill is unknowable from the scrape).
-    """
-    if not hero.skills:
-        return {}, True
-    out: dict[str, float] = {}
-    incomplete = False
-    for skill in hero.skills:
-        kind = skill_kind(skill.upgrade_preview)
-        if skill.current_bonus is None:
-            incomplete = True
-            continue
-        if kind is None:
-            continue
-        out[kind] = out.get(kind, 0.0) + float(skill.current_bonus)
-    return out, incomplete
-
-
-def catalog_percents(
-    entry: CatalogEntry | None,
-    stars: int | None,
-    pellets: int | None = None,
-) -> dict[str, float]:
-    """Star-scaled percent per kind from catalog effects (widget kinds dropped)."""
-    if entry is None:
-        return {}
-    factor = star_progress_factor(stars, pellets)
-    out: dict[str, float] = {}
-    for tag in entry.effects:
-        if tag.applies_to == _WIDGET:
-            continue
-        out[tag.kind] = out.get(tag.kind, 0.0) + float(tag.max_value) * factor
-    return out
-
-
-def kind_family(
-    kind: str,
-    catalog: dict[str, CatalogEntry] | None = None,
-) -> str | None:
-    """Family a kind contributes to, or None when it is widget-only/unknown.
-
-    Catalog ``applies_to`` wins: if any catalog entry tags ``kind`` as
-    conquest or expedition, that is the family. A kind the catalog only ever
-    tags as ``widget`` returns None. Otherwise fall back to the default map.
-    """
-    if catalog:
-        seen: set[str] = set()
-        for entry in catalog.values():
-            for tag in entry.effects:
-                if tag.kind == kind:
-                    seen.add(tag.applies_to)
-        if CONQUEST in seen:
-            return CONQUEST
-        if EXPEDITION in seen:
-            return EXPEDITION
-        if seen == {_WIDGET}:
-            return None
-    return _DEFAULT_KIND_FAMILY.get(kind)
-
-
-def family_percents(
-    hero: HeroRecord,
-    entry: CatalogEntry | None,
-    *,
-    family: str,
-    catalog: dict[str, CatalogEntry] | None = None,
-) -> tuple[dict[str, float], bool]:
-    """Percents for ``family`` from the scrape, falling back to the catalog.
-
-    Scraped ``current_bonus`` is preferred because it reflects the hero's
-    actual skill levels. When the scrape yields nothing for a kind the catalog
-    knows about, the star-scaled catalog value fills in and the result is
-    flagged incomplete.
-    """
-    if family not in (CONQUEST, EXPEDITION):
-        raise ValueError(f"unknown family {family!r}; want conquest|expedition")
-    scraped, incomplete = skill_percents(hero)
-    fallback = catalog_percents(entry, hero.stars, hero.pellets)
-    merged: dict[str, float] = {}
-    for kind, value in scraped.items():
-        if kind_family(kind, catalog) == family:
-            merged[kind] = value
-    for kind, value in fallback.items():
-        if kind in merged:
-            continue
-        if kind_family(kind, catalog) != family:
-            continue
-        merged[kind] = value
-        incomplete = True
-    return merged, incomplete
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `pytest tests/test_heroes_skill_effects.py -v`
-Expected: PASS — 9 passed
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add ks/heroes/optimize/skill_effects.py tests/test_heroes_skill_effects.py
-git commit -m "feat(heroes): parse scraped skills into family-tagged percents"
-```
-
----
-
-## Task 2: Contribution estimator (`stat_contributions.py`)
-
-**Files:**
-- Create: `ks/heroes/optimize/stat_contributions.py`
-- Test: `tests/test_heroes_stat_contributions.py`
-
-**Interfaces:**
-- Consumes: `skill_effects.family_percents`, `gear_stats.expedition_stat_fraction`, `gear_assign.infer_slot`, `scoring.normalize_troop`.
-- Produces:
-  - `CONQUEST`, `EXPEDITION` (re-exported), `EVENT_FAMILY: dict[str, str]`, `family_for_event(event: str | None) -> str`
-  - `CONQUEST_LABELS: tuple[str, ...]`, `EXPEDITION_STATS: tuple[str, ...]`, `expedition_labels(troop: str | None) -> tuple[str, ...]`
-  - `Share(hero: float, skills: float, gear: float)` with `.total` property and `.to_dict()`
-  - `StatContribution(family, estimated, skills_incomplete, power: Share, stats: dict[str, Share])` with `.to_dict()`
-  - `hero_contribution(hero, entry, *, family, gear_pieces=None, power=None, catalog=None) -> StatContribution`
-  - `formation_contribution(contributions: Sequence[StatContribution]) -> StatContribution`
-  - `contribution_strength(contribution: StatContribution) -> float`
-  - `EMPTY_CONTRIBUTION_FN` is **not** provided — callers that have no hero must build a `StatContribution` explicitly.
-
-- [ ] **Step 1: Write the failing test**
-
-Create `tests/test_heroes_stat_contributions.py`:
-
-```python
-import pytest
-
-from ks.heroes.gear_models import GearRecord, GearStats
-from ks.heroes.models import HeroRecord, HeroStats, SkillRecord
-from ks.heroes.optimize.stat_contributions import (
-    CONQUEST,
-    CONQUEST_LABELS,
-    EXPEDITION,
-    Share,
-    StatContribution,
-    contribution_strength,
-    expedition_labels,
-    family_for_event,
-    formation_contribution,
-    hero_contribution,
-)
-from ks.heroes.optimize.types import CatalogEntry
-
-
-def _hero(**kw) -> HeroRecord:
-    base = dict(
-        name="Forrest",
-        power=217855,
-        troop_type="infantry",
-        stars=3,
-        pellets=0,
-        stats=HeroStats(
-            conquest={
-                "Hero Attack": 1297,
-                "Hero Defense": 1324,
-                "Hero Health": 11889,
-                "Escort Attack": 432,
-                "Escort Defense": 441,
-                "Escort Health": 3963,
-            }
-        ),
-        skills=(
-            SkillRecord(slot=2, upgrade_preview="Attack Up: 8%/12%", current_bonus=16.0),
-            SkillRecord(slot=1, upgrade_preview="Defense Up: 25%/50%", current_bonus=50.0),
-            SkillRecord(
-                slot=3, upgrade_preview="Lethality Up:5%/10%", current_bonus=15.0
-            ),
-        ),
-    )
-    base.update(kw)
-    return HeroRecord(**base)
-
-
-def _piece(**kw) -> GearRecord:
-    base = dict(
-        piece_id="p1",
-        name="Judicator's Armet",
-        troop_type="infantry",
-        slot="helmet",
-        rarity="mythic",
-        enhancement_level=57,
-        power=134807,
-        stats=GearStats(
-            conquest={"Hero Attack": 385, "Hero Health": 1926},
-            expedition={"Infantry Lethality": 41.94},
-            lethality=41.94,
-        ),
-    )
-    base.update(kw)
-    return GearRecord(**base)
-
-
-def test_family_for_event_maps_all_four_screens() -> None:
-    assert family_for_event("arena") == CONQUEST
-    assert family_for_event("conquest") == CONQUEST
-    assert family_for_event("swordland") == EXPEDITION
-    assert family_for_event("beartrap") == EXPEDITION
-
-
-def test_family_for_event_rejects_unknown() -> None:
-    with pytest.raises(ValueError, match="unknown event"):
-        family_for_event("hall_of_chiefs")
-
-
-def test_share_total_is_sum_of_parts() -> None:
-    share = Share(hero=10.0, skills=2.0, gear=3.0)
-    assert share.total == pytest.approx(15.0)
-    assert share.to_dict() == {
-        "hero": 10.0,
-        "skills": 2.0,
-        "gear": 3.0,
-        "total": 15.0,
-    }
-
-
-def test_expedition_labels_use_singular_archer_prefix() -> None:
-    assert expedition_labels("archers") == (
-        "Archer Attack",
-        "Archer Defense",
-        "Archer Health",
-        "Archer Lethality",
-    )
-    assert expedition_labels("infantry")[0] == "Infantry Attack"
-
-
-def test_conquest_split_backs_skills_out_of_naked_value() -> None:
-    hero = _hero()
-    # skill_effects.kind_family defaults "attack_up" to EXPEDITION and the real
-    # catalog agrees, so tag it conquest via a catalog override here to put the
-    # hero's scraped 16% Attack Up into the conquest split under test.
-    entry = CatalogEntry(
-        name="Forrest",
-        troop="infantry",
-        effects=(EffectTag("attack_up", 16.0, CONQUEST),),
-    )
-    c = hero_contribution(
-        hero, entry, family=CONQUEST, catalog={"Forrest": entry}
-    )
-    attack = c.stats["Hero Attack"]
-    # 16% attack skills → skills share is naked * 0.16 / 1.16.
-    assert attack.skills == pytest.approx(1297 * 0.16 / 1.16)
-    assert attack.hero == pytest.approx(1297 - attack.skills)
-    assert attack.gear == 0.0
-    assert attack.total == pytest.approx(1297.0)
-
-
-def test_conquest_split_adds_gear_flats_on_top() -> None:
-    hero = _hero()
-    entry = CatalogEntry(name="Forrest", troop="infantry")
-    c = hero_contribution(hero, entry, family=CONQUEST, gear_pieces=[_piece()])
-    attack = c.stats["Hero Attack"]
-    assert attack.gear == pytest.approx(385.0)
-    assert attack.total == pytest.approx(1297.0 + 385.0)
-    assert c.power.gear == pytest.approx(134807.0)
-    assert c.power.hero == pytest.approx(217855.0)
-    assert c.power.skills == 0.0
-
-
-def test_every_conquest_label_present_even_when_scrape_missing() -> None:
-    hero = _hero(stats=HeroStats(conquest={}))
-    c = hero_contribution(hero, None, family=CONQUEST)
-    assert tuple(c.stats) == CONQUEST_LABELS
-    assert all(s.total == 0.0 for s in c.stats.values())
-
-
-def test_expedition_split_uses_percent_points() -> None:
-    hero = _hero()
-    entry = CatalogEntry(name="Forrest", troop="infantry")
-    c = hero_contribution(hero, entry, family=EXPEDITION, gear_pieces=[_piece()])
-    assert c.stats["Infantry Attack"].skills == pytest.approx(16.0)
-    assert c.stats["Infantry Defense"].skills == pytest.approx(50.0)
-    assert c.stats["Infantry Lethality"].skills == pytest.approx(15.0)
-    assert c.stats["Infantry Lethality"].gear == pytest.approx(41.94)
-    assert c.stats["Infantry Attack"].hero == 0.0
-
-
-def test_expedition_gear_falls_back_to_formula_when_ocr_missing() -> None:
-    piece = _piece(stats=GearStats(conquest={}, expedition={}), slot="chest")
-    hero = _hero()
-    c = hero_contribution(
-        hero, None, family=EXPEDITION, gear_pieces=[piece]
-    )
-    # chest → Health; mythic +57 formula fraction, expressed as percent points.
-    assert c.stats["Infantry Health"].gear > 0.0
-
-
-def test_shares_are_never_negative() -> None:
-    hero = _hero(
-        stats=HeroStats(conquest={"Hero Attack": 10}),
-        skills=(
-            SkillRecord(slot=0, upgrade_preview="Attack Up: 900%", current_bonus=900.0),
-        ),
-    )
-    c = hero_contribution(hero, None, family=CONQUEST)
-    attack = c.stats["Hero Attack"]
-    assert attack.hero >= 0.0
-    assert attack.skills >= 0.0
-    assert attack.total == pytest.approx(10.0)
-
-
-def test_skills_incomplete_flag_propagates() -> None:
-    hero = _hero(skills=())
-    c = hero_contribution(hero, None, family=CONQUEST)
-    assert c.skills_incomplete is True
-    assert c.estimated is True
-    assert c.power.skills == 0.0
-    assert c.power.hero == pytest.approx(217855.0)
-
-
-def test_power_override_replaces_scraped_power() -> None:
-    hero = _hero()
-    c = hero_contribution(hero, None, family=CONQUEST, power=99_000)
-    assert c.power.hero == pytest.approx(99_000.0)
-
-
-def test_formation_contribution_sums_matching_labels() -> None:
-    a = StatContribution(
-        family=EXPEDITION,
-        estimated=True,
-        skills_incomplete=False,
-        power=Share(1.0, 0.0, 2.0),
-        stats={"Infantry Lethality": Share(0.0, 15.0, 41.94)},
-    )
-    b = StatContribution(
-        family=EXPEDITION,
-        estimated=True,
-        skills_incomplete=True,
-        power=Share(3.0, 0.0, 4.0),
-        stats={
-            "Infantry Lethality": Share(0.0, 10.0, 20.0),
-            "Archer Health": Share(0.0, 5.0, 0.0),
-        },
-    )
-    total = formation_contribution([a, b])
-    assert total.power.hero == pytest.approx(4.0)
-    assert total.power.gear == pytest.approx(6.0)
-    assert total.stats["Infantry Lethality"].skills == pytest.approx(25.0)
-    assert total.stats["Infantry Lethality"].gear == pytest.approx(61.94)
-    assert total.stats["Archer Health"].skills == pytest.approx(5.0)
-    assert total.skills_incomplete is True
-
-
-def test_formation_contribution_rejects_mixed_families() -> None:
-    a = StatContribution(CONQUEST, True, False, Share(0, 0, 0), {})
-    b = StatContribution(EXPEDITION, True, False, Share(0, 0, 0), {})
-    with pytest.raises(ValueError, match="same family"):
-        formation_contribution([a, b])
-
-
-def test_formation_contribution_of_empty_sequence_raises() -> None:
-    with pytest.raises(ValueError, match="at least one"):
-        formation_contribution([])
-
-
-def test_contribution_strength_rises_with_gear() -> None:
-    hero = _hero()
-    bare = hero_contribution(hero, None, family=CONQUEST)
-    geared = hero_contribution(hero, None, family=CONQUEST, gear_pieces=[_piece()])
-    assert contribution_strength(geared) > contribution_strength(bare)
-
-
-def test_contribution_strength_rises_with_expedition_percent() -> None:
-    hero = _hero()
-    bare = hero_contribution(hero, None, family=EXPEDITION)
-    geared = hero_contribution(hero, None, family=EXPEDITION, gear_pieces=[_piece()])
-    assert contribution_strength(geared) > contribution_strength(bare)
-
-
-def test_to_dict_shape_matches_api_contract() -> None:
-    c = hero_contribution(_hero(), None, family=CONQUEST)
-    payload = c.to_dict()
-    assert payload["family"] == CONQUEST
-    assert payload["estimated"] is True
-    assert set(payload["power"]) == {"hero", "skills", "gear", "total"}
-    assert set(payload) == {
-        "family",
-        "estimated",
-        "skills_incomplete",
-        "power",
-        "stats",
-    }
-    assert set(payload["stats"]["Hero Attack"]) == {
-        "hero",
-        "skills",
-        "gear",
-        "total",
-    }
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `pytest tests/test_heroes_stat_contributions.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'ks.heroes.optimize.stat_contributions'`
-
-- [ ] **Step 3: Write the implementation**
-
-Create `ks/heroes/optimize/stat_contributions.py`:
-
-```python
-"""Per-hero power/stat split into hero / skills / gear shares (estimate A).
-
-This module is the only place that decides how much of a hero's strength came
-from the hero itself, from skills, and from gear. Every optimiser reads
-``StatContribution`` totals instead of raw ``hero.power`` plus an ad-hoc gear
-heuristic.
-
-Estimation rule A (see the design doc):
-
-1. **Skills** — family-filtered percents from the scrape (falling back to the
-   catalog). Conquest is a *multiplicative* buff on the flat scraped stat, so
-   the skills share of a naked value ``v`` under a total percent ``p`` is
-   ``v * p / (1 + p)`` — which is always in ``[0, v)``, so the hero share can
-   never go negative. Expedition percents are additive percent points.
-2. **Hero** — naked scraped value minus the skills share.
-3. **Gear** — summed from the assigned pieces: conquest flats from OCR,
-   expedition percents from OCR when present, otherwise the calibrated
-   ``expedition_stat_fraction`` formula, plus piece power.
-4. **Total** — hero + skills + gear.
-
-Skill power share is not estimable from any scraped field, so power is always
-reported as ``hero = naked``, ``skills = 0``, and the result is flagged via
-``skills_incomplete`` when the skill scrape is partial.
-"""
-
-from __future__ import annotations
-
-from dataclasses import dataclass, field
-from typing import Any, Mapping, Sequence
-
-from ks.heroes.gear_models import GearRecord
-from ks.heroes.models import HeroRecord
-from ks.heroes.optimize.gear_assign import infer_slot
-from ks.heroes.optimize.gear_stats import expedition_stat_fraction
-from ks.heroes.optimize.scoring import normalize_troop
-from ks.heroes.optimize.skill_effects import CONQUEST, EXPEDITION, family_percents
-from ks.heroes.optimize.types import CatalogEntry
-
-__all__ = [
-    "CONQUEST",
-    "EXPEDITION",
-    "CONQUEST_LABELS",
-    "EXPEDITION_STATS",
-    "EVENT_FAMILY",
-    "Share",
-    "StatContribution",
-    "contribution_strength",
-    "expedition_labels",
-    "family_for_event",
-    "formation_contribution",
-    "hero_contribution",
-]
-
-# Event key → stat family. Lives here so no scorer re-invents the mapping.
-EVENT_FAMILY: dict[str, str] = {
-    "arena": CONQUEST,
-    "arena_attack": CONQUEST,
-    "arena_defense": CONQUEST,
-    "conquest": CONQUEST,
-    "sword": EXPEDITION,
-    "swordland": EXPEDITION,
-    "bear": EXPEDITION,
-    "beartrap": EXPEDITION,
-    "bear_trap": EXPEDITION,
-}
-
-CONQUEST_LABELS: tuple[str, ...] = (
-    "Hero Attack",
-    "Hero Defense",
-    "Hero Health",
-    "Escort Attack",
-    "Escort Defense",
-    "Escort Health",
-)
-
-EXPEDITION_STATS: tuple[str, ...] = ("Attack", "Defense", "Health", "Lethality")
-
-# Gear OCR emits the singular "Archer" prefix for archers pieces.
-_TROOP_PREFIX: dict[str, str] = {
-    "infantry": "Infantry",
-    "cavalry": "Cavalry",
-    "archers": "Archer",
-}
-
-# Conquest: a percent kind lifts these flat labels.
-_CONQUEST_KIND_LABELS: dict[str, tuple[str, ...]] = {
-    "attack_up": ("Hero Attack", "Escort Attack"),
-    "damage_up": ("Hero Attack", "Escort Attack"),
-    "aoe_damage_up": ("Hero Attack", "Escort Attack"),
-    "crit_rate_up": ("Hero Attack",),
-    "attack_speed_up": ("Hero Attack",),
-    "defender_attack": ("Hero Attack", "Escort Attack"),
-    "defense_up": ("Hero Defense", "Escort Defense"),
-    "damage_taken_down": ("Hero Defense", "Escort Defense"),
-    "opp_damage_down": ("Hero Defense", "Escort Defense"),
-    "defender_defense": ("Hero Defense", "Escort Defense"),
-    "health_up": ("Hero Health", "Escort Health"),
-    "heal_up": ("Hero Health", "Escort Health"),
-    "defender_health": ("Hero Health", "Escort Health"),
-}
-
-# Expedition: a percent kind adds to these troop stats.
-_EXPEDITION_KIND_STATS: dict[str, tuple[str, ...]] = {
-    "attack_up": ("Attack",),
-    "damage_up": ("Attack",),
-    "defense_up": ("Defense",),
-    "damage_taken_down": ("Defense",),
-    "opp_damage_down": ("Defense",),
-    "health_up": ("Health",),
-    "lethality_up": ("Lethality",),
-}
-
-# Gear slot → the expedition stat the formula fraction represents.
-_SLOT_EXPEDITION_STAT: dict[str, str] = {
-    "helmet": "Lethality",
-    "boots": "Lethality",
-    "chest": "Health",
-    "gloves": "Health",
-}
-
-# contribution_strength normalizers — chosen so power, flat conquest stats and
-# expedition percents land in comparable magnitudes for the ILP objective.
-_POWER_SCALE = 1_000_000.0
-_CONQUEST_COMBAT_SCALE = 10_000.0
-_CONQUEST_HEALTH_SCALE = 100_000.0
-_EXPEDITION_PERCENT_SCALE = 100.0
-
-
-@dataclass(frozen=True)
-class Share:
-    """One stat's split. ``total`` is always the sum of the three parts."""
-
-    hero: float = 0.0
-    skills: float = 0.0
-    gear: float = 0.0
-
-    @property
-    def total(self) -> float:
-        return self.hero + self.skills + self.gear
-
-    def to_dict(self) -> dict[str, float]:
-        return {
-            "hero": self.hero,
-            "skills": self.skills,
-            "gear": self.gear,
-            "total": self.total,
-        }
-
-
-@dataclass(frozen=True)
-class StatContribution:
-    """One hero's (or one formation's) power + stat split for a family."""
-
-    family: str
-    estimated: bool
-    skills_incomplete: bool
-    power: Share
-    stats: dict[str, Share] = field(default_factory=dict)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "family": self.family,
-            "estimated": self.estimated,
-            "skills_incomplete": self.skills_incomplete,
-            "power": self.power.to_dict(),
-            "stats": {k: v.to_dict() for k, v in self.stats.items()},
-        }
-
-
-def family_for_event(event: str | None) -> str:
-    """Stat family for an event key (``arena``/``conquest``/``swordland``/…)."""
-    key = (event or "").strip().lower().replace(" ", "_")
-    family = EVENT_FAMILY.get(key)
-    if family is None:
-        raise ValueError(
-            f"unknown event {event!r}; have {sorted(EVENT_FAMILY)}"
-        )
-    return family
-
-
-def expedition_labels(troop: str | None) -> tuple[str, ...]:
-    """Expedition stat labels for a hero's troop class."""
-    key = normalize_troop(troop) or "infantry"
-    prefix = _TROOP_PREFIX.get(key, key.title())
-    return tuple(f"{prefix} {stat}" for stat in EXPEDITION_STATS)
-
-
-def _hero_troop(hero: HeroRecord, entry: CatalogEntry | None) -> str:
-    if entry is not None:
-        troop = normalize_troop(entry.troop)
-        if troop:
-            return troop
-    return normalize_troop(hero.troop_type) or "infantry"
-
-
-def _conquest_stats(
-    hero: HeroRecord,
-    percents: Mapping[str, float],
-    gear_pieces: Sequence[GearRecord],
-) -> dict[str, Share]:
-    naked = dict((hero.stats.conquest if hero.stats else None) or {})
-    by_label: dict[str, float] = {label: 0.0 for label in CONQUEST_LABELS}
-    for kind, percent in percents.items():
-        for label in _CONQUEST_KIND_LABELS.get(kind, ()):
-            by_label[label] = by_label.get(label, 0.0) + float(percent) / 100.0
-
-    gear_by_label: dict[str, float] = {label: 0.0 for label in CONQUEST_LABELS}
-    for piece in gear_pieces:
-        flats = (piece.stats.conquest if piece.stats else None) or {}
-        for label, value in flats.items():
-            gear_by_label[label] = gear_by_label.get(label, 0.0) + float(value)
-
-    out: dict[str, Share] = {}
-    for label in CONQUEST_LABELS:
-        base = float(naked.get(label) or 0.0)
-        p = max(0.0, by_label.get(label, 0.0))
-        skills = base * p / (1.0 + p) if base > 0 else 0.0
-        out[label] = Share(
-            hero=base - skills,
-            skills=skills,
-            gear=gear_by_label.get(label, 0.0),
-        )
-    return out
-
-
-def _gear_expedition_percent(piece: GearRecord, labels: tuple[str, ...]) -> dict[str, float]:
-    """Percent points this piece adds, keyed by expedition label."""
-    out: dict[str, float] = {}
-    stats = piece.stats
-    if stats is not None and stats.expedition:
-        for label, value in stats.expedition.items():
-            if label in labels:
-                out[label] = out.get(label, 0.0) + float(value)
-    if out:
-        return out
-    slot = infer_slot(piece)
-    stat = _SLOT_EXPEDITION_STAT.get(slot or "")
-    if stat is None:
-        return out
-    frac = expedition_stat_fraction(
-        piece.rarity, piece.enhancement_level, piece.mastery_level
-    )
-    if frac is None or frac <= 0:
-        return out
-    label = next((lb for lb in labels if lb.endswith(f" {stat}")), None)
-    if label is None:
-        return out
-    out[label] = float(frac) * 100.0
-    return out
-
-
-def _expedition_stats(
-    hero: HeroRecord,
-    troop: str,
-    percents: Mapping[str, float],
-    gear_pieces: Sequence[GearRecord],
-) -> dict[str, Share]:
-    labels = expedition_labels(troop)
-    scraped = dict((hero.stats.expedition if hero.stats else None) or {})
-    hero_by_label = {lb: float(scraped.get(lb) or 0.0) for lb in labels}
-
-    skills_by_label: dict[str, float] = {lb: 0.0 for lb in labels}
-    by_stat: dict[str, float] = {}
-    for kind, percent in percents.items():
-        for stat in _EXPEDITION_KIND_STATS.get(kind, ()):
-            by_stat[stat] = by_stat.get(stat, 0.0) + float(percent)
-    for stat, value in by_stat.items():
-        label = next((lb for lb in labels if lb.endswith(f" {stat}")), None)
-        if label is not None:
-            skills_by_label[label] = value
-
-    gear_by_label: dict[str, float] = {lb: 0.0 for lb in labels}
-    for piece in gear_pieces:
-        for label, value in _gear_expedition_percent(piece, labels).items():
-            gear_by_label[label] = gear_by_label.get(label, 0.0) + value
-
-    return {
-        lb: Share(
-            hero=max(0.0, hero_by_label[lb]),
-            skills=max(0.0, skills_by_label[lb]),
-            gear=max(0.0, gear_by_label[lb]),
-        )
-        for lb in labels
-    }
-
-
-def hero_contribution(
-    hero: HeroRecord,
-    entry: CatalogEntry | None,
-    *,
-    family: str,
-    gear_pieces: Sequence[GearRecord] | Mapping[str, GearRecord] | None = None,
-    power: int | float | None = None,
-    catalog: dict[str, CatalogEntry] | None = None,
-) -> StatContribution:
-    """Split one hero's power + family stats into hero / skills / gear shares.
-
-    ``gear_pieces`` accepts either the slot→piece mapping produced by
-    ``assign_exclusive_sets`` or a plain sequence of pieces. ``power``
-    overrides the scraped value (callers pass sanitized power).
-    """
-    if family not in (CONQUEST, EXPEDITION):
-        raise ValueError(f"unknown family {family!r}; want conquest|expedition")
-    if isinstance(gear_pieces, Mapping):
-        pieces: list[GearRecord] = list(gear_pieces.values())
-    else:
-        pieces = list(gear_pieces or ())
-
-    percents, incomplete = family_percents(
-        hero, entry, family=family, catalog=catalog
-    )
-    if family == CONQUEST:
-        stats = _conquest_stats(hero, percents, pieces)
-    else:
-        stats = _expedition_stats(
-            hero, _hero_troop(hero, entry), percents, pieces
-        )
-
-    naked_power = float(power if power is not None else (hero.power or 0))
-    gear_power = float(sum(float(p.power or 0) for p in pieces))
-    return StatContribution(
-        family=family,
-        estimated=True,
-        skills_incomplete=incomplete,
-        power=Share(hero=max(0.0, naked_power), skills=0.0, gear=gear_power),
-        stats=stats,
-    )
-
-
-def formation_contribution(
-    contributions: Sequence[StatContribution],
-) -> StatContribution:
-    """Sum contributions across a lineup; matching stat labels add together."""
-    items = list(contributions)
-    if not items:
-        raise ValueError("formation_contribution needs at least one contribution")
-    families = {c.family for c in items}
-    if len(families) > 1:
-        raise ValueError(
-            f"all contributions must share the same family; got {sorted(families)}"
-        )
-    power = Share(
-        hero=sum(c.power.hero for c in items),
-        skills=sum(c.power.skills for c in items),
-        gear=sum(c.power.gear for c in items),
-    )
-    stats: dict[str, Share] = {}
-    for c in items:
-        for label, share in c.stats.items():
-            prev = stats.get(label, Share())
-            stats[label] = Share(
-                hero=prev.hero + share.hero,
-                skills=prev.skills + share.skills,
-                gear=prev.gear + share.gear,
-            )
-    return StatContribution(
-        family=items[0].family,
-        estimated=any(c.estimated for c in items),
-        skills_incomplete=any(c.skills_incomplete for c in items),
-        power=power,
-        stats=stats,
-    )
-
-
-def contribution_strength(contribution: StatContribution) -> float:
-    """Single scalar strength signal for ILP objectives.
-
-    Conquest: power in millions + (attack + defense) / 10k + health / 100k.
-    Expedition: power in millions + summed percent points / 100.
-
-    The scales are calibration constants, not game formulas — they exist so
-    power and stats land in the same order of magnitude in the objective.
-    """
-    power_term = contribution.power.total / _POWER_SCALE
-    if contribution.family == CONQUEST:
-        def _t(label: str) -> float:
-            share = contribution.stats.get(label)
-            return share.total if share else 0.0
-
-        combat = (
-            _t("Hero Attack")
-            + _t("Escort Attack")
-            + _t("Hero Defense")
-            + _t("Escort Defense")
-        )
-        health = _t("Hero Health") + _t("Escort Health")
-        return (
-            power_term
-            + combat / _CONQUEST_COMBAT_SCALE
-            + health / _CONQUEST_HEALTH_SCALE
-        )
-    percent = sum(share.total for share in contribution.stats.values())
-    return power_term + percent / _EXPEDITION_PERCENT_SCALE
-```
-
-- [ ] **Step 4: Run test to verify it passes**
-
-Run: `pytest tests/test_heroes_stat_contributions.py -v`
-Expected: PASS — 18 passed
-
-- [ ] **Step 5: Run the existing suite to confirm nothing regressed**
-
-Run: `pytest -q`
-Expected: PASS — same counts as before Task 1 (the two new modules are not yet imported by any scorer).
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add ks/heroes/optimize/stat_contributions.py tests/test_heroes_stat_contributions.py
-git commit -m "feat(heroes): add hero/skills/gear stat contribution estimator"
-```
-
----
-
-## Task 3: Expedition scoring path (`scoring`, `model`, `recommend`, `types`)
-
-**Worktree:** `sc-expedition` — runs in parallel with Task 4.
-
-**Files:**
-- Modify: `ks/heroes/optimize/scoring.py:66-110` (`hero_strength`)
-- Modify: `ks/heroes/optimize/model.py:52-69` (strength build in `solve_mode`)
-- Modify: `ks/heroes/optimize/explain.py:175-290` (`leave_one_out_mode`, `explain_selected_heroes`)
-- Modify: `ks/heroes/optimize/recommend.py:44-150`
-- Modify: `ks/heroes/optimize/types.py:127-169` (`ModeSolution`, `RecommendResult`)
-- Test: `tests/test_heroes_optimize_scoring.py` (update), `tests/test_heroes_optimize_recommend.py` (update), `tests/test_heroes_optimize_explain.py` (run only)
-
-**Interfaces:**
-- Consumes: `stat_contributions.hero_contribution`, `formation_contribution`, `contribution_strength`, `family_for_event`, `EXPEDITION`.
-- Produces:
-  - `hero_strength(hero, entry, mode, *, event=None, contribution=None) -> float` — the `effective_power` and `gear_bonus` keywords are **removed**.
-  - `RecommendResult` gains fields `stat_family: str = "expedition"`, `formation_totals: dict[str, Any] | None = None`; each row in `RecommendResult.heroes` gains a `"contributions"` key.
-  - `RecommendResult.to_dict()` emits `stat_family` and `formation_totals` at the top level.
-
-- [ ] **Step 1: Write the failing test**
-
-Append to `tests/test_heroes_optimize_scoring.py`:
-
-```python
-from ks.heroes.optimize.stat_contributions import (
-    EXPEDITION,
-    Share,
-    StatContribution,
-    hero_contribution,
-)
+from ks.heroes.optimize.stat_contributions import EXPEDITION, Share, StatContribution
 
 
 def _contribution(power: float, lethality: float = 0.0) -> StatContribution:
@@ -1154,7 +109,7 @@ def _contribution(power: float, lethality: float = 0.0) -> StatContribution:
     )
 
 
-def test_hero_strength_uses_contribution_power() -> None:
+def test_hero_strength_rises_with_contribution_power() -> None:
     entry = _entry("Zoe", "defense")
     hero = HeroRecord(name="Zoe", stars=3, power=100_000)
     low = hero_strength(hero, entry, "solo", contribution=_contribution(100_000))
@@ -1162,7 +117,7 @@ def test_hero_strength_uses_contribution_power() -> None:
     assert high > low
 
 
-def test_hero_strength_uses_contribution_gear_percent() -> None:
+def test_hero_strength_rises_with_contribution_gear_percent() -> None:
     entry = _entry("Zoe", "defense")
     hero = HeroRecord(name="Zoe", stars=3, power=100_000)
     bare = hero_strength(hero, entry, "solo", contribution=_contribution(100_000))
@@ -1172,7 +127,7 @@ def test_hero_strength_uses_contribution_gear_percent() -> None:
     assert geared > bare
 
 
-def test_hero_strength_without_contribution_ignores_power_term() -> None:
+def test_hero_strength_without_contribution_scores_effects_only() -> None:
     entry = _entry("Zoe", "defense")
     hero = HeroRecord(name="Zoe", stars=3, power=100_000)
     assert hero_strength(hero, entry, "solo") == hero_strength(
@@ -1180,10 +135,10 @@ def test_hero_strength_without_contribution_ignores_power_term() -> None:
     )
 
 
-def test_hero_strength_rejects_wrong_family() -> None:
+def test_hero_strength_rejects_conquest_contribution() -> None:
     entry = _entry("Zoe", "defense")
     hero = HeroRecord(name="Zoe", stars=3)
-    conquest = StatContribution(
+    wrong = StatContribution(
         family="conquest",
         estimated=True,
         skills_incomplete=False,
@@ -1191,10 +146,172 @@ def test_hero_strength_rejects_wrong_family() -> None:
         stats={},
     )
     with pytest.raises(ValueError, match="expedition"):
-        hero_strength(hero, entry, "solo", contribution=conquest)
+        hero_strength(hero, entry, "solo", contribution=wrong)
 ```
 
-Append to `tests/test_heroes_optimize_recommend.py` (the file already defines `_hero` and `_cat`; add the imports and helper below):
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `uv run pytest tests/test_heroes_optimize_scoring.py -v`
+Expected: FAIL — `TypeError: hero_strength() got an unexpected keyword argument 'contribution'`
+
+- [ ] **Step 3: Rewrite `hero_strength`**
+
+Replace `ks/heroes/optimize/scoring.py:110-131` with:
+
+```python
+def hero_strength(
+    hero: HeroRecord,
+    entry: CatalogEntry,
+    mode: str,
+    *,
+    event: EventProfile | None = None,
+    contribution: "StatContribution | None" = None,
+) -> float:
+    """Mode-weighted effect score plus the hero's expedition contribution.
+
+    ``contribution`` must be an expedition-family ``StatContribution``; it
+    replaces the old ``effective_power`` + ``gear_bonus`` pair, so power and
+    gear percents enter through one estimated split rather than a raw scrape
+    plus a 0.15-scaled heuristic.
+    """
+    # Local import: scoring is an ancestor of stat_contributions (via both
+    # gear_assign and skill_effects), so a module-level import is circular.
+    from ks.heroes.optimize.stat_contributions import (
+        EXPEDITION,
+        contribution_strength,
+    )
+
+    weights, op_weights = _resolve_mode_weights(mode, event)
+    total = sum(
+        _effect_tag_value(tag, hero, mode, weights, op_weights)
+        for tag in entry.effects
+    )
+    total += _widget_priority_bonus(entry, mode)
+
+    if contribution is not None:
+        if contribution.family != EXPEDITION:
+            raise ValueError(
+                "hero_strength needs an expedition contribution; got "
+                f"{contribution.family!r}"
+            )
+        total += contribution_strength(contribution)
+    return total
+```
+
+Add to the top of `scoring.py`, after the existing imports:
+
+```python
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover — runtime import is function-local
+    from ks.heroes.optimize.stat_contributions import StatContribution
+```
+
+- [ ] **Step 4: Rewrite `_compute_hero_features`**
+
+Replace the `strengths` construction in `ks/heroes/optimize/model.py:125-151`. Keep the rest of the function body (the `_warn_missing_escorts` / `escorts` / `widget` / `_HeroFeatures(...)` tail) exactly as it stands; change only the parameter name and the `strengths` dict:
+
+```python
+def _compute_hero_features(
+    usable: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    scenario: Scenario,
+    event: EventProfile | None,
+    gear_by_troop: dict[str, dict[str, GearRecord]] | None,
+) -> _HeroFeatures:
+    troop_of = {
+        h.name: (normalize_troop(catalog[h.name].troop) or "") for h in usable
+    }
+    # Gear is fungible within a troop class: score power using the best geared
+    # hero of that class (widgets / skills / stars stay on the selected hero).
+    class_power = max_power_by_troop(usable, catalog)
+    gear = gear_by_troop or {}
+    strengths = {
+        h.name: hero_strength(
+            h,
+            catalog[h.name],
+            scenario.mode,
+            event=event,
+            contribution=hero_contribution(
+                h,
+                catalog[h.name],
+                family=EXPEDITION,
+                gear_pieces=gear.get(troop_of[h.name]),
+                power=class_power.get(troop_of[h.name], h.power),
+                catalog=catalog,
+            ),
+        )
+        for h in usable
+    }
+```
+
+Add to `model.py`'s module-level imports (safe — no cycle):
+
+```python
+from ks.heroes.gear_models import GearRecord
+from ks.heroes.optimize.stat_contributions import EXPEDITION, hero_contribution
+```
+
+Rename the `solve_mode` keyword at `model.py:363` to:
+
+```python
+    gear_by_troop: dict[str, dict[str, GearRecord]] | None = None,
+```
+
+and update the `_compute_hero_features(...)` call at `model.py:371` to pass it.
+
+- [ ] **Step 5: Update `explain.py`**
+
+Rename the keyword on `leave_one_out_mode` (`explain.py:210`) and `explain_selected_heroes` (`explain.py:281`) to:
+
+```python
+    gear_by_troop: dict[str, dict[str, GearRecord]] | None = None,
+```
+
+Forward as `gear_by_troop=gear_by_troop` at the `solve_mode` call (`explain.py:226`) and at the `leave_one_out_mode` call inside `explain_selected_heroes`.
+
+Replace the `hero_strength` call at `explain.py:300-313` with:
+
+```python
+        strength = None
+        if entry is not None and hero is not None:
+            strength = hero_strength(
+                hero,
+                entry,
+                scenario.mode,
+                event=event,
+                contribution=hero_contribution(
+                    hero,
+                    entry,
+                    family=EXPEDITION,
+                    gear_pieces=(gear_by_troop or {}).get(
+                        normalize_troop(entry.troop) or ""
+                    ),
+                    catalog=catalog,
+                ),
+            )
+```
+
+Add to `explain.py`'s module-level imports:
+
+```python
+from ks.heroes.gear_models import GearRecord
+from ks.heroes.optimize.stat_contributions import EXPEDITION, hero_contribution
+```
+
+- [ ] **Step 6: Run the scorer tests, then commit**
+
+Run: `uv run pytest tests/test_heroes_optimize_scoring.py tests/test_heroes_optimize_model.py tests/test_heroes_optimize_explain.py tests/test_heroes_optimize_beartrap.py -v`
+Expected: PASS
+
+```bash
+git add ks/heroes/optimize/scoring.py ks/heroes/optimize/model.py ks/heroes/optimize/explain.py tests/test_heroes_optimize_scoring.py
+git commit -m "feat(heroes): score expedition modes from stat contributions"
+```
+
+- [ ] **Step 7: Write the failing recommend tests**
+
+Append to `tests/test_heroes_optimize_recommend.py` (it already defines `_hero` and `_cat`):
 
 ```python
 import pytest
@@ -1203,6 +320,7 @@ from ks.heroes.gear_models import GearRecord, GearStats
 
 
 def _piece(pid: str, troop: str, slot: str, lethality: float) -> GearRecord:
+    prefix = "Archer" if troop == "archers" else troop.title()
     return GearRecord(
         piece_id=pid,
         name=f"{troop} {slot}",
@@ -1213,7 +331,7 @@ def _piece(pid: str, troop: str, slot: str, lethality: float) -> GearRecord:
         power=50_000,
         stats=GearStats(
             conquest={"Hero Attack": 300},
-            expedition={f"{'Archer' if troop == 'archers' else troop.title()} Lethality": lethality},
+            expedition={f"{prefix} Lethality": lethality},
             lethality=lethality,
         ),
     )
@@ -1252,8 +370,9 @@ def _run_recommend():
 def test_recommend_result_carries_expedition_contributions() -> None:
     payload = _run_recommend().to_dict()
     assert payload["stat_family"] == "expedition"
-    totals = payload["formation_totals"]
-    assert set(totals["power"]) == {"hero", "skills", "gear", "total"}
+    assert set(payload["formation_totals"]["power"]) == {
+        "hero", "skills", "gear", "total"
+    }
     for row in payload["heroes"]:
         contrib = row["contributions"]
         assert contrib["family"] == "expedition"
@@ -1280,235 +399,65 @@ def test_recommend_formation_totals_sum_hero_contributions() -> None:
         )
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 8: Run to verify they fail**
 
-Run: `pytest tests/test_heroes_optimize_scoring.py tests/test_heroes_optimize_recommend.py -v`
-Expected: FAIL — `TypeError: hero_strength() got an unexpected keyword argument 'contribution'` and `KeyError: 'stat_family'`
+Run: `uv run pytest tests/test_heroes_optimize_recommend.py -v`
+Expected: FAIL — `KeyError: 'stat_family'`
 
-- [ ] **Step 3: Rewrite `hero_strength`**
+- [ ] **Step 9: Rewire `recommend.py`**
 
-Replace `ks/heroes/optimize/scoring.py:66-110` with:
-
-```python
-def hero_strength(
-    hero: HeroRecord,
-    entry: CatalogEntry,
-    mode: str,
-    *,
-    event: EventProfile | None = None,
-    contribution: StatContribution | None = None,
-) -> float:
-    """Mode-weighted effect score plus the hero's expedition contribution.
-
-    ``contribution`` must be an expedition-family ``StatContribution`` built by
-    ``stat_contributions.hero_contribution``; it replaces the old
-    ``effective_power`` + ``gear_bonus`` pair as the strength signal.
-    """
-    defaults = default_kind_weights()
-    if event and event.mode_kind_weights and mode in event.mode_kind_weights:
-        weights = event.mode_kind_weights[mode]
-    else:
-        weights = defaults.get(mode) or defaults["solo"]
-
-    op_weights: dict[int, float] = {}
-    if event and event.effect_op_weights and mode in event.effect_op_weights:
-        op_weights = event.effect_op_weights[mode]
-
-    total = 0.0
-    for tag in entry.effects:
-        if mode == "solo" and tag.applies_to == "widget":
-            continue
-        if mode == "joiner" and tag.applies_to == "widget":
-            continue
-        if mode == "joiner" and not tag.first_expedition and tag.applies_to == "expedition":
-            w = 0.15 * weights.get(tag.kind, 0.5)
-        else:
-            w = weights.get(tag.kind, 0.5)
-        value = w * _effect_value(tag, hero.stars, hero.pellets)
-        if tag.effect_op is not None and tag.first_expedition:
-            value *= op_weights.get(tag.effect_op, 1.0)
-        total += value
-
-    if entry.widget_type == "defense" and mode == "garrison" and entry.garrison_widget_priority:
-        total += 5.0 * entry.garrison_widget_priority
-    if entry.widget_type == "attack" and mode == "rally_lead" and entry.rally_widget_priority:
-        total += 5.0 * entry.rally_widget_priority
-
-    if contribution is not None:
-        if contribution.family != EXPEDITION:
-            raise ValueError(
-                f"hero_strength needs an expedition contribution; got {contribution.family!r}"
-            )
-        total += contribution_strength(contribution)
-    return total
-```
-
-Add these imports at the top of `scoring.py`, **below** the existing imports (they must be local imports inside the function if a circular import appears — `stat_contributions` imports `normalize_troop` and `star_progress_factor` from `scoring`, so import lazily):
+Replace the gear-bonus computation at `recommend.py:177` with a gear **map**:
 
 ```python
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:  # pragma: no cover — stat_contributions imports from this module
-    from ks.heroes.optimize.stat_contributions import StatContribution
+    gear_by_troop = best_sets_by_troop(gear, profile=gear_profile) if gear else None
 ```
 
-and inside `hero_strength`, immediately before the `if contribution is not None:` block:
+Change the `gear_assign` import at the top of `recommend.py` to include `best_sets_by_troop` and drop `gear_bonus_by_troop`. Rename the `gear_bonus` parameter of `_solve_all_modes` (`:62`) and `_explain_hero_rows` (`:98`) to `gear_by_troop`, and forward it as `gear_by_troop=gear_by_troop` at the `solve_mode` call (`:74`) and the `explain_selected_heroes` call (`:113`).
+
+`_build_gear_assignment` (`:141-157`) currently returns only the serialisable form; the raw map is needed for the contributions. Change it to return both:
 
 ```python
-    from ks.heroes.optimize.stat_contributions import EXPEDITION, contribution_strength
-```
-
-- [ ] **Step 4: Build contributions in `solve_mode`**
-
-Replace `ks/heroes/optimize/model.py:52-69` with:
-
-```python
-    troop_of = {
-        h.name: (normalize_troop(catalog[h.name].troop) or "") for h in usable
-    }
-    # Gear is fungible within troop class: score power using best geared hero
-    # of that class (widgets / skills / stars stay on the selected hero).
-    class_power = max_power_by_troop(usable, catalog)
-    contributions = {
-        h.name: hero_contribution(
-            h,
-            catalog[h.name],
-            family=EXPEDITION,
-            gear_pieces=(gear_by_troop or {}).get(troop_of[h.name]),
-            power=class_power.get(troop_of[h.name], h.power),
-            catalog=catalog,
-        )
-        for h in usable
-    }
-    strengths = {
-        h.name: hero_strength(
-            h,
-            catalog[h.name],
-            scenario.mode,
-            event=event,
-            contribution=contributions[h.name],
-        )
-        for h in usable
-    }
-```
-
-Change the `solve_mode` signature — replace the `gear_bonus_by_troop: dict[str, float] | None = None` keyword with:
-
-```python
-    gear_by_troop: dict[str, dict[str, GearRecord]] | None = None,
-```
-
-and add imports at the top of `model.py`:
-
-```python
-from ks.heroes.gear_models import GearRecord
-from ks.heroes.optimize.stat_contributions import EXPEDITION, hero_contribution
-```
-
-Also attach the contributions to the returned `ModeSolution` so `recommend` does not recompute them. Add a field to `ModeSolution` in `types.py`:
-
-```python
-@dataclass(frozen=True)
-class ModeSolution:
-    mode: str
-    hero_names: tuple[str, ...]
-    troops: dict[str, int]
-    effective_capacity: int
-    expected_personal_points: float
-    breakdown: dict[str, float]
-    status: str = "Optimal"
-    contributions: dict[str, Any] | None = None  # name → StatContribution
-```
-
-and pass `contributions={n: contributions[n] for n in chosen}` on the Optimal return path of `solve_mode`.
-
-- [ ] **Step 5: Update `explain.py` to the new keywords**
-
-`explain.py` is the only other caller of `solve_mode` and `hero_strength`. In `ks/heroes/optimize/explain.py`:
-
-Rename the keyword on both `leave_one_out_mode` (line 185) and `explain_selected_heroes` (line 246):
-
-```python
-    gear_by_troop: dict[str, dict[str, GearRecord]] | None = None,
-```
-
-and forward it as `gear_by_troop=gear_by_troop` at the `solve_mode` call (line 202) and the `leave_one_out_mode` call (line 258).
-
-Replace the `hero_strength` call at lines 267-278 with:
-
-```python
-            strength = hero_strength(
-                hero,
-                entry,
-                scenario.mode,
-                event=event,
-                contribution=hero_contribution(
-                    hero,
-                    entry,
-                    family=EXPEDITION,
-                    gear_pieces=(gear_by_troop or {}).get(
-                        normalize_troop(entry.troop) or ""
-                    ),
-                    catalog=catalog,
-                ),
-            )
-```
-
-Add imports at the top of `explain.py`:
-
-```python
-from ks.heroes.gear_models import GearRecord
-from ks.heroes.optimize.stat_contributions import EXPEDITION, hero_contribution
-```
-
-- [ ] **Step 6: Run tests to verify scoring passes**
-
-Run: `pytest tests/test_heroes_optimize_scoring.py tests/test_heroes_optimize_model.py tests/test_heroes_optimize_explain.py -v`
-Expected: PASS
-
-- [ ] **Step 7: Commit the scorer half**
-
-```bash
-git add ks/heroes/optimize/scoring.py ks/heroes/optimize/model.py ks/heroes/optimize/explain.py ks/heroes/optimize/types.py tests/test_heroes_optimize_scoring.py
-git commit -m "feat(heroes): score expedition modes from stat contributions"
-```
-
-- [ ] **Step 8: Wire `recommend` to emit contributions**
-
-In `ks/heroes/optimize/recommend.py`, replace the `gear_bonus` block at lines 44-46:
-
-```python
-    gear_by_troop = (
-        best_sets_by_troop(gear, profile=gear_profile) if gear else None
+def _build_gear_assignment(
+    heroes: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    gear: list[GearRecord] | None,
+    best: ModeSolution,
+    gear_profile: str,
+) -> tuple[
+    dict[str, list[dict[str, Any]]] | None,
+    dict[str, dict[str, GearRecord]],
+]:
+    """Return (serialisable assignment, raw slot→piece map per hero)."""
+    if not gear:
+        return None, {}
+    assigned = assign_best_sets(
+        heroes,
+        catalog,
+        gear,
+        selected=list(best.hero_names),
+        profile=gear_profile,
     )
+    return assignment_to_dict(assigned), assigned
 ```
 
-Change the import at lines 5-9 to:
+In `recommend`, unpack both and build the final contributions from the **assigned** gear:
 
 ```python
-from ks.heroes.optimize.gear_assign import (
-    assign_best_sets,
-    assignment_to_dict,
-    best_sets_by_troop,
-)
-```
-
-Replace both `gear_bonus_by_troop=gear_bonus` call-site keywords (in `solve_mode` and `explain_selected_heroes`) with `gear_by_troop=gear_by_troop`.
-
-After `gear_assignment = assignment_to_dict(assigned)` (line 138), compute final contributions from the **assigned** gear and attach them:
-
-```python
+    gear_assignment, assigned = _build_gear_assignment(
+        heroes, catalog, gear, best, gear_profile
+    )
     stat_family = family_for_event(event.name if event else "swordland")
+    hero_by_name = {h.name: h for h in heroes}
     contributions: dict[str, StatContribution] = {}
     for name in best.hero_names:
-        hero = next((h for h in heroes if h.name == name), None)
+        hero = hero_by_name.get(name)
         if hero is None:
             continue
         contributions[name] = hero_contribution(
             hero,
             catalog.get(name),
             family=stat_family,
-            gear_pieces=(assigned or {}).get(name) if gear else None,
+            gear_pieces=assigned.get(name),
             catalog=catalog,
         )
     hero_rows = tuple(
@@ -1529,16 +478,9 @@ After `gear_assignment = assignment_to_dict(assigned)` (line 138), compute final
     )
 ```
 
-`assigned` is only defined inside `if gear:` — hoist it by initialising `assigned: dict[str, dict[str, GearRecord]] = {}` before that block.
+and pass `stat_family=stat_family, formation_totals=formation_totals` on the `RecommendResult(...)` construction at `:209-220`.
 
-Pass the two new fields on the `RecommendResult(...)` construction:
-
-```python
-        stat_family=stat_family,
-        formation_totals=formation_totals,
-```
-
-Add imports at the top of `recommend.py`:
+Add to `recommend.py`'s module-level imports:
 
 ```python
 from ks.heroes.optimize.stat_contributions import (
@@ -1549,95 +491,77 @@ from ks.heroes.optimize.stat_contributions import (
 )
 ```
 
-- [ ] **Step 8b: Delete the now-dead gear-bonus heuristic**
+- [ ] **Step 10: Extend `RecommendResult`**
 
-`gear_assign.gear_bonus_by_troop` was the `0.15 * set_score` heuristic that success criterion 4 retires. After Step 8 nothing imports it. Delete `ks/heroes/optimize/gear_assign.py:162-169` entirely:
-
-```python
-def gear_bonus_by_troop(
-    pieces: list[GearRecord],
-    *,
-    profile: str = "early_game_growth",
-) -> dict[str, float]:
-    """Linear strength nudge from best transferable set per troop class."""
-    sets = best_sets_by_troop(pieces, profile=profile)
-    return {troop: set_score(slots, profile=profile) * 0.15 for troop, slots in sets.items()}
-```
-
-`set_score` and `best_sets_by_troop` stay — `best_sets_by_troop` is what `recommend` now calls.
-
-Run: `grep -rn "gear_bonus_by_troop" ks tests`
-Expected: no output.
-
-- [ ] **Step 9: Extend `RecommendResult`**
-
-In `ks/heroes/optimize/types.py`, add to `RecommendResult` after `gear_assignment`:
+In `ks/heroes/optimize/types.py`, add after `gear_assignment` (line 149):
 
 ```python
     stat_family: str = "expedition"
     formation_totals: dict[str, Any] | None = None
 ```
 
-and in `to_dict`, add to the `out` literal:
+and add to the `out` literal in `to_dict()` (line 152):
 
 ```python
             "stat_family": self.stat_family,
             "formation_totals": self.formation_totals,
 ```
 
-- [ ] **Step 10: Run the tests**
+- [ ] **Step 11: Delete the dead gear-bonus heuristic**
 
-Run: `pytest tests/test_heroes_optimize_recommend.py tests/test_heroes_recommend_all_modes.py tests/test_heroes_optimize_events.py -v`
+`gear_assign.gear_bonus_by_troop` was the `0.15 * set_score` nudge that success criterion 4 retires. Nothing imports it after Step 9. Delete `ks/heroes/optimize/gear_assign.py:160-167` in full. Keep `set_score` and `best_sets_by_troop` — `recommend` now calls the latter.
+
+Run: `grep -rn "gear_bonus_by_troop" ks tests`
+Expected: no output.
+
+- [ ] **Step 12: Run the tests**
+
+Run: `uv run pytest tests/test_heroes_optimize_recommend.py tests/test_heroes_recommend_all_modes.py tests/test_heroes_optimize_events.py tests/test_heroes_cli_recommend.py -v`
 Expected: PASS
 
-- [ ] **Step 11: Run the full suite**
+- [ ] **Step 13: Full suite**
 
-Run: `pytest -q`
-Expected: PASS, except failures confined to arena/conquest/survival/spend_xp/UI suites that Tasks 4-8 own. Record which ones fail and hand the list to the reviewer; do not "fix" them here.
+Run: `uv run pytest -q`
+Expected: PASS except (a) the known pre-existing `test_best_sets_picks_highest_score_per_slot`, and (b) suites owned by Tasks 4-8 that still use the conquest-side `gear_bonus=` keyword. Record the exact failing list in your report; do not fix them here.
 
-- [ ] **Step 12: Commit**
+- [ ] **Step 14: Commit**
 
 ```bash
-git add ks/heroes/optimize/recommend.py ks/heroes/optimize/types.py tests/test_heroes_optimize_recommend.py
+git add ks/heroes/optimize/recommend.py ks/heroes/optimize/types.py ks/heroes/optimize/gear_assign.py tests/test_heroes_optimize_recommend.py
 git commit -m "feat(heroes): attach stat contributions to recommend results"
 ```
 
 ---
 
-## Task 4: Conquest scoring path (`combat_formation`, `arena`, `conquest`)
+## Task 4: Conquest scoring path
 
-**Worktree:** `sc-conquest` — runs in parallel with Task 3.
+**Worktree:** `sc-conquest` — parallel with Task 3.
 
 **Files:**
-- Modify: `ks/heroes/optimize/combat_formation.py:100-138` (`hero_base_score`), `:175-201` (`_provisional_gear_bonus`), `:240-413` (`solve_combat_formation`), `:35-66` (`CombatFormationResult`)
-- Modify: `ks/heroes/optimize/arena.py:26-107`
-- Modify: `ks/heroes/optimize/conquest.py:40-57`
-- Test: `tests/test_heroes_optimize_combat_formation.py`, `tests/test_heroes_optimize_arena.py`, `tests/test_heroes_optimize_conquest.py`
+- Modify: `ks/heroes/optimize/combat_formation.py:35-66` (`CombatFormationResult`), `:100-138` (`hero_base_score`), `:175-188` (`gear_bonus_from_assignment`), `:191-224` (`_provisional_gear_bonus`), `:263-...` (`solve_combat_formation`)
+- Modify: `ks/heroes/optimize/arena.py:26-67` (`ArenaResult`), `:86-94` (`_base`)
+- Modify: `ks/heroes/optimize/conquest.py:40-57` (`_conquest_base_score`)
+- Test: `tests/test_heroes_optimize_combat_formation.py`, `tests/test_heroes_optimize_arena_defense.py`, `tests/test_heroes_optimize_conquest.py`
 
-**Interfaces:**
-- Consumes: `stat_contributions.hero_contribution`, `formation_contribution`, `contribution_strength`, `family_for_event`, `CONQUEST`.
-- Produces (every downstream task depends on these exact signatures):
-  - `hero_base_score(hero, entry, roles, *, effective_power, contribution, side) -> float` — `gear_bonus` is **removed**, `contribution: StatContribution | None` replaces it.
-  - `base_score_fn` protocol: `fn(hero, entry, roles, *, effective_power, contribution) -> float`.
-  - `_provisional_contributions(usable, catalog, gear, gear_profile, *, family=CONQUEST, power_by_name=None) -> dict[str, StatContribution]` replaces `_provisional_gear_bonus`.
-  - `CombatFormationResult` gains `stat_family: str = "conquest"`, `contributions: dict[str, dict[str, Any]] | None = None`, `formation_totals: dict[str, Any] | None = None`; all three appear in `to_dict()`.
-  - `ArenaResult` gains the same three fields and emits them in `to_dict()`.
+**Interfaces (load-bearing — Tasks 5-7 are written against these and cannot change them):**
+- `hero_base_score(hero, entry, roles, *, effective_power, contribution, side) -> float`
+- `base_score_fn` protocol: `fn(hero, entry, roles, *, effective_power, contribution) -> float`
+- `contributions_from_assignment(gear_asg, *, catalog, heroes_by_name, power_by_name=None, family=CONQUEST) -> dict[str, StatContribution]` replaces `gear_bonus_from_assignment`
+- `_provisional_contributions(usable, catalog, gear, gear_profile, *, family=CONQUEST, power_by_name=None) -> dict[str, StatContribution]` replaces `_provisional_gear_bonus`
+- `CombatFormationResult` and `ArenaResult` each gain `stat_family: str = "conquest"`, `contributions: dict[str, dict[str, Any]] | None = None`, `formation_totals: dict[str, Any] | None = None`, all emitted by `to_dict()`
 
-- [ ] **Step 1: Write the failing test**
+**PR #26 invariants touched:** #1 (assignment-derived signal must not re-pool), #2 (`ultimate_level_multiplier` retained), #5 (provisional claim priority ranks by sanitized power).
 
-Append to `tests/test_heroes_optimize_combat_formation.py`:
+- [ ] **Step 1: Write the failing tests**
+
+Append to `tests/test_heroes_optimize_combat_formation.py` (currently only 8 lines — add the imports it needs):
 
 ```python
 import pytest
 
-from ks.heroes.gear_models import GearRecord, GearStats
 from ks.heroes.models import HeroRecord, HeroStats
 from ks.heroes.optimize.combat_formation import hero_base_score, solve_combat_formation
-from ks.heroes.optimize.stat_contributions import (
-    CONQUEST,
-    Share,
-    StatContribution,
-)
+from ks.heroes.optimize.stat_contributions import CONQUEST, Share, StatContribution
 from ks.heroes.optimize.types import CatalogEntry
 
 
@@ -1717,9 +641,7 @@ def _roster() -> tuple[list[HeroRecord], dict[str, CatalogEntry]]:
     ]
     catalog = {
         n: CatalogEntry(
-            name=n,
-            troop="infantry" if i < 2 else "archers",
-            arena_value=50.0,
+            name=n, troop="infantry" if i < 2 else "archers", arena_value=50.0
         )
         for i, n in enumerate(names)
     }
@@ -1736,16 +658,15 @@ def test_solve_combat_formation_emits_contributions() -> None:
     assert result.status == "Optimal"
     assert result.stat_family == "conquest"
     assert set(result.contributions) == set(result.heroes)
-    totals = result.formation_totals
-    assert totals["power"]["total"] == pytest.approx(
+    assert result.formation_totals["power"]["total"] == pytest.approx(
         sum(c["power"]["total"] for c in result.contributions.values())
     )
     payload = result.to_dict()
     assert payload["stat_family"] == "conquest"
-    assert payload["formation_totals"] == totals
+    assert payload["formation_totals"] == result.formation_totals
 ```
 
-Append to `tests/test_heroes_optimize_conquest.py` (reuses the file's existing `_catalog()` / `_heroes()` helpers):
+Append to `tests/test_heroes_optimize_conquest.py` (reuses its `_catalog()` / `_heroes()`):
 
 ```python
 def test_conquest_result_dict_carries_contributions() -> None:
@@ -1755,25 +676,18 @@ def test_conquest_result_dict_carries_contributions() -> None:
     assert set(payload["contributions"]) == set(payload["heroes"])
     for contrib in payload["contributions"].values():
         assert contrib["family"] == "conquest"
-        assert contrib["estimated"] is True
         for share in contrib["stats"].values():
             assert share["hero"] >= 0
-            assert share["skills"] >= 0
-            assert share["gear"] >= 0
             assert share["total"] == pytest.approx(
                 share["hero"] + share["skills"] + share["gear"]
             )
-    totals = payload["formation_totals"]
-    assert totals["power"]["total"] == pytest.approx(
-        sum(c["power"]["total"] for c in payload["contributions"].values())
-    )
 ```
 
-Append the analogous test to `tests/test_heroes_optimize_arena.py`, using that file's own roster/catalog/roles helpers and `optimize_arena("attack", ...).to_dict()` in place of `optimize_conquest(...)`. Add `import pytest` to either file if it is not already imported.
+Append the analogous test to `tests/test_heroes_optimize_arena_defense.py`, using that file's own `_roster()` helper and `optimize_arena("attack", ...).to_dict()`.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [ ] **Step 2: Run to verify they fail**
 
-Run: `pytest tests/test_heroes_optimize_combat_formation.py tests/test_heroes_optimize_arena.py tests/test_heroes_optimize_conquest.py -v`
+Run: `uv run pytest tests/test_heroes_optimize_combat_formation.py tests/test_heroes_optimize_conquest.py tests/test_heroes_optimize_arena_defense.py -v`
 Expected: FAIL — `TypeError: hero_base_score() got an unexpected keyword argument 'contribution'`
 
 - [ ] **Step 3: Rewrite `hero_base_score`**
@@ -1792,10 +706,10 @@ def hero_base_score(
 ) -> float:
     """Compute a hero's base ILP score before placement multipliers.
 
-    Strength comes from ``contribution`` (a conquest-family
-    ``StatContribution``) — power plus the hero's conquest stat totals,
-    including whatever gear is provisionally assigned. ``effective_power`` is
-    kept only as the fallback when no contribution is available.
+    Strength comes from ``contribution`` — power plus the hero's conquest stat
+    totals, gear included — replacing the old ``power/1e6`` term and the
+    0.15-scaled ``gear_bonus`` float. ``effective_power`` remains only as the
+    fallback for callers with no contribution to hand.
     """
     meta = _meta_for(hero.name, roles)
     if entry is not None and entry.arena_value is not None:
@@ -1806,7 +720,8 @@ def hero_base_score(
     if contribution is not None:
         if contribution.family != CONQUEST:
             raise ValueError(
-                f"hero_base_score needs a conquest contribution; got {contribution.family!r}"
+                "hero_base_score needs a conquest contribution; got "
+                f"{contribution.family!r}"
             )
         strength_term = 40.0 * contribution_strength(contribution)
     else:
@@ -1835,7 +750,7 @@ def hero_base_score(
     return base
 ```
 
-Add to the imports at the top of `combat_formation.py`:
+Add to `combat_formation.py`'s module-level imports:
 
 ```python
 from ks.heroes.optimize.stat_contributions import (
@@ -1848,11 +763,46 @@ from ks.heroes.optimize.stat_contributions import (
 )
 ```
 
-and drop `load_profile_weights` / `piece_score` from the `gear_assign` import (they were only used by `_provisional_gear_bonus`).
+- [ ] **Step 4: Replace `gear_bonus_from_assignment`**
 
-- [ ] **Step 4: Replace `_provisional_gear_bonus`**
+Replace `ks/heroes/optimize/combat_formation.py:175-188` with:
 
-Replace `ks/heroes/optimize/combat_formation.py:175-201` with:
+```python
+def contributions_from_assignment(
+    gear_asg: dict[str, dict[str, GearRecord]],
+    *,
+    catalog: dict[str, CatalogEntry],
+    heroes_by_name: dict[str, HeroRecord],
+    power_by_name: dict[str, int | None] | None = None,
+    family: str = CONQUEST,
+) -> dict[str, StatContribution]:
+    """Contributions from an *already assigned* gear map.
+
+    Must not flatten pieces back into a pool and re-assign by roster power —
+    that clobbers explicit exclusive assignments (PR #26 invariant 1). The
+    passed map is authoritative: each hero is scored with exactly the pieces
+    it holds.
+    """
+    powers = power_by_name or {}
+    out: dict[str, StatContribution] = {}
+    for name, slots in gear_asg.items():
+        hero = heroes_by_name.get(name)
+        if hero is None:
+            continue
+        out[name] = hero_contribution(
+            hero,
+            catalog.get(name),
+            family=family,
+            gear_pieces=slots,
+            power=powers.get(name, hero.power),
+            catalog=catalog,
+        )
+    return out
+```
+
+- [ ] **Step 5: Replace `_provisional_gear_bonus`**
+
+Replace `ks/heroes/optimize/combat_formation.py:191-224` with:
 
 ```python
 def _provisional_contributions(
@@ -1867,94 +817,81 @@ def _provisional_contributions(
     """Contributions under a provisional exclusive gear assignment.
 
     The ILP needs a strength signal before it knows the formation, so gear is
-    provisionally handed out best-first by scraped power. The final assignment
-    (and final contributions) are recomputed once the formation is solved.
+    provisionally claimed best-first by *sanitized* power (PR #26 invariant 5).
+    The final assignment — and the final contributions — are recomputed once
+    the formation is solved.
     """
-    provisional: dict[str, dict[str, GearRecord]] = {}
-    if gear:
-        score_priority = [
-            h.name for h in sorted(usable, key=lambda row: -(row.power or 0))
-        ]
-        provisional = assign_exclusive_sets(
-            usable,
-            catalog,
-            gear,
-            selected=[h.name for h in usable],
-            priority=score_priority,
-            profile=gear_profile,
-        )
     powers = power_by_name or {}
-    return {
+    heroes_by_name = {h.name: h for h in usable}
+
+    def _claim_power(row: HeroRecord) -> int:
+        value = powers.get(row.name)
+        if value is not None:
+            return int(value)
+        return int(row.power or 0)
+
+    bare = {
         h.name: hero_contribution(
             h,
             catalog.get(h.name),
             family=family,
-            gear_pieces=provisional.get(h.name),
+            gear_pieces=None,
             power=powers.get(h.name, h.power),
             catalog=catalog,
         )
         for h in usable
     }
+    if not gear:
+        return bare
+
+    score_priority = [
+        h.name for h in sorted(usable, key=lambda row: -_claim_power(row))
+    ]
+    provisional = assign_exclusive_sets(
+        usable,
+        catalog,
+        gear,
+        selected=[h.name for h in usable],
+        priority=score_priority,
+        profile=gear_profile,
+    )
+    return {
+        **bare,
+        **contributions_from_assignment(
+            provisional,
+            catalog=catalog,
+            heroes_by_name=heroes_by_name,
+            power_by_name=powers,
+            family=family,
+        ),
+    }
 ```
 
-- [ ] **Step 5: Extend `CombatFormationResult`**
+- [ ] **Step 6: Extend `CombatFormationResult`**
 
-Replace `ks/heroes/optimize/combat_formation.py:35-66` with:
+Add three fields after `explanations` (`:47`):
 
 ```python
-@dataclass(frozen=True)
-class CombatFormationResult:
-    """Solver output for any 5-hero 2F+3B formation (Arena or Conquest)."""
-
-    mode: str
-    side: str | None
-    formation: dict[str, str]
-    heroes: tuple[str, ...]
-    score: float
-    gear_assignment: dict[str, list[dict[str, Any]]] | None
-    reasons: dict[str, str]
-    status: str = "Optimal"
-    explanations: dict[str, dict[str, Any]] | None = None
     stat_family: str = CONQUEST
     contributions: dict[str, dict[str, Any]] | None = None
     formation_totals: dict[str, Any] | None = None
+```
 
-    def to_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {
-            "mode": self.mode,
-            "formation": dict(self.formation),
-            "heroes": list(self.heroes),
-            "score": self.score,
-            "gear_assignment": self.gear_assignment,
-            "reasons": dict(self.reasons),
-            "status": self.status,
+and to the `out` literal in `to_dict()` (`:50-58`):
+
+```python
             "stat_family": self.stat_family,
             "contributions": self.contributions,
             "formation_totals": self.formation_totals,
-        }
-        if self.side is not None:
-            out["side"] = self.side
-        if self.explanations is not None:
-            out["explanations"] = self.explanations
-        survival = (self.explanations or {}).get("survival")
-        if survival is not None:
-            out["survival"] = survival
-        return out
 ```
 
-`_infeasible_result` needs no change — the three new fields default correctly.
+`_infeasible_result` needs no change — the defaults are right for an infeasible solve.
 
-- [ ] **Step 6: Rewire `solve_combat_formation`**
+- [ ] **Step 7: Rewire `solve_combat_formation`**
 
-In `ks/heroes/optimize/combat_formation.py`, inside `solve_combat_formation`:
-
-Replace line 274 (`gear_bonus_by_hero = _provisional_gear_bonus(...)`) and the power sanitize block that follows so the sanitize runs **first**:
+Replace the provisional-bonus call (`:301-307`) with:
 
 ```python
-    # Sanitize OCR power blow-ups before they dominate the ILP objective.
-    from ks.heroes.optimize.survival_pipeline import sanitize_hero_powers
-
-    power_by_name = sanitize_hero_powers(usable, roles=roles)
     family = family_for_event(mode)
     contributions = _provisional_contributions(
         usable,
@@ -1966,7 +903,9 @@ Replace line 274 (`gear_bonus_by_hero = _provisional_gear_bonus(...)`) and the p
     )
 ```
 
-Replace the `_base_score_fn` default and the `base[...]` loop (lines 281-303) with:
+Keep the existing `power_by_name = sanitize_hero_powers(...)` line **before** it — sanitized power feeds the provisional claim order (invariant 5).
+
+Replace the `_base_score_fn` default (`:309-316`) and the `base[...]` loop (`:325-331`):
 
 ```python
     _base_score_fn = base_score_fn or (
@@ -1977,14 +916,7 @@ Replace the `_base_score_fn` default and the `base[...]` loop (lines 281-303) wi
             side=effective_side,
         )
     )
-    _placement_mult_fn = placement_mult_fn or (
-        lambda troop, slot, hero_name, roles: placement_mult(
-            troop, slot, hero_name, roles, side=effective_side
-        )
-    )
-
-    base: dict[str, float] = {}
-    for h in usable:
+    ...
         base[h.name] = _base_score_fn(
             h,
             catalog.get(h.name),
@@ -1994,20 +926,22 @@ Replace the `_base_score_fn` default and the `base[...]` loop (lines 281-303) wi
         )
 ```
 
-After the final `gear_assignment = assignment_to_dict(assigned)` block (line 355), recompute contributions from the **final** assignment and roll them up:
+Update the docstring line at `:283` to:
 
 ```python
-    final_contributions = {
-        name: hero_contribution(
-            next(h for h in usable if h.name == name),
-            catalog.get(name),
-            family=family,
-            gear_pieces=(assigned or {}).get(name) if gear else None,
-            power=power_by_name.get(name),
-            catalog=catalog,
-        )
-        for name in ordered
-    }
+    ``base_score_fn`` is called as ``fn(hero, entry, roles, *, effective_power, contribution)``.
+```
+
+After the final gear assignment is built (`:372-383`), recompute from the **final** map and roll up:
+
+```python
+    final_contributions = contributions_from_assignment(
+        {name: (assigned or {}).get(name, {}) for name in ordered},
+        catalog=catalog,
+        heroes_by_name={h.name: h for h in usable},
+        power_by_name=power_by_name,
+        family=family,
+    )
     formation_totals = formation_contribution(
         list(final_contributions.values())
     ).to_dict()
@@ -2016,9 +950,7 @@ After the final `gear_assignment = assignment_to_dict(assigned)` block (line 355
     }
 ```
 
-`assigned` is defined only inside `if gear:` — initialise `assigned: dict[str, dict[str, GearRecord]] = {}` just before that block.
-
-Pass the three new fields on the final `CombatFormationResult(...)`:
+`assigned` is currently defined only inside `if gear:` — initialise `assigned: dict[str, dict[str, GearRecord]] = {}` before that block. Pass the three fields on the final `CombatFormationResult(...)`:
 
 ```python
         stat_family=family,
@@ -2026,27 +958,17 @@ Pass the three new fields on the final `CombatFormationResult(...)`:
         formation_totals=formation_totals,
 ```
 
-- [ ] **Step 7: Update `arena.py`**
+- [ ] **Step 8: Update `arena.py`**
 
-In `ks/heroes/optimize/arena.py`, add the three fields to `ArenaResult`:
+Add the three fields to `ArenaResult` (after `explanations`, `:35`):
 
 ```python
-@dataclass(frozen=True)
-class ArenaResult:
-    side: str
-    formation: dict[str, str]
-    heroes: tuple[str, ...]
-    score: float
-    gear_assignment: dict[str, list[dict[str, Any]]] | None
-    reasons: dict[str, str]
-    status: str = "Optimal"
-    explanations: dict[str, dict[str, Any]] | None = None
     stat_family: str = "conquest"
     contributions: dict[str, dict[str, Any]] | None = None
     formation_totals: dict[str, Any] | None = None
 ```
 
-carry them through `from_combat`:
+carry them in `from_combat` (`:37-49`):
 
 ```python
             stat_family=result.stat_family,
@@ -2054,7 +976,7 @@ carry them through `from_combat`:
             formation_totals=result.formation_totals,
 ```
 
-and add them to `to_dict`'s `out` literal:
+add to `to_dict`'s `out` literal (`:53-61`):
 
 ```python
             "stat_family": self.stat_family,
@@ -2062,7 +984,7 @@ and add them to `to_dict`'s `out` literal:
             "formation_totals": self.formation_totals,
 ```
 
-Update `_attach_arena_survival`'s inner `_base` to the new protocol:
+and update `_base` (`:86-94`):
 
 ```python
     def _base(hero, entry, roles, *, effective_power, contribution):
@@ -2076,9 +998,9 @@ Update `_attach_arena_survival`'s inner `_base` to the new protocol:
         )
 ```
 
-- [ ] **Step 8: Update `conquest.py`**
+- [ ] **Step 9: Update `conquest.py`**
 
-Replace `_conquest_base_score` in `ks/heroes/optimize/conquest.py:40-57`:
+Replace `_conquest_base_score` (`:40-57`) — the `ultimate_level_multiplier` factor must stay (invariant 2):
 
 ```python
 def _conquest_base_score(
@@ -2101,66 +1023,229 @@ def _conquest_base_score(
     return base * ultimate_level_multiplier(hero)
 ```
 
-Add the import:
+Add: `from ks.heroes.optimize.stat_contributions import StatContribution`
 
-```python
-from ks.heroes.optimize.stat_contributions import StatContribution
-```
+- [ ] **Step 10: Run the tests**
 
-- [ ] **Step 9: Run the tests**
-
-Run: `pytest tests/test_heroes_optimize_combat_formation.py tests/test_heroes_optimize_arena.py tests/test_heroes_optimize_arena_defense.py tests/test_heroes_optimize_conquest.py -v`
+Run: `uv run pytest tests/test_heroes_optimize_combat_formation.py tests/test_heroes_optimize_arena.py tests/test_heroes_optimize_arena_defense.py tests/test_heroes_optimize_conquest.py -v`
 Expected: PASS
 
-- [ ] **Step 10: Run the full suite**
+- [ ] **Step 11: Full suite**
 
-Run: `pytest -q`
-Expected: PASS, except failures confined to survival / spend_xp / UI suites that Tasks 5-8 own (they still call the removed `gear_bonus=` keyword). Record the failing list for the reviewer; do not fix them here.
+Run: `uv run pytest -q`
+Expected: PASS except (a) the known pre-existing gear_assign failure, (b) `tests/test_heroes_pr26_bugbot.py` (imports the renamed helpers), (c) survival / spend_xp / UI suites owned by Tasks 5-8. Record the exact list. **Do not fix `test_heroes_pr26_bugbot.py` here** — Task 5 owns it, because the same tests also exercise `opponent_models` and `survival_pipeline`.
 
-- [ ] **Step 11: Commit**
+- [ ] **Step 12: Commit**
 
 ```bash
-git add ks/heroes/optimize/combat_formation.py ks/heroes/optimize/arena.py ks/heroes/optimize/conquest.py tests/test_heroes_optimize_combat_formation.py tests/test_heroes_optimize_arena.py tests/test_heroes_optimize_conquest.py
+git add ks/heroes/optimize/combat_formation.py ks/heroes/optimize/arena.py ks/heroes/optimize/conquest.py tests/test_heroes_optimize_combat_formation.py tests/test_heroes_optimize_conquest.py tests/test_heroes_optimize_arena_defense.py
 git commit -m "feat(heroes): score Arena/Conquest formations from stat contributions"
 ```
 
 ---
 
-## Task 5: Survival path (`front_survival`, `opponent_models`, `survival_pipeline`)
+## Task 5: Survival path + same-rarity power sanitize
 
-**Worktree:** `sc-survival` — runs in parallel with Task 6, after waves 0-1 are merged.
+**Worktree:** `sc-survival` — parallel with Task 6, after wave 1 is merged.
+
+Two deliverables: threading contributions through the survival pipeline, and one approved gap from a second design doc (`docs/superpowers/specs/2026-08-03-arena-front-survival-opponent-models-design.md`), whose v1 is otherwise fully implemented on main.
 
 **Files:**
-- Modify: `ks/heroes/optimize/front_survival.py:76-132`
-- Modify: `ks/heroes/optimize/opponent_models.py:139-189`, `:209-357`
-- Modify: `ks/heroes/optimize/survival_pipeline.py:90-197`, `:294-434`
-- Modify: `ks/heroes/optimize/sensitivity.py` (call sites only)
+- Modify: `ks/heroes/optimize/front_survival.py:44-63` (`sanitize_power`), `:66-73` (`roster_median_power`), `:100-132` (`hero_tau`, `formation_tau`)
+- Modify: `ks/heroes/optimize/opponent_models.py:139-157` (`_gear_bonus_map`), `:160-197` (`_heuristic_offense`), `:202-216` (`_sanitized_power_map`), and the three builders
+- Modify: `ks/heroes/optimize/survival_pipeline.py:40-64`, `:90-131`, `:134-157`, `:160-206`, `:209-303`, `:306-...`
+- Modify: `ks/heroes/optimize/sensitivity.py` (forwarding + per-variant rebuild)
+- Modify: `tests/test_heroes_pr26_bugbot.py` (rename-follow only)
 - Test: `tests/test_heroes_front_survival.py`, `tests/test_heroes_sensitivity.py`
 
 **Interfaces:**
-- Consumes: `hero_base_score(..., contribution=...)` and `_provisional_contributions` from Task 4; `hero_contribution`, `CONQUEST` from Task 2.
-- Produces:
-  - `hero_tau(hero, *, contribution=None, gear_pieces=None) -> float`
-  - `formation_tau(formation, heroes_by_name, gear_by_hero=None, contributions=None) -> tuple[float, float, dict[str, float]]`
-  - `slot_utilities(..., contributions: dict[str, StatContribution] | None = None)`
-  - `roster_pressure_scale(..., contributions=None)`
-  - `_heuristic_offense(..., contributions=None)` in `opponent_models`
-  - `OpponentLineup` gains `contributions: dict[str, dict[str, Any]] | None = None`, emitted in `to_dict()`.
+- `sanitize_power(power, *, median_power, rarity=None, rarity_medians=None, max_abs=2_000_000, median_factor=20.0) -> float`
+- `rarity_median_powers(heroes, *, max_abs=2_000_000) -> dict[str, float]`
+- `hero_tau(hero, *, contribution=None, gear_pieces=None) -> float`
+- `formation_tau(formation, heroes_by_name, gear_by_hero=None, contributions=None)`
+- `slot_utilities(..., contributions: dict[str, StatContribution] | None = None)` replaces `gear_bonus_by_hero`
+- `roster_pressure_scale(..., contributions=None)`, `evaluate_vs_foe(..., contributions=None)`, `_heuristic_offense(..., contributions=None)`
+- `OpponentLineup` gains `contributions: dict[str, dict[str, Any]] | None = None`, emitted by `to_dict()`
 
-- [ ] **Step 1: Write the failing test**
+**PR #26 invariants touched:** #1, #3, #4 (critically), #6.
+
+### Part A — same-rarity power sanitize
+
+Spec: *"if `power > 2_000_000` or `power > 20 × median(roster power)`, replace with **median of same-rarity peers** (or stars-scaled fallback)."* Main substitutes the whole-roster median, ignoring rarity. On the live roster the medians are epic 276,600 / legendary 337,100 / rare 193,308 against a roster median of 238,487 — so a corrupted legendary is replaced by a value ~41% too low.
+
+- [ ] **Step 1: Write the failing sanitize tests**
 
 Append to `tests/test_heroes_front_survival.py`:
 
 ```python
 import pytest
 
-from ks.heroes.models import HeroRecord, HeroStats
+from ks.heroes.models import HeroRecord
+from ks.heroes.optimize.front_survival import rarity_median_powers, sanitize_power
+
+
+def _h(name: str, power: int | None, rarity: str | None) -> HeroRecord:
+    return HeroRecord(name=name, power=power, rarity=rarity)
+
+
+def test_rarity_median_powers_groups_by_rarity() -> None:
+    medians = rarity_median_powers(
+        [
+            _h("a", 100_000, "epic"),
+            _h("b", 300_000, "epic"),
+            _h("c", 900_000, "legendary"),
+        ]
+    )
+    assert medians["epic"] == pytest.approx(200_000.0)
+    assert medians["legendary"] == pytest.approx(900_000.0)
+
+
+def test_rarity_median_ignores_blowups_so_they_cannot_poison_their_own_bucket() -> None:
+    medians = rarity_median_powers(
+        [
+            _h("a", 100_000, "epic"),
+            _h("b", 300_000, "epic"),
+            _h("bad", 9_000_000, "epic"),
+        ]
+    )
+    assert medians["epic"] == pytest.approx(200_000.0)
+
+
+def test_sanitize_prefers_same_rarity_median_over_roster_median() -> None:
+    assert sanitize_power(
+        9_000_000,
+        median_power=238_487.0,
+        rarity="legendary",
+        rarity_medians={"legendary": 337_100.0, "epic": 276_600.0},
+    ) == pytest.approx(337_100.0)
+
+
+def test_sanitize_falls_back_to_roster_median_without_same_rarity_peers() -> None:
+    assert sanitize_power(
+        9_000_000,
+        median_power=238_487.0,
+        rarity="mythic",
+        rarity_medians={"legendary": 337_100.0},
+    ) == pytest.approx(238_487.0)
+
+
+def test_sanitize_is_rarity_insensitive_for_plausible_power() -> None:
+    assert sanitize_power(
+        250_000,
+        median_power=238_487.0,
+        rarity="legendary",
+        rarity_medians={"legendary": 337_100.0},
+    ) == pytest.approx(250_000.0)
+```
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `uv run pytest tests/test_heroes_front_survival.py -v`
+Expected: FAIL — `ImportError: cannot import name 'rarity_median_powers'`
+
+- [ ] **Step 3: Implement the rarity-aware sanitize**
+
+Add to `ks/heroes/optimize/front_survival.py`, beside `roster_median_power`:
+
+```python
+def _median(values: list[float]) -> float:
+    vals = sorted(values)
+    if not vals:
+        return 0.0
+    mid = len(vals) // 2
+    if len(vals) % 2:
+        return vals[mid]
+    return 0.5 * (vals[mid - 1] + vals[mid])
+
+
+def rarity_median_powers(
+    heroes: list[HeroRecord],
+    *,
+    max_abs: int = 2_000_000,
+) -> dict[str, float]:
+    """Median scraped power per rarity, blow-ups excluded.
+
+    Values above ``max_abs`` are dropped *before* the median is taken, so a
+    corrupt reading cannot poison the very bucket used to replace it — with
+    only two or three peers in a rarity that is a real risk, not a theoretical
+    one.
+    """
+    by_rarity: dict[str, list[float]] = {}
+    for hero in heroes:
+        if not hero.power or hero.power <= 0 or hero.power > max_abs:
+            continue
+        key = (hero.rarity or "").strip().lower()
+        if not key:
+            continue
+        by_rarity.setdefault(key, []).append(float(hero.power))
+    return {k: _median(v) for k, v in by_rarity.items() if v}
+```
+
+Rewrite `roster_median_power` to delegate to `_median` (same signature and behaviour), then replace `sanitize_power` (`:44-63`) with:
+
+```python
+def sanitize_power(
+    power: int | None,
+    *,
+    median_power: float,
+    rarity: str | None = None,
+    rarity_medians: dict[str, float] | None = None,
+    max_abs: int = 2_000_000,
+    median_factor: float = 20.0,
+) -> float:
+    """Drop OCR blow-ups before naive top-N selection / ILP scoring.
+
+    An outlier is replaced by the median of its **same-rarity** peers when one
+    is known — a legendary should not collapse to a roster median weighted by
+    rares — and by the roster median otherwise.
+    """
+    if power is None or power <= 0:
+        return 0.0
+    if max_abs <= 0:
+        raise ValueError(f"max_abs must be positive; got {max_abs}")
+    if median_factor <= 0:
+        raise ValueError(f"median_factor must be positive; got {median_factor}")
+
+    def _replacement() -> float:
+        peer = (rarity_medians or {}).get((rarity or "").strip().lower())
+        if peer and peer > 0:
+            return float(peer)
+        return median_power
+
+    p = float(power)
+    if p > max_abs:
+        return _replacement()
+    if median_power > 0 and p > float(median_factor) * median_power:
+        return _replacement()
+    return p
+```
+
+- [ ] **Step 4: Feed rarity medians from both callers**
+
+In `survival_pipeline.sanitize_hero_powers` (`:40-64`) and `opponent_models._sanitized_power_map` (`:202-216`), compute `rarity_medians = rarity_median_powers(heroes)` once alongside the existing median, and pass `rarity=h.rarity, rarity_medians=rarity_medians` into each `sanitize_power` call.
+
+**Invariant 3:** `sanitize_hero_powers` must keep computing its medians over the same catalog-usable cohort it uses today — derive the rarity medians from that same filtered list, not from the unfiltered roster.
+
+- [ ] **Step 5: Run and commit Part A**
+
+Run: `uv run pytest tests/test_heroes_front_survival.py tests/test_heroes_pr26_bugbot.py -v`
+Expected: PASS
+
+```bash
+git add ks/heroes/optimize/front_survival.py ks/heroes/optimize/survival_pipeline.py ks/heroes/optimize/opponent_models.py tests/test_heroes_front_survival.py
+git commit -m "fix(heroes): sanitize OCR power against same-rarity peers"
+```
+
+### Part B — contribution-backed survival
+
+- [ ] **Step 6: Write the failing tau tests**
+
+Append to `tests/test_heroes_front_survival.py`:
+
+```python
+from ks.heroes.models import HeroStats
 from ks.heroes.optimize.front_survival import formation_tau, hero_tau
-from ks.heroes.optimize.stat_contributions import (
-    CONQUEST,
-    Share,
-    StatContribution,
-)
+from ks.heroes.optimize.stat_contributions import CONQUEST, Share, StatContribution
 
 
 def _contrib(health: float, defense: float) -> StatContribution:
@@ -2180,8 +1265,9 @@ def test_hero_tau_uses_contribution_totals() -> None:
     hero = HeroRecord(
         name="A", stats=HeroStats(conquest={"Hero Health": 100, "Hero Defense": 10})
     )
-    tau = hero_tau(hero, contribution=_contrib(500.0, 50.0))
-    assert tau == pytest.approx(500.0 * 50.0)
+    assert hero_tau(hero, contribution=_contrib(500.0, 50.0)) == pytest.approx(
+        500.0 * 50.0
+    )
 
 
 def test_hero_tau_falls_back_to_scrape_without_contribution() -> None:
@@ -2192,11 +1278,10 @@ def test_hero_tau_falls_back_to_scrape_without_contribution() -> None:
 
 
 def test_hero_tau_never_below_one() -> None:
-    hero = HeroRecord(name="A")
-    assert hero_tau(hero, contribution=_contrib(0.0, 0.0)) >= 1.0
+    assert hero_tau(HeroRecord(name="A"), contribution=_contrib(0.0, 0.0)) >= 1.0
 
 
-def test_formation_tau_prefers_contributions_over_gear_pieces() -> None:
+def test_formation_tau_splits_front_and_back_from_contributions() -> None:
     heroes = {
         n: HeroRecord(
             name=n, stats=HeroStats(conquest={"Hero Health": 10, "Hero Defense": 2})
@@ -2213,16 +1298,16 @@ def test_formation_tau_prefers_contributions_over_gear_pieces() -> None:
     assert set(by_hero) == set(heroes)
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [ ] **Step 7: Rewrite `hero_tau` / `formation_tau`**
 
-Run: `pytest tests/test_heroes_front_survival.py -v`
-Expected: FAIL — `TypeError: hero_tau() got an unexpected keyword argument 'contribution'`
-
-- [ ] **Step 3: Rewrite `hero_tau` / `formation_tau`**
-
-Replace `ks/heroes/optimize/front_survival.py:100-132` with:
+Replace `front_survival.py:100-132` with:
 
 ```python
+def _share_total(contribution: "StatContribution", label: str) -> float:
+    share = contribution.stats.get(label)
+    return share.total if share is not None else 0.0
+
+
 def hero_tau(
     hero: HeroRecord,
     *,
@@ -2231,10 +1316,10 @@ def hero_tau(
 ) -> float:
     """Toughness proxy: health × defense, with expedition gear health on top.
 
-    When ``contribution`` is supplied the health/defense totals already carry
-    the hero + skills + gear conquest flats; the expedition health fraction
-    from chest/gloves is still applied as a multiplier because it is a percent
-    buff, not a flat.
+    With a ``contribution`` the health/defense totals already carry the hero +
+    skills + gear conquest flats. The expedition health fraction from
+    chest/gloves is still applied as a multiplier because it is a percent buff
+    on a different axis, not one of those flats.
     """
     if contribution is not None:
         hp = max(1.0, _share_total(contribution, "Hero Health"))
@@ -2242,8 +1327,7 @@ def hero_tau(
     else:
         hp = float(max(1, conquest_stat(hero, "Hero Health")))
         defense = float(max(1, conquest_stat(hero, "Hero Defense")))
-    g = gear_health_bonus(gear_pieces)
-    return hp * defense * (1.0 + g)
+    return hp * defense * (1.0 + gear_health_bonus(gear_pieces))
 
 
 def formation_tau(
@@ -2276,38 +1360,18 @@ def formation_tau(
     return tau_f, tau_b, by_hero
 ```
 
-Add above `hero_tau`:
+Change the typing import to `from typing import TYPE_CHECKING, Any, Mapping` and add:
 
 ```python
-def _share_total(contribution: "StatContribution", label: str) -> float:
-    share = contribution.stats.get(label)
-    return share.total if share is not None else 0.0
-```
-
-and at the top of the file, under `from typing import Any, Mapping`:
-
-```python
-from typing import TYPE_CHECKING, Any, Mapping
-
 if TYPE_CHECKING:  # pragma: no cover
     from ks.heroes.optimize.stat_contributions import StatContribution
 ```
 
-**Note:** when `contribution` is supplied, `gear_by_hero` must still be passed so the expedition health multiplier survives — the conquest flats and the expedition percent are different buffs and both count.
+**Callers must keep passing `gear_by_hero` even when passing `contributions`** — the conquest flats and the expedition health percent are different buffs and both count.
 
-- [ ] **Step 4: Run and commit the front_survival half**
+- [ ] **Step 8: Rewire `opponent_models.py`**
 
-Run: `pytest tests/test_heroes_front_survival.py -v`
-Expected: PASS
-
-```bash
-git add ks/heroes/optimize/front_survival.py tests/test_heroes_front_survival.py
-git commit -m "feat(heroes): compute toughness from contribution totals"
-```
-
-- [ ] **Step 5: Rewire `opponent_models.py`**
-
-Replace `_gear_bonus_map` (lines 139-157) with:
+Replace `_gear_bonus_map` (`:139-157`) with `_contribution_map`, preserving invariant 1:
 
 ```python
 def _contribution_map(
@@ -2318,191 +1382,107 @@ def _contribution_map(
     *,
     power_by_name: dict[str, float] | None = None,
 ) -> dict[str, StatContribution]:
-    """Conquest contributions for a foe lineup under its own gear assignment."""
-    powers = power_by_name or {}
+    """Conquest contributions from the foe's *already assigned* pieces.
+
+    Must not flatten pieces back into a pool and re-assign by roster power —
+    that clobbers explicit exclusive assignments (PR #26 invariant 1).
+    """
+    from ks.heroes.optimize.combat_formation import contributions_from_assignment
+
     selected = [formation[s] for s in ALL_SLOTS if s in formation]
-    by_name = {h.name: h for h in heroes}
-    out: dict[str, StatContribution] = {}
-    for name in selected:
-        hero = by_name.get(name)
-        if hero is None:
-            continue
-        power = powers.get(name)
-        out[name] = hero_contribution(
-            hero,
-            catalog.get(name),
-            family=CONQUEST,
-            gear_pieces=gear_asg.get(name),
-            power=int(round(power)) if power else hero.power,
-            catalog=catalog,
-        )
-    return out
-```
-
-Replace the `gear_bonus_by_hero` parameter of `_heuristic_offense` (lines 160-189) with `contributions: dict[str, StatContribution] | None = None`, and change the `hero_base_score` call to:
-
-```python
-        base = hero_base_score(
-            hero,
-            entry,
-            roles,
-            effective_power=int(round(eff_power)) if eff_power else hero.power,
-            contribution=(contributions or {}).get(name),
-            side=side,
-        )
-```
-
-In all three builders (`build_naive_max_power`, `build_troop_balanced_naive`, `opponent_from_formation`), replace
-
-```python
-    gear_bonus = _gear_bonus_map(formation, usable, catalog, gear_asg, profile=gear_profile)
-```
-
-with
-
-```python
-    contributions = _contribution_map(
-        formation, usable, catalog, gear_asg, power_by_name=power_map
-    )
-```
-
-and the offense call's `gear_bonus_by_hero=gear_bonus` with `contributions=contributions`. Pass `contributions={n: c.to_dict() for n, c in contributions.items()}` to each `OpponentLineup(...)`.
-
-Add to `OpponentLineup`:
-
-```python
-    contributions: dict[str, dict[str, Any]] | None = None
-```
-
-and to its `to_dict()`:
-
-```python
-            "contributions": self.contributions,
-```
-
-Update imports at the top of `opponent_models.py`:
-
-```python
-from ks.heroes.optimize.stat_contributions import (
-    CONQUEST,
-    StatContribution,
-    hero_contribution,
-)
-```
-
-and drop the `from ks.heroes.optimize.combat_formation import _provisional_gear_bonus` local import inside the old `_gear_bonus_map`.
-
-- [ ] **Step 6: Rewire `survival_pipeline.py`**
-
-In `slot_utilities` (lines 90-129), add a `contributions: dict[str, StatContribution] | None = None` keyword and change the `base_score_fn` call to:
-
-```python
-        base = base_score_fn(
-            hero,
-            entry,
-            roles,
-            effective_power=power,
-            contribution=(contributions or {}).get(name),
-        )
-```
-
-In `roster_pressure_scale` (lines 132-155), add the same keyword; pass `contribution=(contributions or {}).get(name)` to `base_score_fn` and `contribution=(contributions or {}).get(name)` to `hero_tau`.
-
-In `build_self_play_foes` (lines 200-291), update the default `score_fn` lambda:
-
-```python
-    score_fn = base_score_fn or (
-        lambda h, entry, roles, *, effective_power, contribution: hero_base_score(
-            h,
-            entry,
-            roles,
-            effective_power=effective_power,
-            contribution=contribution,
-            side=heuristic_side or "attack",
-        )
-    )
-```
-
-In `evaluate_vs_foe` (lines 158-197), add `contributions: dict[str, StatContribution] | None = None` and thread it into both `formation_tau(..., contributions=contributions)` and `slot_utilities(..., contributions=contributions)`.
-
-In `attach_survival` (lines 294-434), build our contributions once from the final gear assignment and thread them everywhere:
-
-```python
-    our_contributions = {
-        name: hero_contribution(
-            next(h for h in heroes if h.name == name),
-            catalog.get(name),
-            family=CONQUEST,
-            gear_pieces=our_gear.get(name),
-            power=power_by_name.get(name),
-            catalog=catalog,
-        )
-        for name in result.formation.values()
-        if any(h.name == name for h in heroes)
+    scoped = {name: gear_asg.get(name, {}) for name in selected}
+    powers = {
+        name: int(round(v)) if v else None
+        for name, v in (power_by_name or {}).items()
     }
+    return contributions_from_assignment(
+        scoped,
+        catalog=catalog,
+        heroes_by_name={h.name: h for h in heroes},
+        power_by_name=powers,
+        family=CONQUEST,
+    )
 ```
 
-placed right after `our_gear = gear_maps_for_formation(...)`, then pass `contributions=our_contributions` to `evaluate_vs_foe`, `formation_tau`, `slot_utilities`, and `build_sensitivity`. Add `"stat_family": CONQUEST` and `"contributions": {n: c.to_dict() for n, c in our_contributions.items()}` to the `survival["our"]` dict.
+Replace `_heuristic_offense`'s `gear_bonus_by_hero` parameter with `contributions: dict[str, StatContribution] | None = None`, update its default `score_fn` closure to the new protocol, and pass `contribution=(contributions or {}).get(name)` in the score call.
 
-Add imports at the top of `survival_pipeline.py`:
+In all three builders (`build_naive_max_power`, `build_troop_balanced_naive`, `opponent_from_formation`), replace the `_gear_bonus_map(...)` call with `_contribution_map(...)` and pass `contributions=contributions` to `_heuristic_offense`. **Invariant 6:** `opponent_from_formation` must keep honouring an explicitly passed `gear_assignment`.
+
+Add `contributions: dict[str, dict[str, Any]] | None = None` to `OpponentLineup`, emit it from `to_dict()`, and pass `contributions={n: c.to_dict() for n, c in contributions.items()}` at each construction.
+
+Add: `from ks.heroes.optimize.stat_contributions import CONQUEST, StatContribution`
+
+- [ ] **Step 9: Rewire `survival_pipeline.py`**
+
+- `slot_utilities` (`:90-131`): replace `gear_bonus_by_hero` with `contributions: dict[str, StatContribution] | None = None`; pass `contribution=(contributions or {}).get(name)` to `base_score_fn`. **Invariant 4:** the contributions passed in must be the gear-bearing ones so `U_front`/`U_back` still include the gear signal. Do not pass bare contributions here.
+- `roster_pressure_scale` (`:134-157`): add the same keyword; pass `contribution=` to both `base_score_fn` and `hero_tau`.
+- `evaluate_vs_foe` (`:160-206`): add `contributions=None`; forward to `formation_tau(..., contributions=contributions)` and `slot_utilities(..., contributions=contributions)`.
+- `build_self_play_foes` (`:209-303`): update the default `score_fn` closure to the new protocol.
+- `attach_survival` (`:306-...`): after `our_gear = gear_maps_for_formation(...)`, build our contributions once and thread them everywhere:
 
 ```python
-from ks.heroes.optimize.stat_contributions import (
-    CONQUEST,
-    StatContribution,
-    hero_contribution,
-)
+    from ks.heroes.optimize.combat_formation import contributions_from_assignment
+
+    our_contributions = contributions_from_assignment(
+        {name: our_gear.get(name, {}) for name in result.formation.values()},
+        catalog=catalog,
+        heroes_by_name={h.name: h for h in heroes},
+        power_by_name=power_by_name,
+        family=CONQUEST,
+    )
 ```
 
-- [ ] **Step 7: Update `sensitivity.py` call sites**
+Pass `contributions=our_contributions` to `evaluate_vs_foe`, `formation_tau`, `slot_utilities` and `build_sensitivity`. Add `"stat_family": CONQUEST` and `"contributions": {n: c.to_dict() for n, c in our_contributions.items()}` to the `survival["our"]` dict — **additive keys only**, so `tests/test_heroes_survival_api.py` keeps passing.
 
-Add a `contributions: dict[str, StatContribution] | None = None` keyword to `build_sensitivity` and forward it to every `slot_utilities` / `formation_tau` / `hero_tau` / `base_score_fn` call inside. Where `sensitivity.py` rebuilds a formation with a hero swapped, recompute that hero's contribution with `hero_contribution(...)` rather than reusing a stale entry.
+- [ ] **Step 10: Forward through `sensitivity.py`**
 
-- [ ] **Step 7b: Update the sensitivity test's scorer stub**
+Add `contributions: dict[str, StatContribution] | None = None` to `build_sensitivity` and forward to every `evaluate_vs_foe` call.
 
-`tests/test_heroes_sensitivity.py` defines a fake `base_score_fn` that still takes `gear_bonus`. Change its signature to the new protocol:
+**Critical:** each variant re-assigns gear via `gear_maps_for_formation`, so each variant must rebuild its **own** contributions from *its* gear map with `contributions_from_assignment`. A variant that reused the baseline's contributions would score every gear order identically and silently flatten the whole sensitivity table to zero deltas — which `test_heroes_survival_api.py` would not catch, since it only pins `baseline.delta_score_eff == 0.0`.
+
+Update `tests/test_heroes_sensitivity.py`'s `_base_score` stub (`:43-44`):
 
 ```python
-    def _base(hero, entry, roles, *, effective_power, contribution):
-        return float(effective_power or 0) / 1000.0
+def _base_score(hero, entry, roles, *, effective_power, contribution):
+    return float(effective_power or 0) / 1000.0
 ```
 
-and update any call site in that file that passes `gear_bonus=`.
+- [ ] **Step 11: Follow the renames in `tests/test_heroes_pr26_bugbot.py`**
 
-- [ ] **Step 8: Run the tests**
+That file imports `_provisional_gear_bonus` and `gear_bonus_from_assignment` and calls `slot_utilities(..., gear_bonus_by_hero=...)`. Update the imports and call sites to the new names, and adapt each assertion to compare contribution-derived strength instead of a bare float. **The six invariants must keep their original meaning.** If any cannot be expressed against the new API, stop and report it rather than weakening the assertion.
 
-Run: `pytest tests/test_heroes_front_survival.py tests/test_heroes_sensitivity.py tests/test_heroes_optimize_arena.py tests/test_heroes_optimize_conquest.py tests/test_heroes_optimize_hardening.py -v`
+- [ ] **Step 12: Run the tests**
+
+Run: `uv run pytest tests/test_heroes_front_survival.py tests/test_heroes_sensitivity.py tests/test_heroes_pr26_bugbot.py tests/test_heroes_survival_api.py tests/test_heroes_optimize_arena.py tests/test_heroes_optimize_conquest.py tests/test_heroes_optimize_hardening.py -v`
 Expected: PASS
 
-- [ ] **Step 9: Run the full suite**
+- [ ] **Step 13: Full suite, then commit**
 
-Run: `pytest -q`
-Expected: PASS except spend_xp / UI suites owned by Tasks 6-8.
-
-- [ ] **Step 10: Commit**
+Run: `uv run pytest -q`
+Expected: PASS except the known pre-existing gear_assign failure and the spend_xp / UI suites owned by Tasks 6-8.
 
 ```bash
-git add ks/heroes/optimize/opponent_models.py ks/heroes/optimize/survival_pipeline.py ks/heroes/optimize/sensitivity.py tests/
-git commit -m "feat(heroes): base survival + foe models on stat contributions"
+git add ks/heroes/optimize/ tests/
+git commit -m "feat(heroes): base survival and foe models on stat contributions"
 ```
 
 ---
 
-## Task 6: Gear XP spend (`spend_xp.py`)
+## Task 6: Gear XP spend
 
-**Worktree:** `sc-spendxp` — runs in parallel with Task 5, after waves 0-1 are merged.
+**Worktree:** `sc-spendxp` — parallel with Task 5.
 
 **Files:**
-- Modify: `ks/heroes/optimize/spend_xp.py:99-211`
+- Modify: `ks/heroes/optimize/spend_xp.py:120-148` (`_arena` summary), `:182-220` (both `_event` summaries)
 - Test: `tests/test_heroes_spend_xp.py`
 
 **Interfaces:**
-- Consumes: `RecommendResult.stat_family` / `.formation_totals` (Task 3), `ArenaResult.stat_family` / `.formation_totals` (Task 4).
-- Produces: every `_arena` / `_event` summary dict gains `"stat_family": str` and `"formation_totals": dict | None`. `SpendResult.to_dict()` therefore exposes them under `baseline_summary` and `best_summary`.
+- Consumes `RecommendResult.stat_family` / `.formation_totals` (Task 3) and `ArenaResult.stat_family` / `.formation_totals` / `.contributions` (Task 4).
+- Produces: every summary dict gains `"stat_family": str` and `"formation_totals": dict | None`; the arena summary also gains `"contributions"`. These surface through `SpendResult.to_dict()` under `baseline_summary` / `best_summary`, and thus through `POST /api/optimize/gear-xp`.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
-Append to `tests/test_heroes_spend_xp.py` (the file already defines `_piece`; add the imports and helpers below):
+Append to `tests/test_heroes_spend_xp.py` (it already defines `_piece`):
 
 ```python
 from pathlib import Path
@@ -2514,7 +1494,8 @@ from ks.heroes.optimize.spend_xp import build_event_utility
 
 _ROOT = Path(__file__).resolve().parents[1]
 
-# Names must exist in config/hero_catalog.yaml so the real catalog resolves.
+# Names must exist in config/hero_catalog.yaml so the real catalog resolves;
+# optimize_arena drops heroes the catalog does not know and needs five.
 _ROSTER = [
     ("Helga", "infantry", "legendary", 3, 500_000),
     ("Howard", "infantry", "epic", 3, 390_000),
@@ -2552,13 +1533,11 @@ def _heroes() -> list[HeroRecord]:
 
 
 def _gear() -> list[GearRecord]:
-    out: list[GearRecord] = []
-    for troop in ("infantry", "cavalry", "archers"):
-        for slot in ("helmet", "chest", "gloves", "boots"):
-            out.append(
-                _piece(f"{troop}-{slot}", level=20, troop=troop, slot=slot)
-            )
-    return out
+    return [
+        _piece(f"{troop}-{slot}", level=20, troop=troop, slot=slot)
+        for troop in ("infantry", "cavalry", "archers")
+        for slot in ("helmet", "chest", "gloves", "boots")
+    ]
 
 
 def test_arena_utility_summary_carries_contributions() -> None:
@@ -2587,94 +1566,50 @@ def test_levelling_gear_raises_gear_share_of_totals() -> None:
         base_gear, {p.piece_id: (p.enhancement_level or 0) + 20 for p in base_gear}
     )
     _u1, s1 = utility(bumped)
-    assert s1["formation_totals"]["power"]["gear"] > s0["formation_totals"]["power"]["gear"]
+    assert (
+        s1["formation_totals"]["power"]["gear"]
+        > s0["formation_totals"]["power"]["gear"]
+    )
 ```
 
-If any `_ROSTER` name is missing from `config/hero_catalog.yaml`, swap it for one that is present — `optimize_arena` drops heroes the catalog does not know and needs at least five.
+- [ ] **Step 2: Run to verify they fail**
 
-- [ ] **Step 2: Run to verify it fails**
-
-Run: `pytest tests/test_heroes_spend_xp.py -v`
+Run: `uv run pytest tests/test_heroes_spend_xp.py -v`
 Expected: FAIL — `KeyError: 'stat_family'`
 
-- [ ] **Step 3: Add contributions to the arena utility summary**
+- [ ] **Step 3: Add the keys to the arena summary**
 
-In `ks/heroes/optimize/spend_xp.py`, replace the `_arena` return (lines 133-140) with:
+In `build_event_utility`'s `_arena` closure, add to the returned summary dict:
 
 ```python
-            util = float(result.score) if result.status == "Optimal" else float("-inf")
-            return util, {
-                "status": result.status,
-                "side": side,
-                "formation": dict(result.formation),
-                "heroes": list(result.heroes),
-                "score": result.score if result.status == "Optimal" else None,
                 "stat_family": result.stat_family,
                 "formation_totals": result.formation_totals,
                 "contributions": result.contributions,
-            }
 ```
 
-- [ ] **Step 4: Add contributions to the event utility summary**
+- [ ] **Step 4: Add the keys to both event summaries**
 
-Replace the two `_event` returns (lines 185-209) with:
+In the `_event` closure, add to the pinned-mode summary:
 
 ```python
-        if mode:
-            result = recommend(
-                heroes,
-                catalog,
-                troops,
-                scenarios,
-                force_mode=mode,
-                event=event_profile,
-                troop_stats=troop_stats,
-                truegold=truegold,
-                gear=gear,
-                gear_profile=gear_profile,
-            )
-            return float(result.expected_personal_points), {
-                "mode": result.recommended_mode,
-                "heroes": [h["name"] for h in result.heroes],
-                "expected_personal_points": result.expected_personal_points,
                 "stat_family": result.stat_family,
                 "formation_totals": result.formation_totals,
-            }
-        results = recommend_all_modes(
-            heroes,
-            catalog,
-            troops,
-            scenarios,
-            event=event_profile,
-            troop_stats=troop_stats,
-            truegold=truegold,
-            gear=gear,
-            gear_profile=gear_profile,
-        )
-        best = max(results.values(), key=lambda r: r.expected_personal_points)
-        return float(best.expected_personal_points), {
-            "mode": best.recommended_mode,
-            "heroes": [h["name"] for h in best.heroes],
-            "expected_personal_points": best.expected_personal_points,
-            "stat_family": best.stat_family,
-            "formation_totals": best.formation_totals,
-            "modes": {
-                m: r.expected_personal_points for m, r in results.items()
-            },
-        }
 ```
 
-- [ ] **Step 5: Run the tests**
+and to the best-of-all-modes summary, using `best`:
 
-Run: `pytest tests/test_heroes_spend_xp.py -v`
+```python
+            "stat_family": best.stat_family,
+            "formation_totals": best.formation_totals,
+```
+
+- [ ] **Step 5: Run and commit**
+
+Run: `uv run pytest tests/test_heroes_spend_xp.py tests/test_heroes_xp_ladder.py -v`
 Expected: PASS
 
-- [ ] **Step 6: Run the full suite**
-
-Run: `pytest -q`
-Expected: PASS except UI suites owned by Tasks 7-8.
-
-- [ ] **Step 7: Commit**
+Run: `uv run pytest -q`
+Expected: PASS except the known pre-existing gear_assign failure and the UI suites owned by Tasks 7-8.
 
 ```bash
 git add ks/heroes/optimize/spend_xp.py tests/test_heroes_spend_xp.py
@@ -2683,15 +1618,15 @@ git commit -m "feat(heroes): report contribution totals from gear XP utility"
 
 ---
 
-## Task 7: API payload (`optimize_run.py`)
+## Task 7: API payload
 
-**Worktree:** `sc-api` — runs in parallel with Task 8.
+**Worktree:** `sc-api` — parallel with Task 8.
 
 **Files:**
-- Modify: `ks/heroes/ui/optimize_run.py:29-78` (`_event_bundle`), `:81-82` (`_section_error`), `:148-222` (arena/conquest error shapes)
+- Modify: `ks/heroes/ui/optimize_run.py:29-78` (`_event_bundle`), `:81-82` (`_section_error`), `:85-100` (`_formation_error`), and the four `_section_error` / four `_formation_error` call sites
 - Test: `tests/test_heroes_optimize_ui.py`
 
-**Interfaces (frozen contract — Task 8 renders exactly this):**
+**Interfaces (FROZEN CONTRACT — Task 8 renders exactly this):**
 
 Every Sword/Bear **mode row** (`bundle["sword"]["modes"][<mode>]`) and every **formation row** (`bundle["arena"]["attack"]`, `bundle["arena"]["defense"]`, `bundle["conquest"]`) carries:
 
@@ -2719,13 +1654,15 @@ Every Sword/Bear **mode row** (`bundle["sword"]["modes"][<mode>]`) and every **f
 }
 ```
 
-Sword/Bear rows additionally keep per-hero contributions inline on each `heroes[]` row under the key `"contributions"` (from Task 3). Task 7 normalises that into the same top-level `"contributions"` name→payload map so the UI has one shape for all four screens.
+Rules the UI may rely on:
+- `stat_family` is **always present** on every row and every section, including error rows — the UI never branches on its absence.
+- `formation_totals` and `contributions` are `null` when the row is not `Optimal`.
+- Sword/Bear rows keep per-hero contributions inline on each `heroes[]` row (from Task 3); Task 7 additionally normalises them into the same top-level `contributions` name→payload map so all four screens share one shape.
+- Sections `bundle["sword"]` and `bundle["bear"]` also carry a section-level `stat_family`. `bundle["arena"]` is a plain `{attack, defense}` mapping and gets no section-level key.
 
-Each section (`bundle["sword"]`, `bundle["bear"]`) also carries a section-level `"stat_family"`. `bundle["arena"]` is a plain `{attack, defense}` mapping and gets no section-level key. Error rows carry `"stat_family"` and `"formation_totals": null` and `"contributions": null` so the UI never has to branch on presence.
+- [ ] **Step 1: Write the failing tests**
 
-- [ ] **Step 1: Write the failing test**
-
-Append to `tests/test_heroes_optimize_ui.py` (the file already defines `ROOT` and `_seed_roster`; the helpers below build the same roster as plain records so `run_optimize_bundle` can be called directly):
+Append to `tests/test_heroes_optimize_ui.py` (it already defines `ROOT` and `_seed_roster`):
 
 ```python
 from ks.heroes.gear_models import GearRecord, GearStats
@@ -2735,7 +1672,7 @@ from ks.heroes.ui.optimize_run import run_optimize_bundle
 _SHARE_KEYS = {"hero", "skills", "gear", "total"}
 
 
-def _heroes() -> list[HeroRecord]:
+def _contrib_heroes() -> list[HeroRecord]:
     rows = [
         ("Helga", "infantry", "legendary", 3, 500_000),
         ("Howard", "infantry", "epic", 3, 390_000),
@@ -2747,16 +1684,8 @@ def _heroes() -> list[HeroRecord]:
     ]
     return [
         HeroRecord(
-            name=name,
-            troop_type=troop,
-            rarity=rarity,
-            stars=stars,
-            pellets=0,
-            power=power,
-            escorts=5,
-            roster_page=0,
-            roster_index=i,
-            scraped_at="t",
+            name=name, troop_type=troop, rarity=rarity, stars=stars, pellets=0,
+            power=power, escorts=5, roster_page=0, roster_index=i, scraped_at="t",
             stats=HeroStats(
                 conquest={
                     "Hero Attack": power // 300,
@@ -2772,7 +1701,7 @@ def _heroes() -> list[HeroRecord]:
     ]
 
 
-def _gear() -> list[GearRecord]:
+def _contrib_gear() -> list[GearRecord]:
     prefix = {"infantry": "Infantry", "cavalry": "Cavalry", "archers": "Archer"}
     out: list[GearRecord] = []
     for troop in ("infantry", "cavalry", "archers"):
@@ -2780,13 +1709,9 @@ def _gear() -> list[GearRecord]:
             stat = "Lethality" if slot in ("helmet", "boots") else "Health"
             out.append(
                 GearRecord(
-                    piece_id=f"{troop}-{slot}",
-                    name=f"{troop} {slot}",
-                    troop_type=troop,
-                    slot=slot,
-                    rarity="mythic",
-                    enhancement_level=40,
-                    power=60_000,
+                    piece_id=f"{troop}-{slot}", name=f"{troop} {slot}",
+                    troop_type=troop, slot=slot, rarity="mythic",
+                    enhancement_level=40, power=60_000,
                     stats=GearStats(
                         conquest={"Hero Attack": 300, "Hero Health": 1500},
                         expedition={f"{prefix[troop]} {stat}": 32.0},
@@ -2814,7 +1739,9 @@ def _assert_contribution(payload: dict) -> None:
 
 
 def test_bundle_event_sections_carry_expedition_contributions() -> None:
-    bundle = run_optimize_bundle(_heroes(), gear=_gear(), config_root=ROOT)
+    bundle = run_optimize_bundle(
+        _contrib_heroes(), gear=_contrib_gear(), config_root=ROOT
+    )
     for section in ("sword", "bear"):
         assert bundle[section]["stat_family"] == "expedition"
         for row in bundle[section]["modes"].values():
@@ -2826,10 +1753,11 @@ def test_bundle_event_sections_carry_expedition_contributions() -> None:
 
 
 def test_bundle_combat_sections_carry_conquest_contributions() -> None:
-    bundle = run_optimize_bundle(_heroes(), gear=_gear(), config_root=ROOT)
-    rows = [bundle["arena"]["attack"], bundle["arena"]["defense"], bundle["conquest"]]
-    for row in rows:
-        if row["status"] != "Optimal":
+    bundle = run_optimize_bundle(
+        _contrib_heroes(), gear=_contrib_gear(), config_root=ROOT
+    )
+    for row in (bundle["arena"]["attack"], bundle["arena"]["defense"], bundle["conquest"]):
+        if row.get("status") != "Optimal":
             continue
         assert row["stat_family"] == "conquest"
         _assert_contribution(row["formation_totals"])
@@ -2848,16 +1776,14 @@ def test_error_rows_still_declare_stat_family() -> None:
         assert bundle[section]["stat_family"] == "expedition"
 ```
 
-Note: with an empty roster the arena/conquest solvers return `status="Infeasible"` (not an exception), so those rows come from `CombatFormationResult.to_dict()` / `ArenaResult.to_dict()` with the dataclass defaults — `stat_family="conquest"`, `formation_totals=None`, `contributions=None`. That is exactly what the assertion checks; no extra branch is needed in `optimize_run.py` for the infeasible case, only for the `except` blocks.
+- [ ] **Step 2: Run to verify they fail**
 
-- [ ] **Step 2: Run to verify it fails**
-
-Run: `pytest tests/test_heroes_optimize_ui.py -v`
+Run: `uv run pytest tests/test_heroes_optimize_ui.py -v`
 Expected: FAIL — `KeyError: 'stat_family'`
 
-- [ ] **Step 3: Normalise event bundle rows**
+- [ ] **Step 3: Normalise the event bundle rows**
 
-In `ks/heroes/ui/optimize_run.py`, inside `_event_bundle`, after `modes[mode] = result.to_dict()`, replace that line with:
+In `_event_bundle`, replace `modes[mode] = result.to_dict()` with:
 
 ```python
             payload = result.to_dict()
@@ -2869,7 +1795,7 @@ In `ks/heroes/ui/optimize_run.py`, inside `_event_bundle`, after `modes[mode] = 
             modes[mode] = payload
 ```
 
-and add `"stat_family"` to the section `out` dict:
+and add `stat_family` to the section `out` dict (`:70-75`):
 
 ```python
     out: dict[str, Any] = {
@@ -2881,7 +1807,11 @@ and add `"stat_family"` to the section `out` dict:
     }
 ```
 
-Update `_section_error` so failed sections still declare their family:
+Add the import: `from ks.heroes.optimize.stat_contributions import family_for_event`
+
+- [ ] **Step 4: Give the failure shapes the same keys**
+
+Update `_section_error` (`:81-82`):
 
 ```python
 def _section_error(label: str, message: str, *, stat_family: str) -> dict[str, Any]:
@@ -2894,33 +1824,37 @@ def _section_error(label: str, message: str, *, stat_family: str) -> dict[str, A
     }
 ```
 
-and pass `stat_family="expedition"` at all four `_section_error` call sites.
+and pass `stat_family="expedition"` at all four call sites (`:183`, `:187`, `:203`, `:207`).
 
-- [ ] **Step 4: Normalise the arena/conquest error shapes**
-
-Add the three keys to every arena and conquest error dict in `run_optimize_bundle` (four literals in total):
+Update `_formation_error` (`:85-100`) so arena/conquest failures declare the same three keys:
 
 ```python
-                "stat_family": "conquest",
-                "formation_totals": None,
-                "contributions": None,
+def _formation_error(message: str, **identity: str) -> dict[str, Any]:
+    return {
+        **identity,
+        "status": "Error",
+        "formation": {},
+        "heroes": [],
+        "score": None,
+        "reasons": {},
+        "error": message,
+        "stat_family": "conquest",
+        "formation_totals": None,
+        "contributions": None,
+    }
 ```
 
-Add the import at the top of `optimize_run.py`:
-
-```python
-from ks.heroes.optimize.stat_contributions import family_for_event
-```
+**Note:** an *infeasible* (rather than errored) arena/conquest solve returns `CombatFormationResult.to_dict()` / `ArenaResult.to_dict()` with the Task 4 dataclass defaults — `stat_family="conquest"`, `formation_totals=None`, `contributions=None` — so no extra branch is needed for that path. Only the `except` branches need `_formation_error`.
 
 - [ ] **Step 5: Run the tests**
 
-Run: `pytest tests/test_heroes_optimize_ui.py -v`
+Run: `uv run pytest tests/test_heroes_optimize_ui.py tests/test_heroes_survival_api.py -v`
 Expected: PASS
 
-- [ ] **Step 6: Run the full suite**
+- [ ] **Step 6: Full suite**
 
-Run: `pytest -q`
-Expected: PASS (all tasks 1-7 landed).
+Run: `uv run pytest -q`
+Expected: PASS except the known pre-existing gear_assign failure.
 
 - [ ] **Step 7: Commit**
 
@@ -2931,269 +1865,391 @@ git commit -m "feat(heroes-ui): expose stat contributions on the optimize API"
 
 ---
 
-## Task 8: Event lineups UI (`optimize_events.html`)
+## Task 8: Event lineups UI (Apple-light design system)
 
-**Worktree:** `sc-ui` — runs in parallel with Task 7 against the frozen contract in Task 7's Interfaces block.
+**Worktree:** `sc-ui` — parallel with Task 7, against Task 7's frozen contract.
+
+**No template change is needed.** `#board` and `#gear-modal-body` are both rewritten wholesale by JS, so this task touches only the script, the stylesheet and the JS harness.
 
 **Files:**
-- Modify: `ks/heroes/ui/templates/optimize_events.html` (styles block ~line 90-260; `renderModes` ~597; `renderFormationCard` ~639; `openGearModal` ~549)
-- Test: `tests/test_heroes_optimize_ui.py` (template smoke assertions)
+- Modify: `ks/heroes/ui/static/optimiser_events.js` (helpers + `renderBoard` + `openHeroSheet`)
+- Modify: `ks/heroes/ui/static/app.css` (two new rule blocks)
+- Modify: `tests/js/optimiser_events_harness.js` (new named checks)
+- Modify: `tests/test_heroes_optimiser_events_js.py` (assert the new checks)
+
+**Design constraints — this UI has a house style; match it, do not invent one:**
+- `app.css` header: *"KS heroes UI — Apple light theme. Phone-first; no dark variant by design."* Do **not** add a dark-mode block.
+- Reuse the existing token vocabulary only: `--panel`, `--canvas`, `--border`, `--text`, `--muted`, `--muted-soft`, `--accent`, `--radius-sm`, `--tap`. Borders are uniformly `1px solid var(--border)`.
+- **Never** use `--ok` / `--err` as text colour — `app.css:14-16` documents that both fail contrast on white; use `--ok-text` / `--err-text` when a state is spelled out in words.
+- Numbers use `font-variant-numeric: tabular-nums`, as `.board-meta`, `.mode-score`, `.gear-meta` and `.fact-v` all do.
+- Type scale in play: `0.85rem` table text, `0.82rem`/`0.8rem` meta, `0.75rem`/`0.7rem`/`0.68rem` uppercase label text.
+- **Precedent for the compact strip:** `.fact` / `.fact-k` / `.fact-v` (`app.css:1045-1063`) — a bordered `--radius-sm` chip, uppercase muted label above a tabular-nums value, laid out on the `repeat(auto-fill, minmax(9rem, 1fr))` grid that `.gear-grid` and `.mode-chips` also use.
+- **Precedent for the table:** `.stat-table` / `.skill-table` (`app.css:1073-1100`) — `border-collapse: collapse`, `0.85rem`, `0.35rem 0.4rem` cell padding, `1px solid var(--border)` row dividers only (no vertical rules), muted 600-weight `<th>`, preceded by an `<h3 class="section-title">`. Follow this, **not** `.data-table` (that one is the heavy sortable/sticky inventory grid).
+- Text discipline (documented at the top of `optimiser_events.js`): anything from the API reaches the DOM via `textContent` or through `esc()`. Hero names and stat labels come from OCR and config — treat both as untrusted.
 
 **Interfaces:**
-- Consumes: the frozen JSON contract from Task 7.
-- Produces: two new JS helpers — `renderContributionSummary(row)` (compact, for cards) and `renderContributionTable(row)` (per-hero table, for the modal).
+- Consumes Task 7's frozen contract.
+- Produces two JS helpers — `renderContributionStrip(row)` (board) and `renderContributionTable(row)` (hero sheet) — plus `fmtShare(n, family)`.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Add the failing harness checks**
 
-Append to `tests/test_heroes_optimize_ui.py`:
+In `tests/js/optimiser_events_harness.js`, after the existing board checks, add checks that exercise the new rendering. Follow the harness's own `check(name, ok, detail)` / `record(key, value)` idiom and give every check a unique name (a test asserts uniqueness):
+
+```js
+  // --- stat contributions --------------------------------------------------
+  selectEvent("conquest");
+  var conquestBoard = boardEl.innerHTML;
+  record("conquest_board_html", conquestBoard);
+  check(
+    "the board carries a stat contribution strip",
+    conquestBoard.indexOf("contrib-strip") !== -1,
+    conquestBoard.slice(0, 400)
+  );
+  check(
+    "the strip names the stat family",
+    conquestBoard.toLowerCase().indexOf("conquest") !== -1,
+    conquestBoard.slice(0, 400)
+  );
+  check(
+    "the strip splits power into hero, skills and gear",
+    ["hero", "skills", "gear"].every(function (k) {
+      return conquestBoard.toLowerCase().indexOf(k) !== -1;
+    }),
+    conquestBoard.slice(0, 400)
+  );
+
+  openFirstHero();
+  var sheet = modalBody.innerHTML;
+  record("conquest_sheet_html", sheet);
+  check(
+    "the hero sheet carries a contribution table",
+    sheet.indexOf("contrib-table") !== -1,
+    sheet.slice(0, 400)
+  );
+  check(
+    "the contribution table has a row per placed hero",
+    (sheet.match(/<tr/g) || []).length >= 2,
+    sheet.slice(0, 400)
+  );
+  check(
+    "the contribution table totals the formation",
+    sheet.toLowerCase().indexOf("formation") !== -1,
+    sheet.slice(0, 400)
+  );
+  check(
+    "an estimated split says so",
+    sheet.toLowerCase().indexOf("estimated") !== -1,
+    sheet.slice(0, 400)
+  );
+```
+
+The harness's existing fixture bundle must gain `stat_family`, `formation_totals` and `contributions` on its conquest and sword rows, matching Task 7's contract exactly. Use small round numbers so the checks read clearly. If the harness has no `selectEvent` / `openFirstHero` helper, add one next to whatever it already uses to drive the board, and name it in the same style as the surrounding code.
+
+- [ ] **Step 2: Assert the new checks from Python**
+
+Append to `tests/test_heroes_optimiser_events_js.py`:
 
 ```python
-from pathlib import Path
-
-_TEMPLATE = (
-    Path(__file__).resolve().parents[1]
-    / "ks"
-    / "heroes"
-    / "ui"
-    / "templates"
-    / "optimize_events.html"
-)
-
-
-def test_template_defines_contribution_renderers() -> None:
-    text = _TEMPLATE.read_text(encoding="utf-8")
-    assert "function renderContributionSummary(" in text
-    assert "function renderContributionTable(" in text
+def test_the_board_shows_where_strength_came_from(js_run: dict) -> None:
+    """Design decision C: formation totals on the board, per-hero in the sheet."""
+    _assert_ran(
+        js_run,
+        [
+            "the board carries a stat contribution strip",
+            "the strip names the stat family",
+            "the strip splits power into hero, skills and gear",
+        ],
+    )
+    board = js_run["data"]["conquest_board_html"]
+    assert "contrib-strip" in board
 
 
-def test_template_cards_and_modal_call_the_renderers() -> None:
-    text = _TEMPLATE.read_text(encoding="utf-8")
-    assert text.count("renderContributionSummary(") >= 3  # def + modes + formation
-    assert text.count("renderContributionTable(") >= 2  # def + modal
-
-
-def test_template_styles_contribution_blocks() -> None:
-    text = _TEMPLATE.read_text(encoding="utf-8")
-    assert ".contrib" in text
-    assert ".contrib-table" in text
+def test_the_hero_sheet_breaks_the_split_down_per_hero(js_run: dict) -> None:
+    _assert_ran(
+        js_run,
+        [
+            "the hero sheet carries a contribution table",
+            "the contribution table has a row per placed hero",
+            "the contribution table totals the formation",
+            "an estimated split says so",
+        ],
+    )
+    sheet = js_run["data"]["conquest_sheet_html"]
+    assert "contrib-table" in sheet
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [ ] **Step 3: Run to verify they fail**
 
-Run: `pytest tests/test_heroes_optimize_ui.py -k contribution -v`
-Expected: FAIL — assertion errors on the missing function names
+Run: `uv run pytest tests/test_heroes_optimiser_events_js.py -v`
+Expected: FAIL — the new checks report `ok: false` (the classes are not emitted yet). If the whole module skips, no JS engine is on `PATH`; install one or note the skip in your report — do not mark the task done on a skipped suite.
 
-- [ ] **Step 3: Add the styles**
+- [ ] **Step 4: Add the JS helpers**
 
-Insert into the `<style>` block of `ks/heroes/ui/templates/optimize_events.html`, immediately after the `.formation` rule (~line 122-142):
+Insert into `ks/heroes/ui/static/optimiser_events.js`, immediately before `function renderBoard(`:
 
-```css
-    .contrib {
-      margin: 6px 0 2px;
-      font-size: 12px;
-      color: var(--muted);
-      display: flex;
-      flex-wrap: wrap;
-      gap: 4px 10px;
-    }
-    .contrib .k { color: var(--fg); font-weight: 600; }
-    .contrib .est { font-style: italic; opacity: 0.75; }
-    .contrib-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12px;
-      margin: 6px 0 12px;
-    }
-    .contrib-table th,
-    .contrib-table td {
-      text-align: right;
-      padding: 3px 6px;
-      border-bottom: 1px solid var(--border, #2a2a2a);
-      white-space: nowrap;
-    }
-    .contrib-table th:first-child,
-    .contrib-table td:first-child { text-align: left; }
-    .contrib-table thead th { color: var(--muted); font-weight: 600; }
-    .contrib-table tbody tr.total-row td { font-weight: 600; }
-```
+```js
+  /* --- stat contributions ---------------------------------------------------
+   *
+   * Every optimiser row carries the same three keys (see optimize_run.py):
+   * `stat_family`, `formation_totals` and `contributions`. Conquest shares are
+   * flat stat points and sum; expedition shares are percent points and also
+   * sum — which is why the formatter takes the family rather than guessing
+   * from magnitude.
+   */
 
-If `--border` is not already defined in `:root`, the fallback `#2a2a2a` applies — no other change needed.
+  function fmtShare(n, family) {
+    if (n == null || !Number.isFinite(Number(n))) return "—";
+    if (family === "expedition") return Number(n).toFixed(1) + "%";
+    return Math.round(Number(n)).toLocaleString("en-US");
+  }
 
-- [ ] **Step 4: Add the JS renderers**
+  /** The row's formation-level split, or null when the row is not Optimal. */
+  function totalsOf(row) {
+    var totals = row && row.formation_totals;
+    return totals && totals.power ? totals : null;
+  }
 
-Insert immediately before `function renderModes(` (~line 597):
-
-```javascript
-    function fmtShare(n, family) {
-      if (n == null || !isFinite(n)) return "—";
-      if (family === "expedition") return `${Number(n).toFixed(1)}%`;
-      return Math.round(Number(n)).toLocaleString();
-    }
-    function contributionOf(row) {
-      const totals = row && row.formation_totals;
-      if (!totals || !totals.power) return null;
-      return totals;
-    }
-    function renderContributionSummary(row) {
-      const totals = contributionOf(row);
-      if (!totals) return "";
-      const family = row.stat_family || totals.family || "conquest";
-      const p = totals.power;
-      const bits = [
-        `<span><span class="k">power</span> ${esc(Math.round(p.total).toLocaleString())}</span>`,
-        `<span><span class="k">hero</span> ${esc(Math.round(p.hero).toLocaleString())}</span>`,
-        `<span><span class="k">skills</span> ${esc(Math.round(p.skills).toLocaleString())}</span>`,
-        `<span><span class="k">gear</span> ${esc(Math.round(p.gear).toLocaleString())}</span>`,
-      ];
-      const stats = Object.keys(totals.stats || {});
-      const top = stats
-        .map((label) => [label, totals.stats[label]])
-        .filter(([, s]) => s && s.total > 0)
-        .sort((a, b) => b[1].total - a[1].total)
-        .slice(0, 3)
-        .map(
-          ([label, s]) =>
-            `<span><span class="k">${esc(label)}</span> ${esc(fmtShare(s.total, family))}</span>`
+  /** Chips: the power split, then the largest stat totals for that family. */
+  function renderContributionStrip(row) {
+    var totals = totalsOf(row);
+    if (!totals) return "";
+    var family = row.stat_family || totals.family || "conquest";
+    var p = totals.power;
+    var facts = [
+      ["power", fmtShare(p.total, "conquest")],
+      ["from hero", fmtShare(p.hero, "conquest")],
+      ["from skills", fmtShare(p.skills, "conquest")],
+      ["from gear", fmtShare(p.gear, "conquest")]
+    ];
+    Object.keys(totals.stats || {})
+      .map(function (label) {
+        return [label, totals.stats[label]];
+      })
+      .filter(function (pair) {
+        return pair[1] && pair[1].total > 0;
+      })
+      .sort(function (a, b) {
+        return b[1].total - a[1].total;
+      })
+      .slice(0, 3)
+      .forEach(function (pair) {
+        facts.push([pair[0], fmtShare(pair[1].total, family)]);
+      });
+    var chips = facts
+      .map(function (pair) {
+        return (
+          '<div class="fact"><div class="fact-k">' + esc(pair[0]) +
+          '</div><div class="fact-v">' + esc(pair[1]) + "</div></div>"
         );
-      const flags = [];
-      if (totals.estimated) flags.push("estimated");
-      if (totals.skills_incomplete) flags.push("skills partial");
-      const note = flags.length
-        ? `<span class="est">${esc(flags.join(" · "))}</span>`
-        : "";
-      return `<div class="contrib">${bits.concat(top).join("")}${note}</div>`;
-    }
-    function renderContributionTable(row) {
-      const contributions = (row && row.contributions) || null;
-      if (!contributions) return "";
-      const family = row.stat_family || "conquest";
-      const names = orderedHeroNames(row).filter((n) => contributions[n]);
-      if (!names.length) return "";
-      const labels = [];
-      for (const name of names) {
-        for (const label of Object.keys(contributions[name].stats || {})) {
-          if (!labels.includes(label)) labels.push(label);
-        }
-      }
-      const head =
-        `<tr><th>hero</th><th>power</th>` +
-        labels.map((l) => `<th>${esc(l)}</th>`).join("") +
-        `</tr>`;
-      const cell = (share) =>
-        share
-          ? `${esc(fmtShare(share.total, family))}` +
-            `<br><span class="est">${esc(fmtShare(share.hero, family))} · ` +
-            `${esc(fmtShare(share.skills, family))} · ` +
-            `${esc(fmtShare(share.gear, family))}</span>`
-          : "—";
-      const rows = names
-        .map((name) => {
-          const c = contributions[name];
-          return (
-            `<tr><td>${esc(name)}</td>` +
-            `<td>${esc(Math.round(c.power.total).toLocaleString())}` +
-            `<br><span class="est">${esc(Math.round(c.power.hero).toLocaleString())} · ` +
-            `${esc(Math.round(c.power.skills).toLocaleString())} · ` +
-            `${esc(Math.round(c.power.gear).toLocaleString())}</span></td>` +
-            labels.map((l) => `<td>${cell((c.stats || {})[l])}</td>`).join("") +
-            `</tr>`
-          );
-        })
-        .join("");
-      const totals = contributionOf(row);
-      const totalRow = totals
-        ? `<tr class="total-row"><td>formation</td>` +
-          `<td>${esc(Math.round(totals.power.total).toLocaleString())}</td>` +
-          labels
-            .map((l) => `<td>${esc(fmtShare(((totals.stats || {})[l] || {}).total, family))}</td>`)
-            .join("") +
-          `</tr>`
-        : "";
+      })
+      .join("");
+    var flags = [];
+    if (totals.estimated) flags.push("estimated");
+    if (totals.skills_incomplete) flags.push("skills partial");
+    var note = flags.length
+      ? '<p class="contrib-note">' + esc(family + " · " + flags.join(" · ")) + "</p>"
+      : '<p class="contrib-note">' + esc(family) + "</p>";
+    return '<div class="contrib-strip">' + chips + "</div>" + note;
+  }
+
+  /** One row per placed hero, plus a formation total row. */
+  function renderContributionTable(row) {
+    var contributions = (row && row.contributions) || null;
+    if (!contributions) return "";
+    var family = row.stat_family || "conquest";
+    var names = orderedHeroNames(row).filter(function (n) {
+      return contributions[n];
+    });
+    if (!names.length) return "";
+
+    var labels = [];
+    names.forEach(function (name) {
+      Object.keys(contributions[name].stats || {}).forEach(function (label) {
+        if (labels.indexOf(label) === -1) labels.push(label);
+      });
+    });
+
+    function split(share, fam) {
+      if (!share) return "—";
       return (
-        `<h3>Stat contributions · ${esc(family)}` +
-        `<span class="est"> (hero · skills · gear)</span></h3>` +
-        `<table class="contrib-table"><thead>${head}</thead>` +
-        `<tbody>${rows}${totalRow}</tbody></table>`
+        esc(fmtShare(share.total, fam)) +
+        '<br><span class="contrib-split">' +
+        esc(
+          fmtShare(share.hero, fam) + " · " +
+          fmtShare(share.skills, fam) + " · " +
+          fmtShare(share.gear, fam)
+        ) +
+        "</span>"
       );
     }
+
+    var head =
+      "<tr><th>hero</th><th>power</th>" +
+      labels
+        .map(function (l) {
+          return "<th>" + esc(l) + "</th>";
+        })
+        .join("") +
+      "</tr>";
+    var body = names
+      .map(function (name) {
+        var c = contributions[name];
+        return (
+          "<tr><td>" + esc(name) + "</td>" +
+          "<td>" + split(c.power, "conquest") + "</td>" +
+          labels
+            .map(function (l) {
+              return "<td>" + split((c.stats || {})[l], family) + "</td>";
+            })
+            .join("") +
+          "</tr>"
+        );
+      })
+      .join("");
+    var totals = totalsOf(row);
+    var totalRow = totals
+      ? '<tr class="contrib-total"><td>formation</td><td>' +
+        esc(fmtShare(totals.power.total, "conquest")) + "</td>" +
+        labels
+          .map(function (l) {
+            var share = (totals.stats || {})[l];
+            return "<td>" + esc(share ? fmtShare(share.total, family) : "—") + "</td>";
+          })
+          .join("") +
+        "</tr>"
+      : "";
+    return (
+      '<h3 class="section-title">Stat contributions · ' + esc(family) + "</h3>" +
+      '<p class="contrib-note">each cell: total, then hero · skills · gear</p>' +
+      '<div class="table-scroll"><table class="contrib-table"><thead>' +
+      head + "</thead><tbody>" + body + totalRow + "</tbody></table></div>"
+    );
+  }
 ```
 
-`fmtShare` uses `Number.toFixed(1)` for expedition so percent points read as `81.9%`, and `toLocaleString()` for conquest flats.
+- [ ] **Step 5: Call them from the board and the sheet**
 
-- [ ] **Step 5: Call the renderers from the cards**
+In `renderBoard`, after the `appendText("p", "board-meta", ...)` call and before the formation rows, append the strip. `appendText` sets `textContent`, so the strip needs its own element:
 
-In `renderModes` (~line 616), insert the summary before the card hint:
-
-```javascript
-        card.innerHTML =
-          `<h3>${esc(mode.replaceAll("_", " "))}</h3>` +
-          `<div class="points">${esc(fmtPoints(row.expected_personal_points))} pts</div>` +
-          `<p class="heroes"><strong>${esc(heroNames(row))}</strong></p>` +
-          `<p class="troops">${esc(troopsLine(row))}</p>` +
-          renderContributionSummary(row) +
-          `<p class="card-hint">Click for why + gear + stat contributions</p>`;
+```js
+    var strip = renderContributionStrip(row);
+    if (strip) {
+      var stripEl = document.createElement("div");
+      stripEl.innerHTML = strip;
+      boardEl.appendChild(stripEl);
+    }
 ```
 
-In `renderFormationCard` (~line 664), insert it after `survHtml`:
+In `openHeroSheet`, extend the body assembly so the table sits between the why-block and the gear grid:
 
-```javascript
-      card.innerHTML =
-        `<h3>${esc(title)}</h3>` +
-        `<div class="points">${scoreLine}</div>` +
-        `<p class="formation">status: ${esc(row.status || "—")}</p>` +
-        (ok ? `<div class="slot-row">${slots}</div>` : "") +
-        survHtml +
-        (ok ? renderContributionSummary(row) : "") +
-        (ok
-          ? `<p class="card-hint">Click for why + gear + survival + stat contributions</p>`
-          : `<p class="heroes">${esc(row.error || "No optimal formation")}</p>`);
+```js
+    modalBody.innerHTML =
+      renderWhy(explain) +
+      renderContributionTable(entry.row) +
+      renderGearGrid(assignment[name]);
 ```
 
-- [ ] **Step 6: Call the table from the modal**
+- [ ] **Step 6: Add the styles**
 
-In `openGearModal` (~line 572-588), insert the table between the survival block and the per-hero gear cards:
+Append to `ks/heroes/ui/static/app.css`, next to the other events-board rules (after the `.gear-*` block):
 
-```javascript
-      let contribHtml = "";
-      try {
-        contribHtml = renderContributionTable(row);
-      } catch (e) {
-        contribHtml =
-          `<p class="heroes" style="color:var(--err)">Stat contributions unavailable</p>`;
-      }
-      if (!names.length) {
-        body.innerHTML =
-          (survHtml || "") + contribHtml ||
-          '<p class="empty">No heroes in this result.</p>';
-      } else {
-        body.innerHTML =
-          survHtml +
-          contribHtml +
-          names.map((name) => {
+```css
+/* --- stat contributions ---------------------------------------------------
+   The board strip reuses .fact/.fact-k/.fact-v chips on the same auto-fill
+   grid as .gear-grid and .mode-chips; the sheet table follows .stat-table's
+   compact idiom rather than .data-table's sortable inventory grid. */
+
+.contrib-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr));
+  gap: 0.4rem;
+  margin: 0 0 0.35rem;
+}
+
+.contrib-note {
+  margin: 0 0 0.9rem;
+  color: var(--muted-soft);
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+/* A wide formation can carry six stat columns; let it scroll rather than
+   squeeze the sheet, which is only ~22rem on a 390px viewport. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+table.contrib-table {
+  width: 100%;
+  margin-bottom: 0.5rem;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.contrib-table th,
+.contrib-table td {
+  padding: 0.35rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  vertical-align: top;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.contrib-table th:first-child,
+.contrib-table td:first-child {
+  text-align: left;
+}
+
+.contrib-table th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.contrib-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.contrib-table tr.contrib-total td {
+  font-weight: 600;
+}
+
+.contrib-split {
+  color: var(--muted-soft);
+  font-size: 0.72rem;
+}
 ```
 
-(the rest of the `names.map` body is unchanged)
+- [ ] **Step 7: Run the JS tests**
 
-- [ ] **Step 7: Run the tests**
-
-Run: `pytest tests/test_heroes_optimize_ui.py -v`
+Run: `uv run pytest tests/test_heroes_optimiser_events_js.py -v`
 Expected: PASS
 
-- [ ] **Step 8: Verify in the running app**
+- [ ] **Step 8: Run the UI suites**
+
+Run: `uv run pytest tests/test_heroes_optimize_ui.py tests/test_heroes_optimiser_gear_xp_js.py tests/test_heroes_roster_ui.py -v`
+Expected: PASS
+
+- [ ] **Step 9: See it in the real app**
 
 Run:
 
 ```bash
-python -m ks.heroes.cli ui --heroes data/heroes/full-run --gear data/gear/full-run
+uv run python -m ks.heroes.cli ui --heroes data/heroes/full-run --gear data/gear/full-run
 ```
 
-Open `http://127.0.0.1:8000/optimize/events`. Confirm: each Swordland/Bear mode card shows a `power / hero / skills / gear` line plus up to three top expedition percents; each Arena/Conquest card shows the same with conquest flats; clicking any card shows a "Stat contributions" table with one row per hero, a `formation` total row, and `hero · skills · gear` under each total. Stop the server when done.
+Open `http://127.0.0.1:8000/optimiser/events`. On each of the four event segments confirm: the board shows a chip strip with power split into hero / skills / gear plus the top stats for that family (flat numbers for Arena/Conquest, percents for Swordland/Bear); tapping a hero opens the sheet with a "Stat contributions" table, one row per placed hero, a formation total row, and `hero · skills · gear` beneath each total. Check it at a 390px-wide viewport — the table should scroll inside its own container rather than widening the sheet. Stop the server when done.
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add ks/heroes/ui/templates/optimize_events.html tests/test_heroes_optimize_ui.py
-git commit -m "feat(heroes-ui): show stat contributions on cards and detail modal"
+git add ks/heroes/ui/static/optimiser_events.js ks/heroes/ui/static/app.css tests/js/optimiser_events_harness.js tests/test_heroes_optimiser_events_js.py
+git commit -m "feat(heroes-ui): show stat contributions on the lineup board and hero sheet"
 ```
 
 ---
@@ -3205,50 +2261,82 @@ git commit -m "feat(heroes-ui): show stat contributions on cards and detail moda
 **Files:**
 - Create: `tests/test_heroes_optimize_contributions_wiring.py`
 
-**Interfaces:**
-- Consumes: everything above. Produces no new production code.
-
 - [ ] **Step 1: Write the test**
-
-Create `tests/test_heroes_optimize_contributions_wiring.py`:
 
 ```python
 """Every optimiser surface derives strength from stat contributions.
 
-These are wiring + invariant assertions, deliberately not frozen score
-values — the whole point of the rewrite is that the numbers changed.
+Wiring + invariant assertions, deliberately not frozen score values — the
+whole point of the rewrite is that the numbers changed. See the plan's
+"Measured calibration note" for the size of that change.
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
 
-from ks.heroes.gear_models import GearRecord
-from ks.heroes.models import HeroRecord
+from ks.heroes.gear_models import GearRecord, GearStats
+from ks.heroes.models import HeroRecord, HeroStats
 from ks.heroes.ui.optimize_run import run_optimize_bundle
 
 _ROOT = Path(__file__).resolve().parents[1]
 _SHARE_KEYS = {"hero", "skills", "gear", "total"}
 
 
-def _load(path: Path, key: str, cls):
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    items = raw.get(key) if isinstance(raw, dict) else raw
-    return [cls.from_dict(item) for item in items]
+def _heroes() -> list[HeroRecord]:
+    rows = [
+        ("Helga", "infantry", "legendary", 3, 500_000),
+        ("Howard", "infantry", "epic", 3, 390_000),
+        ("Jabel", "cavalry", "legendary", 4, 650_000),
+        ("Chenko", "cavalry", "epic", 3, 400_000),
+        ("Saul", "archer", "legendary", 2, 250_000),
+        ("Diana", "archer", "epic", 3, 450_000),
+        ("Gordon", "cavalry", "epic", 2, 230_000),
+    ]
+    return [
+        HeroRecord(
+            name=name, troop_type=troop, rarity=rarity, stars=stars, pellets=0,
+            power=power, escorts=5, roster_page=0, roster_index=i, scraped_at="t",
+            stats=HeroStats(
+                conquest={
+                    "Hero Attack": power // 300,
+                    "Hero Defense": power // 350,
+                    "Hero Health": power // 40,
+                    "Escort Attack": power // 900,
+                    "Escort Defense": power // 1050,
+                    "Escort Health": power // 120,
+                }
+            ),
+        )
+        for i, (name, troop, rarity, stars, power) in enumerate(rows)
+    ]
+
+
+def _gear() -> list[GearRecord]:
+    prefix = {"infantry": "Infantry", "cavalry": "Cavalry", "archers": "Archer"}
+    out: list[GearRecord] = []
+    for troop in ("infantry", "cavalry", "archers"):
+        for slot in ("helmet", "chest", "gloves", "boots"):
+            stat = "Lethality" if slot in ("helmet", "boots") else "Health"
+            out.append(
+                GearRecord(
+                    piece_id=f"{troop}-{slot}", name=f"{troop} {slot}",
+                    troop_type=troop, slot=slot, rarity="mythic",
+                    enhancement_level=40, power=60_000,
+                    stats=GearStats(
+                        conquest={"Hero Attack": 300, "Hero Health": 1500},
+                        expedition={f"{prefix[troop]} {stat}": 32.0},
+                    ),
+                )
+            )
+    return out
 
 
 @pytest.fixture(scope="module")
 def bundle() -> dict:
-    heroes_path = _ROOT / "data" / "heroes" / "full-run" / "heroes.json"
-    gear_path = _ROOT / "data" / "gear" / "full-run" / "gear.json"
-    if not heroes_path.is_file() or not gear_path.is_file():
-        pytest.skip("live scrape fixtures not present")
-    heroes = _load(heroes_path, "heroes", HeroRecord)
-    gear = _load(gear_path, "gear", GearRecord)
-    return run_optimize_bundle(heroes, gear=gear, config_root=_ROOT)
+    return run_optimize_bundle(_heroes(), gear=_gear(), config_root=_ROOT)
 
 
 def _check(contribution: dict) -> None:
@@ -3303,22 +2391,23 @@ def test_formation_totals_equal_sum_of_hero_contributions(bundle: dict) -> None:
 def test_no_scorer_still_uses_the_gear_bonus_heuristic() -> None:
     """Success criterion 4: naked power + heuristic gear bonus is gone."""
     optimize_dir = _ROOT / "ks" / "heroes" / "optimize"
-    offenders = []
-    for path in sorted(optimize_dir.glob("*.py")):
-        if "gear_bonus" in path.read_text(encoding="utf-8"):
-            offenders.append(path.name)
+    offenders = [
+        path.name
+        for path in sorted(optimize_dir.glob("*.py"))
+        if "gear_bonus" in path.read_text(encoding="utf-8")
+    ]
     assert offenders == [], f"heuristic gear bonus still referenced in {offenders}"
 ```
 
-- [ ] **Step 2: Run the test**
+- [ ] **Step 2: Run it**
 
-Run: `pytest tests/test_heroes_optimize_contributions_wiring.py -v`
-Expected: PASS (or `skip` on machines without the scrape fixtures)
+Run: `uv run pytest tests/test_heroes_optimize_contributions_wiring.py -v`
+Expected: PASS
 
-- [ ] **Step 3: Run the full suite**
+- [ ] **Step 3: Full suite**
 
-Run: `pytest -q`
-Expected: PASS — all suites green.
+Run: `uv run pytest -q`
+Expected: PASS except the known pre-existing `test_best_sets_picks_highest_score_per_slot`.
 
 - [ ] **Step 4: Commit**
 
@@ -3333,7 +2422,8 @@ git commit -m "test(heroes): assert every optimiser reads stat contributions"
 
 | Design criterion | Task |
 |------------------|------|
-| 1. Cards show formation-level hero/skills/gear totals for the correct family | 7 (payload), 8 (`renderContributionSummary`) |
-| 2. Detail modal shows the same split per hero | 8 (`renderContributionTable`) |
+| 1. Board shows formation-level hero/skills/gear totals for the correct family | 7 (payload), 8 (`renderContributionStrip`) |
+| 2. Hero sheet shows the same split per hero | 8 (`renderContributionTable`) |
 | 3. Arena/Conquest/Swordland/Bear/Gear-XP derive strength from contributions | 3, 4, 5, 6 |
-| 4. No scorer remains on naked power + heuristic gear bonus | 4 (removes `_provisional_gear_bonus`), 9 (guard test) |
+| 4. No scorer remains on naked power + heuristic gear bonus | 3 (deletes `gear_bonus_by_troop`), 4 (deletes `_provisional_gear_bonus`), 9 (guard test) |
+| Arena-survival spec: same-rarity power sanitize | 5 Part A |
