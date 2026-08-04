@@ -468,6 +468,220 @@ def test_collect_keeps_prior_naked_when_detail_is_million_glitch(tmp_path):
     assert stored.power == 217_855
 
 
+def test_roster_ocr_sets_medium_assurance(tmp_path):
+    """Roster scrape marks non-None fields medium/roster_ocr in assurance."""
+    cfg = load_heroes_config()
+    device = RecordingDevice(png_bytes=_png())
+    store = HeroStore(tmp_path)
+
+    def fake_scrape(device, cfg, *, page, index, ocr_fn=None, sleep_fn=None, **_kw):
+        if page == 0 and index == 0:
+            return HeroRecord(
+                name="Alice",
+                power=100_000,
+                level=50,
+                stars=3,
+                pellets=2,
+                roster_page=0,
+                roster_index=0,
+                scraped_at="t0",
+            )
+        return None
+
+    collect_heroes(device, cfg, store, sleep_fn=lambda _: None, scrape_fn=fake_scrape)
+
+    stored = next(h for h in store.all_heroes() if h.name == "Alice")
+    for field_name in ("power", "stars", "level", "pellets"):
+        a = stored.assurance.get(field_name)
+        assert a is not None, f"assurance[{field_name!r}] missing"
+        assert a.level == "medium", f"expected medium for {field_name}, got {a.level!r}"
+        assert a.reason == "roster_ocr", f"expected roster_ocr for {field_name}, got {a.reason!r}"
+
+
+def test_roster_ocr_preserves_high_assurance(tmp_path):
+    """Re-scraping a hero doesn't downgrade a field already at high assurance."""
+    from ks.heroes.assurance import FieldAssurance
+
+    cfg = load_heroes_config()
+    device = RecordingDevice(png_bytes=_png())
+    store = HeroStore(tmp_path)
+    store.upsert(
+        HeroRecord(
+            name="Bob",
+            power=90_000,
+            roster_page=0,
+            roster_index=0,
+            scraped_at="t_prev",
+            assurance={"power": FieldAssurance("high", "power_i_agree")},
+        )
+    )
+
+    def fake_scrape(device, cfg, *, page, index, ocr_fn=None, sleep_fn=None, **_kw):
+        if page == 0 and index == 0:
+            return HeroRecord(
+                name="Bob",
+                power=91_000,
+                roster_page=0,
+                roster_index=0,
+                scraped_at="t1",
+            )
+        return None
+
+    collect_heroes(device, cfg, store, sleep_fn=lambda _: None, scrape_fn=fake_scrape)
+
+    stored = next(h for h in store.all_heroes() if h.name == "Bob")
+    assert stored.assurance["power"].level == "high", "high assurance must not be downgraded to medium"
+    assert stored.assurance["power"].reason == "power_i_agree"
+
+
+def test_power_i_agree_sets_high_power_and_bucket_assurance(tmp_path):
+    """Power-i agree sets power and non-None buckets to high/power_i_agree."""
+    from ks.heroes.power_breakdown import PowerBreakdown
+    from ks.heroes.power_i_capture import PowerICapture
+
+    cfg = load_heroes_config()
+    device = RecordingDevice(png_bytes=_png())
+    store = HeroStore(tmp_path)
+
+    naked = 71_045 + 131_690 + 15_120  # 217_855
+
+    def fake_scrape(
+        device, cfg, *, page, index, ocr_fn=None, sleep_fn=None, on_power_breakdown=None, **_kw
+    ):
+        if page != 0 or index != 0:
+            return None
+        if on_power_breakdown is not None:
+            on_power_breakdown(
+                PowerICapture(
+                    breakdown=PowerBreakdown(
+                        hero_power=naked,
+                        from_level=71_045,
+                        from_stars=131_690,
+                        from_skills=15_120,
+                    ),
+                    observed_name="Charlie",
+                    raw_name="Charlie",
+                )
+            )
+        return HeroRecord(
+            name="Charlie",
+            power=999_999,
+            level=58,
+            stars=3,
+            pellets=0,
+            roster_page=0,
+            roster_index=0,
+            scraped_at="t0",
+        )
+
+    collect_heroes(device, cfg, store, sleep_fn=lambda _: None, scrape_fn=fake_scrape)
+
+    stored = next(h for h in store.all_heroes() if h.name == "Charlie")
+    assert stored.power == naked
+    assert stored.assurance["power"].level == "high"
+    assert stored.assurance["power"].reason == "power_i_agree"
+    for bucket in ("from_level", "from_stars", "from_skills"):
+        a = stored.assurance.get(bucket)
+        assert a is not None, f"assurance[{bucket!r}] missing"
+        assert a.level == "high", f"expected high for {bucket}, got {a.level!r}"
+        assert a.reason == "power_i_agree"
+
+
+def test_power_i_missing_naked_sets_low_power_assurance(tmp_path):
+    """Power-i run with unresolvable naked sets power assurance to low/power_i_missing."""
+    from ks.heroes.power_breakdown import PowerBreakdown
+    from ks.heroes.power_i_capture import PowerICapture
+
+    cfg = load_heroes_config()
+    device = RecordingDevice(png_bytes=_png())
+    store = HeroStore(tmp_path)
+
+    def fake_scrape(
+        device, cfg, *, page, index, ocr_fn=None, sleep_fn=None, on_power_breakdown=None, **_kw
+    ):
+        if page != 0 or index != 0:
+            return None
+        if on_power_breakdown is not None:
+            on_power_breakdown(
+                PowerICapture(
+                    breakdown=PowerBreakdown(hero_power=100_000),  # no buckets → naked=None
+                    observed_name="Diana",
+                    raw_name="Diana",
+                )
+            )
+        return HeroRecord(
+            name="Diana",
+            power=100_000,
+            roster_page=0,
+            roster_index=0,
+            scraped_at="t0",
+        )
+
+    collect_heroes(device, cfg, store, sleep_fn=lambda _: None, scrape_fn=fake_scrape)
+
+    stored = next(h for h in store.all_heroes() if h.name == "Diana")
+    assert stored.assurance["power"].level == "low"
+    assert stored.assurance["power"].reason == "power_i_missing"
+    assert stored.power == 100_000  # numeric power must not be clobbered
+
+
+def test_power_i_total_minus_gear_fallback_marks_only_power_high(tmp_path):
+    """total−gear fallback: power → high/power_i_total_minus_gear; gear_strength NOT high/agree."""
+    from ks.heroes.power_breakdown import PowerBreakdown
+    from ks.heroes.power_i_capture import PowerICapture
+
+    cfg = load_heroes_config()
+    device = RecordingDevice(png_bytes=_png())
+    store = HeroStore(tmp_path)
+
+    hero_power = 250_000
+    gear = 30_000
+    expected_naked = hero_power - gear  # 220_000
+
+    def fake_scrape(
+        device, cfg, *, page, index, ocr_fn=None, sleep_fn=None, on_power_breakdown=None, **_kw
+    ):
+        if page != 0 or index != 0:
+            return None
+        if on_power_breakdown is not None:
+            on_power_breakdown(
+                PowerICapture(
+                    breakdown=PowerBreakdown(
+                        hero_power=hero_power,
+                        gear_strength=gear,
+                        # from_level / from_stars / from_skills intentionally absent
+                    ),
+                    observed_name="Echo",
+                    raw_name="Echo",
+                )
+            )
+        return HeroRecord(
+            name="Echo",
+            power=hero_power,
+            roster_page=0,
+            roster_index=0,
+            scraped_at="t0",
+        )
+
+    collect_heroes(device, cfg, store, sleep_fn=lambda _: None, scrape_fn=fake_scrape)
+
+    stored = next(h for h in store.all_heroes() if h.name == "Echo")
+    assert stored.power == expected_naked
+    assert stored.assurance["power"].level == "high"
+    assert stored.assurance["power"].reason == "power_i_total_minus_gear"
+    # gear_strength must not be elevated to high/agree in this fallback path
+    gear_a = stored.assurance.get("gear_strength")
+    assert gear_a is None or gear_a.reason != "power_i_agree", (
+        "gear_strength must not be marked high/power_i_agree in total-minus-gear fallback"
+    )
+    # L+S+K buckets are absent — no phantom assurance entries
+    for bucket in ("from_level", "from_stars", "from_skills"):
+        a = stored.assurance.get(bucket)
+        assert a is None or a.reason != "power_i_agree", (
+            f"{bucket} must not carry power_i_agree when components were not observed"
+        )
+
+
 def test_collect_applies_naked_to_slot_not_wrong_observed_hero(tmp_path):
     """Slot hero keeps Power-i naked even if tooltip name OCR points elsewhere."""
     from ks.heroes.power_breakdown import PowerBreakdown
