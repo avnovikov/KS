@@ -13,6 +13,7 @@ from ks.heroes.optimize.combat_formation import (
     solve_combat_formation,
 )
 from ks.heroes.optimize.opponent_models import GEAR_FRONT_FIRST
+from ks.heroes.optimize.stat_contributions import StatContribution
 from ks.heroes.optimize.survival_pipeline import attach_survival
 from ks.heroes.optimize.types import CatalogEntry
 
@@ -43,7 +44,7 @@ def _conquest_base_score(
     roles: dict[str, Any],
     *,
     effective_power: int | None,
-    gear_bonus: float,
+    contribution: StatContribution | None = None,
 ) -> float:
     """Base ILP score for Conquest: attack scoring amplified by ultimate level."""
     base = hero_base_score(
@@ -51,7 +52,7 @@ def _conquest_base_score(
         entry,
         roles,
         effective_power=effective_power,
-        gear_bonus=gear_bonus,
+        contribution=contribution,
         side="attack",
     )
     return base * ultimate_level_multiplier(hero)

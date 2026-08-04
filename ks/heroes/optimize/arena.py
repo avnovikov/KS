@@ -33,6 +33,9 @@ class ArenaResult:
     reasons: dict[str, str]
     status: str = "Optimal"
     explanations: dict[str, dict[str, Any]] | None = None
+    stat_family: str = "conquest"
+    contributions: dict[str, dict[str, Any]] | None = None
+    formation_totals: dict[str, Any] | None = None
 
     @classmethod
     def from_combat(cls, result: Any) -> ArenaResult:
@@ -46,6 +49,9 @@ class ArenaResult:
             reasons=dict(result.reasons),
             status=result.status,
             explanations=result.explanations,
+            stat_family=result.stat_family,
+            contributions=result.contributions,
+            formation_totals=result.formation_totals,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -58,6 +64,9 @@ class ArenaResult:
             "gear_assignment": self.gear_assignment,
             "reasons": dict(self.reasons),
             "status": self.status,
+            "stat_family": self.stat_family,
+            "contributions": self.contributions,
+            "formation_totals": self.formation_totals,
         }
         if self.explanations is not None:
             out["explanations"] = self.explanations
@@ -83,13 +92,13 @@ def _attach_arena_survival(
         return result
     from ks.heroes.optimize.combat_formation import hero_base_score
 
-    def _base(hero, entry, roles, *, effective_power, gear_bonus):
+    def _base(hero, entry, roles, *, effective_power, contribution):
         return hero_base_score(
             hero,
             entry,
             roles,
             effective_power=effective_power,
-            gear_bonus=gear_bonus,
+            contribution=contribution,
             side=side,
         )
 
