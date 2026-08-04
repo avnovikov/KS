@@ -153,6 +153,7 @@ class HeroStore:
         prev = self._heroes.get(hero.name)
         if prev is not None:
             hero = _merge_preserved(prev, hero, overwrite=ow)
+        hero = self._apply_legacy_assurance(hero)
         self._heroes[hero.name] = hero
         self._write_json()
         self._write_sqlite(hero)

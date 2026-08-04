@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -62,3 +64,42 @@ def test_no_assurance_hero_gets_empty_dict(tmp_path: Path):
     assert isinstance(got.assurance, dict)
     # power is present → legacy fill
     assert got.assurance["power"].reason == "legacy_unscored"
+
+
+def test_upsert_applies_legacy_assurance_before_persisting(tmp_path: Path):
+    store = HeroStore(tmp_path)
+    hero = HeroRecord(
+        name="Gordon",
+        power=262120,
+        stars=3,
+        scraped_at="t",
+        assurance={},
+    )
+
+    stored = store.upsert(hero)
+
+    assert stored.assurance["power"].reason == "legacy_unscored"
+    assert stored.assurance["power"].level == "medium"
+    assert stored.assurance["stars"].reason == "legacy_unscored"
+    assert stored.assurance["stars"].level == "medium"
+    assert "level" not in stored.assurance
+    assert "pellets" not in stored.assurance
+
+    in_memory = next(h for h in store.all_heroes() if h.name == "Gordon")
+    assert in_memory.assurance == stored.assurance
+
+    payload = json.loads((tmp_path / "heroes.json").read_text(encoding="utf-8"))
+    saved = next(h for h in payload["heroes"] if h["name"] == "Gordon")
+    assert saved["assurance"]["power"]["reason"] == "legacy_unscored"
+    assert saved["assurance"]["stars"]["reason"] == "legacy_unscored"
+    assert "level" not in saved["assurance"]
+    assert "pellets" not in saved["assurance"]
+
+    with sqlite3.connect(tmp_path / "heroes.db") as conn:
+        (assurance_json,) = conn.execute(
+            "SELECT assurance_json FROM heroes WHERE name = ?",
+            ("Gordon",),
+        ).fetchone()
+    persisted = json.loads(assurance_json)
+    assert persisted["power"]["reason"] == "legacy_unscored"
+    assert persisted["stars"]["reason"] == "legacy_unscored"
