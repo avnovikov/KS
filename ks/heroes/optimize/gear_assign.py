@@ -157,16 +157,6 @@ def set_score(
     )
 
 
-def gear_bonus_by_troop(
-    pieces: list[GearRecord],
-    *,
-    profile: str = "early_game_growth",
-) -> dict[str, float]:
-    """Linear strength nudge from best transferable set per troop class."""
-    sets = best_sets_by_troop(pieces, profile=profile)
-    return {troop: set_score(slots, profile=profile) * 0.15 for troop, slots in sets.items()}
-
-
 def assign_best_sets(
     heroes: list[HeroRecord],
     catalog: dict[str, CatalogEntry],
