@@ -47,7 +47,7 @@ StatContribution
 ```
 
 - **Conquest `stats` labels:** Hero Attack, Hero Defense, Hero Health, Escort Attack, Escort Defense, Escort Health (as available).
-- **Expedition `stats` labels:** troop Attack / Defense / Health / Lethality percents relevant to the hero’s troop (and formation rollups may sum or average by label).
+- **Expedition `stats` labels:** troop Attack / Defense / Health / Lethality percents relevant to the hero’s troop. Formation rollups **sum** matching labels across the five heroes (additive display; same as stacked gear %).
 
 ### Single module
 
