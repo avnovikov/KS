@@ -4,6 +4,7 @@ import time
 from dataclasses import replace
 from typing import Callable, TypeVar
 
+from ks.heroes.assurance import set_field
 from ks.heroes.config import HeroesConfig
 from ks.heroes.models import HeroRecord
 from ks.heroes.name_shot import rename_name_screenshot, save_name_screenshot
@@ -193,6 +194,33 @@ def _log_collected_hero(hero: HeroRecord, count: int) -> None:
     )
 
 
+def _apply_roster_ocr_assurance(
+    hero: HeroRecord,
+    *,
+    prev_assurance: dict | None = None,
+) -> HeroRecord:
+    """Mark OCR-written fields medium/roster_ocr; preserve any existing high assurance.
+
+    Starts from ``prev_assurance`` when provided so that a prior Power-i high
+    confidence on a field is not overwritten by a later roster scrape.
+    """
+    ocr_fields = [
+        ("power", hero.power),
+        ("stars", hero.stars),
+        ("level", hero.level),
+        ("pellets", hero.pellets),
+    ]
+    assurance: dict = dict(prev_assurance) if prev_assurance is not None else dict(hero.assurance)
+    for field_name, value in ocr_fields:
+        if value is None:
+            continue
+        existing = assurance.get(field_name)
+        if existing is not None and existing.level == "high":
+            continue
+        assurance = set_field(assurance, field_name, "medium", "roster_ocr")
+    return replace(hero, assurance=assurance)
+
+
 def _scan_roster_page(
     device: DeviceProtocol,
     cfg: HeroesConfig,
@@ -276,6 +304,9 @@ def _scan_roster_page(
         )
         if sanitized != hero.power:
             hero = replace(hero, power=sanitized)
+        hero = _apply_roster_ocr_assurance(
+            hero, prev_assurance=prev.assurance if prev is not None else None
+        )
         store.upsert(hero)
         # Prefer store-merged record (preserved level) for history covariates.
         stored = next(
@@ -391,6 +422,21 @@ def collect_heroes(
                 target = replace(hero, power=int(naked))
                 store.upsert(target)
                 print(f"naked power {target.name} ← {naked} (Power-i Level+Stars+Skills)")
+                assurance = set_field(dict(target.assurance), "power", "high", "power_i_agree")
+                for bucket_name, bucket_val in [
+                    ("from_level", breakdown.from_level),
+                    ("from_stars", breakdown.from_stars),
+                    ("from_skills", breakdown.from_skills),
+                    ("gear_strength", breakdown.gear_strength),
+                ]:
+                    if bucket_val is not None:
+                        assurance = set_field(assurance, bucket_name, "high", "power_i_agree")
+                target = replace(target, assurance=assurance)
+                store.upsert(target)
+            else:
+                assurance = set_field(dict(hero.assurance), "power", "low", "power_i_missing")
+                target = replace(hero, assurance=assurance)
+                store.upsert(target)
 
             try:
                 appended = record_breakdown_for_hero(history_dir, target, breakdown)
