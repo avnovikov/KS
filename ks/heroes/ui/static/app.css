@@ -1680,6 +1680,12 @@ select.stack-input {
   font-size: 0.82rem;
 }
 
+.value-summary-line {
+  margin: 0.5rem 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 /* --- reserved subtab ------------------------------------------------------ */
 
 /* Hero levels ships without a solver, so its page is a deliberate placeholder

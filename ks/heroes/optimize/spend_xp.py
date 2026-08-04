@@ -52,6 +52,7 @@ class SpendResult:
     leftover: FodderBag
     baseline_summary: dict[str, Any]
     best_summary: dict[str, Any]
+    value_summary: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,6 +64,7 @@ class SpendResult:
             "leftover": self.leftover.counts(),
             "baseline_summary": dict(self.baseline_summary),
             "best_summary": dict(self.best_summary),
+            "value_summary": self.value_summary,
         }
 
 
@@ -403,6 +405,44 @@ def _merge_same_piece_steps(
     return merged, bag
 
 
+def _value_summary(
+    raw_deltas: list[tuple[int, float]],
+    total_delta_u: float,
+    *,
+    threshold: float = 0.9,
+) -> str | None:
+    """One line: how much of the XP spent bought most of the point gain.
+
+    The greedy loop always takes the best available ΔU/XP next, so later
+    steps are progressively less efficient — this walks the steps in the
+    order they were picked, finds the shortest prefix whose cumulative ΔU
+    already reaches ``threshold`` of the total, and reports that prefix's
+    XP share against the rest. Returns None when there's nothing to spend
+    or the last step still contributes meaningfully (no "burn" tail to call
+    out).
+    """
+    if total_delta_u <= 0 or not raw_deltas:
+        return None
+    total_xp = sum(xp for xp, _ in raw_deltas)
+    target = threshold * total_delta_u
+    cum_u = 0.0
+    cum_xp = 0
+    for xp, du in raw_deltas:
+        cum_u += du
+        cum_xp += xp
+        if cum_u >= target:
+            break
+    if cum_xp >= total_xp:
+        return None
+    pct_xp = 100.0 * cum_xp / total_xp
+    pct_u = 100.0 * min(cum_u, total_delta_u) / total_delta_u
+    return (
+        f"The first {cum_xp:,} XP ({pct_xp:.0f}% of {total_xp:,} XP spent) already "
+        f"captured {pct_u:.0f}% of the {total_delta_u:.2f}-point gain — the rest "
+        "spends spare fodder for diminishing returns."
+    )
+
+
 def _candidate_label(piece: GearRecord | None, piece_id: str) -> str:
     if piece is None:
         return piece_id
@@ -454,6 +494,7 @@ def allocate_fodder_xp(
     )
 
     steps: list[SpendStep] = []
+    raw_deltas: list[tuple[int, float]] = []
     current_bag = bag
     current_u = baseline_u
     current_summary = baseline_summary
@@ -487,6 +528,7 @@ def allocate_fodder_xp(
             utility_fn=utility_fn,
         )
         steps.append(step)
+        raw_deltas.append((candidate.xp_cost, candidate.delta))
         _log(
             f"  -> chose {_candidate_label(by_id.get(candidate.piece_id), candidate.piece_id)}, "
             f"utility now {current_u:.3f} ({elapsed:.1f}s elapsed)"
@@ -512,4 +554,5 @@ def allocate_fodder_xp(
         leftover=merged_bag,
         baseline_summary=dict(baseline_summary),
         best_summary=dict(current_summary),
+        value_summary=_value_summary(raw_deltas, current_u - baseline_u),
     )

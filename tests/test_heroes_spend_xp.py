@@ -11,6 +11,7 @@ from ks.heroes.models import HeroRecord, HeroStats
 from ks.heroes.optimize.spend_xp import (
     SpendStep,
     _merge_same_piece_steps,
+    _value_summary,
     allocate_fodder_xp,
     apply_levels,
     build_event_utility,
@@ -251,6 +252,46 @@ def test_allocate_prefers_delta_u_per_xp_over_raw_delta() -> None:
     assert result.steps[0].piece_id == "cheap"
     assert result.steps[0].from_level == 7
     assert result.steps[0].to_level == 8
+
+
+def test_value_summary_reports_xp_share_that_bought_most_of_the_gain() -> None:
+    summary = _value_summary([(100, 90.0), (100, 5.0), (100, 5.0)], total_delta_u=100.0)
+    assert summary is not None
+    assert "100 XP" in summary
+    assert "33%" in summary  # 100 of 300 total XP
+    assert "300 XP" in summary
+    assert "90%" in summary  # captured share of the 100.00-point gain
+    assert "100.00-point" in summary
+
+
+def test_value_summary_is_none_when_there_is_no_gain() -> None:
+    assert _value_summary([(100, 0.0)], total_delta_u=0.0) is None
+    assert _value_summary([], total_delta_u=0.0) is None
+
+
+def test_value_summary_is_none_when_the_whole_run_is_already_efficient() -> None:
+    # A single step (or a run where the threshold prefix is the entire run)
+    # has no "burn the rest" tail to call out.
+    assert _value_summary([(100, 100.0)], total_delta_u=100.0) is None
+
+
+def test_allocate_fodder_xp_summarizes_value_captured_vs_xp_burned() -> None:
+    """Flat ΔU per level plus a real escalating-cost ladder means later levels
+    cost disproportionately more XP for the same utility — exactly the "gear
+    to burn vs necessary points" shape the summary should surface."""
+    ladder = load_xp_ladder()
+    gear = [_piece("a", level=0, rarity="blue", troop="infantry", slot="helmet")]
+
+    def utility(g):
+        levels = {p.piece_id: int(p.enhancement_level or 0) for p in g}
+        return 100.0 * levels.get("a", 0), {"levels": levels}
+
+    bag = FodderBag(part_100=200)  # plenty of fodder to reach 10 levels
+    result = allocate_fodder_xp(gear, bag, utility, event="test", max_steps=10, ladder=ladder)
+    assert result.best_utility - result.baseline_utility == 1000.0  # 10 levels x ΔU=100
+    assert result.value_summary is not None
+    assert "XP" in result.value_summary
+    assert "point gain" in result.value_summary
 
 
 _ROOT = Path(__file__).resolve().parents[1]
