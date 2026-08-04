@@ -137,12 +137,22 @@ def test_a_broken_roles_file_fails_only_its_own_sections(
         assert row["status"] == "Error"
         assert row["mode"] == "conquest"
         assert row["error"] == bundle["errors"]["conquest"]
+        # _formation_error's stat contribution keys: a genuinely errored row
+        # is the one path _section_error/_formation_error construct by hand
+        # rather than copying from a dataclass default, so it is the one
+        # place a missing key would go unnoticed by the Optimal-path tests.
+        assert row["stat_family"] == "conquest"
+        assert row["formation_totals"] is None
+        assert row["contributions"] is None
     else:
         for side in ("attack", "defense"):
             row = bundle["arena"][side]
             assert row["status"] == "Error"
             assert row["side"] == side
             assert row["error"] == bundle["errors"][f"arena_{side}"]
+            assert row["stat_family"] == "conquest"
+            assert row["formation_totals"] is None
+            assert row["contributions"] is None
 
     # Everything else still solved.
     assert intact_key not in bundle["errors"], bundle["errors"]

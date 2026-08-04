@@ -17,6 +17,7 @@ from ks.heroes.optimize.conquest import optimize_conquest
 from ks.heroes.optimize.events import load_event_profile
 from ks.heroes.optimize.recommend import recommend
 from ks.heroes.optimize.scenarios import load_scenarios
+from ks.heroes.optimize.stat_contributions import family_for_event
 from ks.heroes.optimize.troop_stats import load_troop_stats
 from ks.heroes.optimize.troops import load_troops_config
 
@@ -60,7 +61,13 @@ def _event_bundle(
                 gear=gear,
                 gear_profile=gear_profile,
             )
-            modes[mode] = result.to_dict()
+            payload = result.to_dict()
+            payload["contributions"] = {
+                row["name"]: row["contributions"]
+                for row in payload.get("heroes") or []
+                if row.get("name") and row.get("contributions")
+            } or None
+            modes[mode] = payload
         except ValueError as exc:
             mode_errors[mode] = str(exc)
     if not modes and mode_errors:
@@ -71,6 +78,7 @@ def _event_bundle(
         "label": label,
         "event": event.name,
         "status": "ok",
+        "stat_family": family_for_event(event.name),
         "modes": modes,
     }
     if mode_errors:
@@ -78,8 +86,14 @@ def _event_bundle(
     return out
 
 
-def _section_error(label: str, message: str) -> dict[str, Any]:
-    return {"label": label, "modes": {}, "status": "Error", "error": message}
+def _section_error(label: str, message: str, *, stat_family: str) -> dict[str, Any]:
+    return {
+        "label": label,
+        "modes": {},
+        "status": "Error",
+        "error": message,
+        "stat_family": stat_family,
+    }
 
 
 def _formation_error(message: str, **identity: str) -> dict[str, Any]:
@@ -97,6 +111,9 @@ def _formation_error(message: str, **identity: str) -> dict[str, Any]:
         "score": None,
         "reasons": {},
         "error": message,
+        "stat_family": "conquest",
+        "formation_totals": None,
+        "contributions": None,
     }
 
 
@@ -180,11 +197,11 @@ def run_optimize_bundle(
         )
     except _DOMAIN_ERRORS as exc:
         errors["sword"] = str(exc)
-        out["sword"] = _section_error("Swordland", str(exc))
+        out["sword"] = _section_error("Swordland", str(exc), stat_family="expedition")
     except Exception as exc:  # noqa: BLE001
         logger.exception("sword optimize failed")
         errors["sword"] = f"internal error: {exc}"
-        out["sword"] = _section_error("Swordland", errors["sword"])
+        out["sword"] = _section_error("Swordland", errors["sword"], stat_family="expedition")
 
     try:
         out["bear"] = _event_bundle(
@@ -200,11 +217,11 @@ def run_optimize_bundle(
         )
     except _DOMAIN_ERRORS as exc:
         errors["bear"] = str(exc)
-        out["bear"] = _section_error("Bear Trap", str(exc))
+        out["bear"] = _section_error("Bear Trap", str(exc), stat_family="expedition")
     except Exception as exc:  # noqa: BLE001
         logger.exception("bear optimize failed")
         errors["bear"] = f"internal error: {exc}"
-        out["bear"] = _section_error("Bear Trap", errors["bear"])
+        out["bear"] = _section_error("Bear Trap", errors["bear"], stat_family="expedition")
 
     arena: dict[str, Any] = {}
     for side in ("attack", "defense"):
