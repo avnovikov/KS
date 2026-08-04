@@ -143,6 +143,9 @@ def build_event_utility(
                 "formation": dict(result.formation),
                 "heroes": list(result.heroes),
                 "score": result.score if result.status == "Optimal" else None,
+                "stat_family": result.stat_family,
+                "formation_totals": result.formation_totals,
+                "contributions": result.contributions,
             }
 
         return _arena
@@ -197,6 +200,8 @@ def build_event_utility(
                 "mode": result.recommended_mode,
                 "heroes": [h["name"] for h in result.heroes],
                 "expected_personal_points": result.expected_personal_points,
+                "stat_family": result.stat_family,
+                "formation_totals": result.formation_totals,
             }
         results = recommend_all_modes(
             heroes,
@@ -217,6 +222,8 @@ def build_event_utility(
             "modes": {
                 m: r.expected_personal_points for m, r in results.items()
             },
+            "stat_family": best.stat_family,
+            "formation_totals": best.formation_totals,
         }
 
     return _event

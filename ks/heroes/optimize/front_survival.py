@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.combat_formation import BACK, FRONT
 from ks.heroes.optimize.gear_assign import infer_slot
 from ks.heroes.optimize.gear_stats import expedition_stat_fraction
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ks.heroes.optimize.stat_contributions import StatContribution
 
 
 @dataclass(frozen=True)
@@ -41,36 +44,77 @@ class SurvivalBreakdown:
         }
 
 
-def sanitize_power(
-    power: int | None,
-    *,
-    median_power: float,
-    max_abs: int = 2_000_000,
-    median_factor: float = 20.0,
-) -> float:
-    """Drop OCR blow-ups before naive top-N selection / ILP scoring."""
-    if power is None or power <= 0:
-        return 0.0
-    if max_abs <= 0:
-        raise ValueError(f"max_abs must be positive; got {max_abs}")
-    if median_factor <= 0:
-        raise ValueError(f"median_factor must be positive; got {median_factor}")
-    p = float(power)
-    if p > max_abs:
-        return median_power
-    if median_power > 0 and p > float(median_factor) * median_power:
-        return median_power
-    return p
-
-
-def roster_median_power(heroes: list[HeroRecord]) -> float:
-    vals = sorted(float(h.power) for h in heroes if h.power and h.power > 0)
+def _median(values: list[float]) -> float:
+    vals = sorted(values)
     if not vals:
         return 0.0
     mid = len(vals) // 2
     if len(vals) % 2:
         return vals[mid]
     return 0.5 * (vals[mid - 1] + vals[mid])
+
+
+def rarity_median_powers(
+    heroes: list[HeroRecord],
+    *,
+    max_abs: int = 2_000_000,
+) -> dict[str, float]:
+    """Median scraped power per rarity, blow-ups excluded.
+
+    Values above ``max_abs`` are dropped *before* the median is taken, so a
+    corrupt reading cannot poison the very bucket used to replace it — with
+    only two or three peers in a rarity that is a real risk, not a theoretical
+    one.
+    """
+    by_rarity: dict[str, list[float]] = {}
+    for hero in heroes:
+        if not hero.power or hero.power <= 0 or hero.power > max_abs:
+            continue
+        key = (hero.rarity or "").strip().lower()
+        if not key:
+            continue
+        by_rarity.setdefault(key, []).append(float(hero.power))
+    return {k: _median(v) for k, v in by_rarity.items() if v}
+
+
+def sanitize_power(
+    power: int | None,
+    *,
+    median_power: float,
+    rarity: str | None = None,
+    rarity_medians: dict[str, float] | None = None,
+    max_abs: int = 2_000_000,
+    median_factor: float = 20.0,
+) -> float:
+    """Drop OCR blow-ups before naive top-N selection / ILP scoring.
+
+    An outlier is replaced by the median of its **same-rarity** peers when one
+    is known — a legendary should not collapse to a roster median weighted by
+    rares — and by the roster median otherwise.
+    """
+    if power is None or power <= 0:
+        return 0.0
+    if max_abs <= 0:
+        raise ValueError(f"max_abs must be positive; got {max_abs}")
+    if median_factor <= 0:
+        raise ValueError(f"median_factor must be positive; got {median_factor}")
+
+    def _replacement() -> float:
+        peer = (rarity_medians or {}).get((rarity or "").strip().lower())
+        if peer and peer > 0:
+            return float(peer)
+        return median_power
+
+    p = float(power)
+    if p > max_abs:
+        return _replacement()
+    if median_power > 0 and p > float(median_factor) * median_power:
+        return _replacement()
+    return p
+
+
+def roster_median_power(heroes: list[HeroRecord]) -> float:
+    return _median([float(h.power) for h in heroes if h.power and h.power > 0])
 
 
 def conquest_stat(hero: HeroRecord, key: str) -> int:
@@ -97,23 +141,41 @@ def gear_health_bonus(pieces: Mapping[str, GearRecord] | None) -> float:
     return total
 
 
+def _share_total(contribution: "StatContribution", label: str) -> float:
+    share = contribution.stats.get(label)
+    return share.total if share is not None else 0.0
+
+
 def hero_tau(
     hero: HeroRecord,
     *,
+    contribution: "StatContribution | None" = None,
     gear_pieces: Mapping[str, GearRecord] | None = None,
 ) -> float:
-    hp = max(1, conquest_stat(hero, "Hero Health"))
-    defense = max(1, conquest_stat(hero, "Hero Defense"))
-    g = gear_health_bonus(gear_pieces)
-    return float(hp) * float(defense) * (1.0 + g)
+    """Toughness proxy: health × defense, with expedition gear health on top.
+
+    With a ``contribution`` the health/defense totals already carry the hero +
+    skills + gear conquest flats. The expedition health fraction from
+    chest/gloves is still applied as a multiplier because it is a percent buff
+    on a different axis, not one of those flats.
+    """
+    if contribution is not None:
+        hp = max(1.0, _share_total(contribution, "Hero Health"))
+        defense = max(1.0, _share_total(contribution, "Hero Defense"))
+    else:
+        hp = float(max(1, conquest_stat(hero, "Hero Health")))
+        defense = float(max(1, conquest_stat(hero, "Hero Defense")))
+    return hp * defense * (1.0 + gear_health_bonus(gear_pieces))
 
 
 def formation_tau(
     formation: Mapping[str, str],
     heroes_by_name: Mapping[str, HeroRecord],
     gear_by_hero: Mapping[str, Mapping[str, GearRecord]] | None = None,
+    contributions: Mapping[str, "StatContribution"] | None = None,
 ) -> tuple[float, float, dict[str, float]]:
     gear_by_hero = gear_by_hero or {}
+    contributions = contributions or {}
     by_hero: dict[str, float] = {}
     tau_f = 0.0
     tau_b = 0.0
@@ -123,7 +185,11 @@ def formation_tau(
             raise ValueError(
                 f"formation references unknown hero {name!r} in slot {slot!r}"
             )
-        tau = hero_tau(hero, gear_pieces=gear_by_hero.get(name))
+        tau = hero_tau(
+            hero,
+            contribution=contributions.get(name),
+            gear_pieces=gear_by_hero.get(name),
+        )
         by_hero[name] = tau
         if slot in FRONT:
             tau_f += tau

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ks.heroes.gear_models import GearRecord
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.bear_damage import (
     BeartrapBuffs,
     greedy_fill_march,
 )
 from ks.heroes.optimize.scoring import hero_strength, max_power_by_troop, normalize_troop
+from ks.heroes.optimize.stat_contributions import EXPEDITION, hero_contribution
 from ks.heroes.optimize.troop_stats import TroopStatsTable, inventory_combat_weights
 from ks.heroes.optimize.types import (
     CatalogEntry,
@@ -127,21 +129,29 @@ def _compute_hero_features(
     catalog: dict[str, CatalogEntry],
     scenario: Scenario,
     event: EventProfile | None,
-    gear_bonus_by_troop: dict[str, float] | None,
+    gear_by_troop: dict[str, dict[str, GearRecord]] | None,
 ) -> _HeroFeatures:
-    troop_of = {h.name: (normalize_troop(catalog[h.name].troop) or "") for h in usable}
-    # Gear is fungible within troop class: score power using best geared hero
-    # of that class (widgets / skills / stars stay on the selected hero).
+    troop_of = {
+        h.name: (normalize_troop(catalog[h.name].troop) or "") for h in usable
+    }
+    # Gear is fungible within a troop class: score power using the best geared
+    # hero of that class (widgets / skills / stars stay on the selected hero).
     class_power = max_power_by_troop(usable, catalog)
-    gear_bonus = gear_bonus_by_troop or {}
+    gear = gear_by_troop or {}
     strengths = {
         h.name: hero_strength(
             h,
             catalog[h.name],
             scenario.mode,
             event=event,
-            effective_power=class_power.get(troop_of[h.name], h.power),
-            gear_bonus=float(gear_bonus.get(troop_of[h.name], 0.0)),
+            contribution=hero_contribution(
+                h,
+                catalog[h.name],
+                family=EXPEDITION,
+                gear_pieces=gear.get(troop_of[h.name]),
+                power=class_power.get(troop_of[h.name], h.power),
+                catalog=catalog,
+            ),
         )
         for h in usable
     }
@@ -360,7 +370,7 @@ def solve_mode(
     troop_stats: TroopStatsTable | None = None,
     truegold: int = 0,
     one_per_troop_type: bool = True,
-    gear_bonus_by_troop: dict[str, float] | None = None,
+    gear_by_troop: dict[str, dict[str, GearRecord]] | None = None,
     beartrap_buffs: BeartrapBuffs | None = None,
 ) -> ModeSolution:
     usable = _select_usable_heroes(heroes, catalog)
@@ -368,7 +378,7 @@ def solve_mode(
         return _infeasible_solution(scenario, troops)
 
     bear_mode = _use_bear_damage(event, scenario.mode) and troop_stats is not None
-    features = _compute_hero_features(usable, catalog, scenario, event, gear_bonus_by_troop)
+    features = _compute_hero_features(usable, catalog, scenario, event, gear_by_troop)
     variables = _build_ilp_variables(
         usable,
         troops,
