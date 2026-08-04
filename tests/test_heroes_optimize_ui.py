@@ -327,6 +327,117 @@ def test_optimize_api_includes_gear_assignment_with_icons(tmp_path: Path) -> Non
     assert attack.get("gear_assignment")
 
 
+from ks.heroes.gear_models import GearRecord, GearStats
+from ks.heroes.models import HeroStats
+from ks.heroes.ui.optimize_run import run_optimize_bundle
+
+_SHARE_KEYS = {"hero", "skills", "gear", "total"}
+
+
+def _contrib_heroes() -> list[HeroRecord]:
+    rows = [
+        ("Helga", "infantry", "legendary", 3, 500_000),
+        ("Howard", "infantry", "epic", 3, 390_000),
+        ("Jabel", "cavalry", "legendary", 4, 650_000),
+        ("Chenko", "cavalry", "epic", 3, 400_000),
+        ("Saul", "archer", "legendary", 2, 250_000),
+        ("Diana", "archer", "epic", 3, 450_000),
+        ("Gordon", "cavalry", "epic", 2, 230_000),
+    ]
+    return [
+        HeroRecord(
+            name=name, troop_type=troop, rarity=rarity, stars=stars, pellets=0,
+            power=power, escorts=5, roster_page=0, roster_index=i, scraped_at="t",
+            stats=HeroStats(
+                conquest={
+                    "Hero Attack": power // 300,
+                    "Hero Defense": power // 350,
+                    "Hero Health": power // 40,
+                    "Escort Attack": power // 900,
+                    "Escort Defense": power // 1050,
+                    "Escort Health": power // 120,
+                }
+            ),
+        )
+        for i, (name, troop, rarity, stars, power) in enumerate(rows)
+    ]
+
+
+def _contrib_gear() -> list[GearRecord]:
+    prefix = {"infantry": "Infantry", "cavalry": "Cavalry", "archers": "Archer"}
+    out: list[GearRecord] = []
+    for troop in ("infantry", "cavalry", "archers"):
+        for slot in ("helmet", "chest", "gloves", "boots"):
+            stat = "Lethality" if slot in ("helmet", "boots") else "Health"
+            out.append(
+                GearRecord(
+                    piece_id=f"{troop}-{slot}", name=f"{troop} {slot}",
+                    troop_type=troop, slot=slot, rarity="mythic",
+                    enhancement_level=40, power=60_000,
+                    stats=GearStats(
+                        conquest={"Hero Attack": 300, "Hero Health": 1500},
+                        expedition={f"{prefix[troop]} {stat}": 32.0},
+                    ),
+                )
+            )
+    return out
+
+
+def _assert_contribution(payload: dict) -> None:
+    assert payload["family"] in {"conquest", "expedition"}
+    assert payload["estimated"] is True
+    assert set(payload["power"]) == _SHARE_KEYS
+    assert payload["power"]["total"] == pytest.approx(
+        payload["power"]["hero"] + payload["power"]["skills"] + payload["power"]["gear"]
+    )
+    for share in payload["stats"].values():
+        assert set(share) == _SHARE_KEYS
+        assert share["hero"] >= 0
+        assert share["skills"] >= 0
+        assert share["gear"] >= 0
+        assert share["total"] == pytest.approx(
+            share["hero"] + share["skills"] + share["gear"]
+        )
+
+
+def test_bundle_event_sections_carry_expedition_contributions() -> None:
+    bundle = run_optimize_bundle(
+        _contrib_heroes(), gear=_contrib_gear(), config_root=ROOT
+    )
+    for section in ("sword", "bear"):
+        assert bundle[section]["stat_family"] == "expedition"
+        for row in bundle[section]["modes"].values():
+            assert row["stat_family"] == "expedition"
+            _assert_contribution(row["formation_totals"])
+            assert row["contributions"]
+            for contrib in row["contributions"].values():
+                _assert_contribution(contrib)
+
+
+def test_bundle_combat_sections_carry_conquest_contributions() -> None:
+    bundle = run_optimize_bundle(
+        _contrib_heroes(), gear=_contrib_gear(), config_root=ROOT
+    )
+    for row in (bundle["arena"]["attack"], bundle["arena"]["defense"], bundle["conquest"]):
+        if row.get("status") != "Optimal":
+            continue
+        assert row["stat_family"] == "conquest"
+        _assert_contribution(row["formation_totals"])
+        for contrib in row["contributions"].values():
+            _assert_contribution(contrib)
+
+
+def test_error_rows_still_declare_stat_family() -> None:
+    # An empty roster makes every section infeasible; the shape must still hold.
+    bundle = run_optimize_bundle([], gear=None, config_root=ROOT)
+    for row in (bundle["arena"]["attack"], bundle["arena"]["defense"], bundle["conquest"]):
+        assert row["stat_family"] == "conquest"
+        assert row["formation_totals"] is None
+        assert row["contributions"] is None
+    for section in ("sword", "bear"):
+        assert bundle[section]["stat_family"] == "expedition"
+
+
 def test_optimize_requires_heroes(tmp_path: Path) -> None:
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
