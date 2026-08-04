@@ -96,7 +96,9 @@ def slot_utilities(
     side: str,
     base_score_fn: BaseScoreFn,
     power_by_name: dict[str, int | None] | None = None,
+    gear_bonus_by_hero: dict[str, float] | None = None,
 ) -> tuple[float, float, dict[str, float]]:
+    gear_bonus_by_hero = gear_bonus_by_hero or {}
     u_front = 0.0
     u_back = 0.0
     per: dict[str, float] = {}
@@ -118,7 +120,7 @@ def slot_utilities(
             entry,
             roles,
             effective_power=power,
-            gear_bonus=0.0,
+            gear_bonus=float(gear_bonus_by_hero.get(name, 0.0)),
         )
         contrib = base * placement_mult(troop, slot, name, roles, side=side)
         per[name] = contrib
@@ -168,9 +170,15 @@ def evaluate_vs_foe(
     lambda_tau: float = 5.0,
     O_scale: float = 1.0,
     power_by_name: dict[str, int | None] | None = None,
+    gear_profile: str = "early_game_combat",
 ) -> dict[str, Any]:
     by_name = {h.name: h for h in heroes}
     tau_f, tau_b, tau_by = formation_tau(formation, by_name, our_gear)
+    from ks.heroes.optimize.combat_formation import gear_bonus_from_assignment
+
+    our_gear_bonus = (
+        gear_bonus_from_assignment(our_gear, profile=gear_profile) if our_gear else {}
+    )
     u_front, u_back, _ = slot_utilities(
         formation,
         by_name,
@@ -179,6 +187,7 @@ def evaluate_vs_foe(
         side=side,
         base_score_fn=base_score_fn,
         power_by_name=power_by_name,
+        gear_bonus_by_hero=our_gear_bonus,
     )
     breakdown = survival_score(
         tau_F=tau_f,
@@ -233,6 +242,7 @@ def build_self_play_foes(
                     gear=gear,
                     gear_profile=gear_profile,
                     side=place_side,
+                    base_score_fn=score_fn,
                 )
             )
         elif name == "troop_balanced_naive":
@@ -244,6 +254,7 @@ def build_self_play_foes(
                     gear=gear,
                     gear_profile=gear_profile,
                     side=place_side,
+                    base_score_fn=score_fn,
                 )
             )
         elif name == "heuristic_foe":
@@ -284,6 +295,7 @@ def build_self_play_foes(
                     gear_profile=gear_profile,
                     gear_assignment=gear_asg,
                     side=place_side,
+                    base_score_fn=score_fn,
                 )
             )
         else:
@@ -311,10 +323,12 @@ def attach_survival(
     if survival_cfg.get("enabled", True) is False:
         return result
 
-    power_by_name = sanitize_hero_powers(heroes, roles=roles)
+    # Match ILP cohort: catalog-usable heroes only (Bugbot median mismatch).
+    usable = [h for h in heroes if h.name in catalog]
+    power_by_name = sanitize_hero_powers(usable, roles=roles)
     our_gear = gear_maps_for_formation(
         result.formation,
-        heroes,
+        usable,
         catalog,
         gear,
         profile=gear_profile,
@@ -328,7 +342,7 @@ def attach_survival(
     lambda_tau = float(survival_cfg.get("lambda_tau", 5.0))
 
     foes = build_self_play_foes(
-        heroes,
+        usable,
         catalog,
         roles,
         gear=gear,
@@ -340,7 +354,7 @@ def attach_survival(
         gear_order=gear_order,
     )
     o_scale = roster_pressure_scale(
-        heroes,
+        usable,
         catalog,
         roles,
         base_score_fn=base_score_fn,
@@ -351,7 +365,7 @@ def attach_survival(
     for foe in foes:
         block = evaluate_vs_foe(
             result.formation,
-            heroes,
+            usable,
             catalog,
             roles,
             foe,
@@ -361,22 +375,29 @@ def attach_survival(
             lambda_tau=lambda_tau,
             O_scale=o_scale,
             power_by_name=power_by_name,
+            gear_profile=gear_profile,
         )
         foe_blocks[foe.model] = block
         if foe.model == primary:
             score_eff_primary = block["score_eff"]
 
+    from ks.heroes.optimize.combat_formation import gear_bonus_from_assignment
+
+    our_gear_bonus = (
+        gear_bonus_from_assignment(our_gear, profile=gear_profile) if our_gear else {}
+    )
     tau_f, tau_b, tau_by = formation_tau(
-        result.formation, {h.name: h for h in heroes}, our_gear
+        result.formation, {h.name: h for h in usable}, our_gear
     )
     u_front, u_back, _ = slot_utilities(
         result.formation,
-        {h.name: h for h in heroes},
+        {h.name: h for h in usable},
         catalog,
         roles,
         side=side,
         base_score_fn=base_score_fn,
         power_by_name=power_by_name,
+        gear_bonus_by_hero=our_gear_bonus,
     )
     sensitivity = None
     primary_foe_obj = next((f for f in foes if f.model == primary), None)
@@ -385,7 +406,7 @@ def attach_survival(
 
         sensitivity = build_sensitivity(
             result.formation,
-            heroes,
+            usable,
             catalog,
             roles,
             primary_foe_obj,

@@ -140,6 +140,7 @@ def build_sensitivity(
             lambda_tau=lambda_tau,
             O_scale=O_scale,
             power_by_name=power_by_name,
+            gear_profile=gear_profile,
         )
         score_eff = float(block["score_eff"])
         s_val = float(block["s"])

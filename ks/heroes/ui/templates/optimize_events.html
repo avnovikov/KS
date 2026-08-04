@@ -447,9 +447,13 @@
         .join("");
       const wrapClass = compact ? "surv" : "surv surv-modal";
       const title = compact ? "" : "<h3>Front survival vs self-play</h3>";
+      const err = surv.error
+        ? `<p class="surv-error" role="alert">${esc(surv.error)}</p>`
+        : "";
       return (
         `<div class="${wrapClass}">` +
         title +
+        err +
         `<div class="surv-score">score_eff ${esc(fmtScore(surv.score_eff))} · s ${esc(fmtS((foes[primary] || {}).s))} · ILP ${esc(fmtScore(surv.ilp_score))}</div>` +
         (foeRows
           ? `<table><thead><tr><th>Foe</th><th>Front</th><th>s</th><th>eff</th></tr></thead><tbody>${foeRows}</tbody></table>`

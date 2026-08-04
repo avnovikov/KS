@@ -144,17 +144,17 @@ def _gear_bonus_map(
     *,
     profile: str,
 ) -> dict[str, float]:
-    """Provisional ILP-style gear bonuses from the foe's assigned pieces."""
-    from ks.heroes.optimize.combat_formation import _provisional_gear_bonus
+    """ILP-style gear bonuses from the foe's *already assigned* pieces.
 
-    # Prefer bonuses implied by the exclusive assignment when present: reuse
-    # the same provisional scorer on the selected heroes (pool-level estimate).
+    Must not flatten pieces back into a pool and re-assign by roster power —
+    that clobbers explicit exclusive assignments (Bugbot high).
+    """
+    del heroes, catalog  # assignment is authoritative; keep signature stable
+    from ks.heroes.optimize.combat_formation import gear_bonus_from_assignment
+
     selected = [formation[s] for s in ALL_SLOTS if s in formation]
-    usable = [h for h in heroes if h.name in selected]
-    flat_pieces: list[GearRecord] = []
-    for name in selected:
-        flat_pieces.extend(gear_asg.get(name, {}).values())
-    return _provisional_gear_bonus(usable, catalog, flat_pieces or None, profile)
+    scoped = {name: gear_asg.get(name, {}) for name in selected}
+    return gear_bonus_from_assignment(scoped, profile=profile)
 
 
 def _heuristic_offense(
@@ -166,9 +166,20 @@ def _heuristic_offense(
     gear_bonus_by_hero: dict[str, float] | None = None,
     power_by_name: dict[str, float] | None = None,
     side: str = "attack",
+    base_score_fn: Callable[..., float] | None = None,
 ) -> float:
     gear_bonus_by_hero = gear_bonus_by_hero or {}
     power_by_name = power_by_name or {}
+    score_fn = base_score_fn or (
+        lambda h, entry, roles, *, effective_power, gear_bonus: hero_base_score(
+            h,
+            entry,
+            roles,
+            effective_power=effective_power,
+            gear_bonus=gear_bonus,
+            side=side,
+        )
+    )
     total = 0.0
     for slot, name in formation.items():
         hero = heroes_by_name[name]
@@ -177,13 +188,12 @@ def _heuristic_offense(
         eff_power = power_by_name.get(name)
         if eff_power is None:
             eff_power = float(hero.power) if hero.power else 0.0
-        base = hero_base_score(
+        base = score_fn(
             hero,
             entry,
             roles,
             effective_power=int(round(eff_power)) if eff_power else hero.power,
             gear_bonus=float(gear_bonus_by_hero.get(name, 0.0)),
-            side=side,
         )
         total += base * placement_mult(troop, slot, name, roles, side=side)
     return float(total)
@@ -215,6 +225,7 @@ def build_naive_max_power(
     gear_profile: str = "early_game_combat",
     n: int = 5,
     side: str = "attack",
+    base_score_fn: Callable[..., float] | None = None,
 ) -> OpponentLineup:
     if n != 5:
         raise ValueError(f"opponent size must be 5; got {n}")
@@ -241,6 +252,7 @@ def build_naive_max_power(
         gear_bonus_by_hero=gear_bonus,
         power_by_name=power_map,
         side=side,
+        base_score_fn=base_score_fn,
     )
     ordered = tuple(formation[s] for s in ALL_SLOTS)
     return OpponentLineup(
@@ -260,6 +272,7 @@ def build_troop_balanced_naive(
     gear: list[GearRecord] | None = None,
     gear_profile: str = "early_game_combat",
     side: str = "attack",
+    base_score_fn: Callable[..., float] | None = None,
 ) -> OpponentLineup:
     usable = [h for h in heroes if h.name in catalog]
     if len(usable) < 5:
@@ -307,6 +320,7 @@ def build_troop_balanced_naive(
         gear_bonus_by_hero=gear_bonus,
         power_by_name=power_map,
         side=side,
+        base_score_fn=base_score_fn,
     )
     ordered = tuple(formation[s] for s in ALL_SLOTS)
     return OpponentLineup(
@@ -329,6 +343,7 @@ def opponent_from_formation(
     gear_profile: str = "early_game_combat",
     gear_assignment: dict[str, dict[str, GearRecord]] | None = None,
     side: str = "attack",
+    base_score_fn: Callable[..., float] | None = None,
 ) -> OpponentLineup:
     by_name = {h.name: h for h in heroes if h.name in catalog}
     gear_asg = gear_assignment or _assign_gear(
@@ -346,6 +361,7 @@ def opponent_from_formation(
         gear_bonus_by_hero=gear_bonus,
         power_by_name=power_map,
         side=side,
+        base_score_fn=base_score_fn,
     )
     ordered = tuple(formation[s] for s in ALL_SLOTS if s in formation)
     return OpponentLineup(
