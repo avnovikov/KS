@@ -14,7 +14,7 @@ from ks.heroes.optimize.stat_contributions import (
     formation_contribution,
     hero_contribution,
 )
-from ks.heroes.optimize.types import CatalogEntry, EffectTag
+from ks.heroes.optimize.types import CatalogEntry
 
 
 def _hero(**kw) -> HeroRecord:
@@ -99,24 +99,60 @@ def test_expedition_labels_use_singular_archer_prefix() -> None:
 
 
 def test_conquest_split_backs_skills_out_of_naked_value() -> None:
+    # No catalog needed: the conquest split trusts _CONQUEST_KIND_LABELS's
+    # own key set for which skill kinds count, not skill_effects.kind_family
+    # (which would default "attack_up" to EXPEDITION absent a catalog
+    # override — an override no real hero's catalog entry ever provides;
+    # see test_conquest_split_counts_defense_up_without_a_catalog_override).
     hero = _hero()
-    # skill_effects.kind_family defaults "attack_up" to EXPEDITION when no
-    # catalog says otherwise (see test_heroes_skill_effects.py); tag it
-    # "conquest" here via the catalog override so this hero's scraped 16%
-    # Attack Up counts toward the conquest split under test.
-    entry = CatalogEntry(
-        name="Forrest",
-        troop="infantry",
-        effects=(EffectTag("attack_up", 16.0, CONQUEST),),
-    )
-    catalog = {"Forrest": entry}
-    c = hero_contribution(hero, entry, family=CONQUEST, catalog=catalog)
+    c = hero_contribution(hero, None, family=CONQUEST)
     attack = c.stats["Hero Attack"]
     # 16% attack skills → skills share is naked * 0.16 / 1.16.
     assert attack.skills == pytest.approx(1297 * 0.16 / 1.16)
     assert attack.hero == pytest.approx(1297 - attack.skills)
     assert attack.gear == 0.0
     assert attack.total == pytest.approx(1297.0)
+
+
+def test_conquest_split_counts_defense_up_without_a_catalog_override() -> None:
+    """config/hero_catalog.yaml never tags defense_up/health_up/
+    damage_taken_down/opp_damage_down as conquest for any hero — every
+    occurrence is "expedition" — so kind_family's catalog lookup can never
+    actually let these kinds through family_percents(family=CONQUEST). A
+    Defense Up skill has to count toward the conquest split on its own
+    merits (stat_contributions.py's own _CONQUEST_KIND_LABELS already maps
+    it to Hero/Escort Defense), not only when some catalog entry happens to
+    override it — which in practice never happens."""
+    hero = _hero()  # default skills include "Defense Up: 25%/50%" -> 50.0
+    c = hero_contribution(hero, None, family=CONQUEST)
+    defense = c.stats["Hero Defense"]
+    assert defense.skills == pytest.approx(1324 * 0.50 / 1.50)
+    assert defense.hero == pytest.approx(1324 - defense.skills)
+    escort_defense = c.stats["Escort Defense"]
+    assert escort_defense.skills == pytest.approx(441 * 0.50 / 1.50)
+
+
+def test_conquest_split_counts_health_and_damage_taken_skills_without_a_catalog_override() -> None:
+    hero = _hero(
+        skills=(
+            SkillRecord(slot=0, upgrade_preview="Health Up: 10%/20%", current_bonus=20.0),
+            SkillRecord(
+                slot=1, upgrade_preview="Damage Taken Down: 10%/20%", current_bonus=20.0
+            ),
+            SkillRecord(
+                slot=2,
+                upgrade_preview="Enemy Troops Attack Down: 10%/20%",
+                current_bonus=20.0,
+            ),
+        )
+    )
+    c = hero_contribution(hero, None, family=CONQUEST)
+    health = c.stats["Hero Health"]
+    assert health.skills == pytest.approx(11889 * 0.20 / 1.20)
+    # damage_taken_down (20%) and opp_damage_down (20%) both lift Hero/Escort
+    # Defense — combined percent is 40%, not 20%.
+    defense = c.stats["Hero Defense"]
+    assert defense.skills == pytest.approx(1324 * 0.40 / 1.40)
 
 
 def test_conquest_split_adds_gear_flats_on_top() -> None:
