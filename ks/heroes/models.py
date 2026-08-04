@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from ks.heroes.assurance import FieldAssurance, assurance_from_dict, assurance_to_dict
+
 
 @dataclass(frozen=True)
 class HeroStats:
@@ -83,6 +85,7 @@ class HeroRecord:
     roster_index: int = 0
     scraped_at: str = ""
     name_screenshot: str | None = None
+    assurance: dict[str, FieldAssurance] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -100,6 +103,7 @@ class HeroRecord:
             "roster_index": self.roster_index,
             "scraped_at": self.scraped_at,
             "name_screenshot": self.name_screenshot,
+            "assurance": assurance_to_dict(self.assurance),
         }
 
     @classmethod
@@ -120,4 +124,5 @@ class HeroRecord:
             roster_index=int(data.get("roster_index") or 0),
             scraped_at=str(data.get("scraped_at") or ""),
             name_screenshot=data.get("name_screenshot"),
+            assurance=assurance_from_dict(data.get("assurance") or {}),
         )

@@ -34,6 +34,7 @@ from collections import Counter
 from typing import Callable, TypeVar
 
 from ks.heroes.gear_models import GearRecord
+from ks.heroes.assurance import has_low
 from ks.heroes.models import HeroRecord
 from ks.heroes.ui.power import normalize_rarity
 
@@ -117,7 +118,11 @@ def hero_row_incomplete(hero: HeroRecord) -> bool:
     reason: `/inventory/heroes` marks these rows on every render, not only
     after a rescan.
     """
-    return hero.stars is None or hero.power is None
+    if hero.stars is None or hero.power is None:
+        return True
+    if getattr(hero, "power_attention", None):
+        return True
+    return has_low(hero.assurance, ("power", "stars", "level", "pellets"))
 
 
 def _hero_signature(hero: HeroRecord) -> tuple[object, ...]:
