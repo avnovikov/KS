@@ -126,3 +126,9 @@ def test_family_percents_falls_back_to_catalog_when_scrape_empty() -> None:
     percents, incomplete = family_percents(hero, entry, family=EXPEDITION)
     assert percents["attack_up"] == pytest.approx(25.0)
     assert incomplete is True
+
+
+def test_kind_family_returns_none_for_widget_only_defender_kinds() -> None:
+    for kind in ("defender_attack", "defender_defense", "defender_health"):
+        assert kind_family(kind) is None
+        assert kind_family(kind, {}) is None

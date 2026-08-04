@@ -51,9 +51,6 @@ _DEFAULT_KIND_FAMILY: dict[str, str] = {
     "heal_up": CONQUEST,
     "attack_speed_up": CONQUEST,
     "crit_rate_up": CONQUEST,
-    "defender_attack": CONQUEST,
-    "defender_defense": CONQUEST,
-    "defender_health": CONQUEST,
 }
 
 _WIDGET = "widget"
