@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ks.heroes.gear_models import GearRecord, GearStats
-from ks.heroes.models import HeroRecord, SkillRecord
+from ks.heroes.models import HeroRecord, HeroStats, SkillRecord
 from ks.heroes.optimize.combat_formation import (
     _provisional_contributions,
     contributions_from_assignment,
@@ -14,7 +14,9 @@ from ks.heroes.optimize.opponent_models import (
     _heuristic_offense,
     opponent_from_formation,
 )
+from ks.heroes.optimize.stat_contributions import CONQUEST, hero_contribution
 from ks.heroes.optimize.survival_pipeline import (
+    roster_pressure_scale,
     sanitize_hero_powers,
     slot_utilities,
 )
@@ -227,3 +229,56 @@ def test_opponent_from_formation_keeps_explicit_assignment_bonus() -> None:
         gear_assignment={n: {} for n in "ABCDE"},
     )
     assert foe.heuristic_offense > empty.heuristic_offense
+
+
+def test_roster_pressure_scale_needs_contributions_for_the_whole_roster() -> None:
+    """Final-review finding: attach_survival passed roster_pressure_scale a
+    contributions dict scoped to only the 5 placed heroes. Every other
+    catalog-usable hero then scored with contribution=None — the legacy
+    power/1e6-only branch of base_score_fn and the raw-scrape branch of
+    hero_tau — mixed into the same median as the 5 contribution-scored
+    heroes. Passing a contribution for every roster member (even bare,
+    gear-free ones, as the fix does) must change the resulting scale."""
+
+    def _statted(name: str, power: int) -> HeroRecord:
+        return HeroRecord(
+            name=name,
+            power=power,
+            troop_type="infantry",
+            stats=HeroStats(
+                conquest={
+                    "Hero Attack": 2000,
+                    "Hero Defense": 1500,
+                    "Hero Health": 20000,
+                }
+            ),
+        )
+
+    heroes = [_statted(n, 200_000 + 10_000 * i) for i, n in enumerate("ABCDEFG")]
+    catalog = {h.name: _cat(h.name) for h in heroes}
+    roles: dict = {"heroes": {}, "placement": {}, "slots": {}}
+
+    formation_only = {
+        h.name: hero_contribution(h, catalog[h.name], family=CONQUEST)
+        for h in heroes[:5]
+    }
+    whole_roster = {
+        h.name: hero_contribution(h, catalog[h.name], family=CONQUEST)
+        for h in heroes
+    }
+
+    partial_scale = roster_pressure_scale(
+        heroes,
+        catalog,
+        roles,
+        base_score_fn=_conquest_base_score,
+        contributions=formation_only,
+    )
+    full_scale = roster_pressure_scale(
+        heroes,
+        catalog,
+        roles,
+        base_score_fn=_conquest_base_score,
+        contributions=whole_roster,
+    )
+    assert partial_scale != full_scale

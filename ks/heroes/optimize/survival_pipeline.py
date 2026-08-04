@@ -33,7 +33,11 @@ from ks.heroes.optimize.opponent_models import (
     opponent_from_formation,
 )
 from ks.heroes.optimize.scoring import normalize_troop
-from ks.heroes.optimize.stat_contributions import CONQUEST, StatContribution
+from ks.heroes.optimize.stat_contributions import (
+    CONQUEST,
+    StatContribution,
+    hero_contribution,
+)
 from ks.heroes.optimize.types import CatalogEntry
 
 BaseScoreFn = Callable[..., float]
@@ -349,6 +353,23 @@ def attach_survival(
         power_by_name=power_by_name,
         family=CONQUEST,
     )
+    # roster_pressure_scale medians over the whole catalog-usable roster, not
+    # just the 5 placed heroes — every sample must share one contribution
+    # basis, or the median silently straddles gear-bearing and bare heroes
+    # and biases O_scale. Non-formation heroes hold no assigned gear, so this
+    # is the same contribution each would get if `our_gear` had an (empty)
+    # entry for them.
+    roster_contributions = {
+        h.name: hero_contribution(
+            h,
+            catalog.get(h.name),
+            family=CONQUEST,
+            gear_pieces=our_gear.get(h.name),
+            power=power_by_name.get(h.name, h.power),
+            catalog=catalog,
+        )
+        for h in usable
+    }
     foe_names = list(
         survival_cfg.get("foes")
         or ["naive_max_power", "troop_balanced_naive", "heuristic_foe"]
@@ -374,7 +395,7 @@ def attach_survival(
         roles,
         base_score_fn=base_score_fn,
         power_by_name=power_by_name,
-        contributions=our_contributions,
+        contributions=roster_contributions,
     )
     foe_blocks: dict[str, Any] = {}
     score_eff_primary = None
