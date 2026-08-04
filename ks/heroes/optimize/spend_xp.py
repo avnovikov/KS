@@ -338,41 +338,50 @@ def _apply_upgrade_step(
     return new_bag, new_u, new_summary, step
 
 
-def _merge_consecutive_runs(
+def _merge_same_piece_steps(
     steps: list[SpendStep],
     final_bag: FodderBag,
     values: dict[str, int],
 ) -> tuple[list[SpendStep], FodderBag]:
-    """Collapse consecutive +1 levels on the same piece into one step.
+    """Collapse every level gained on the same piece into one step.
 
     The greedy loop covers each level's cost independently as it goes, so a
-    piece that stays the best pick for several levels in a row can pay for
-    each one with whatever's cheapest *at that moment* — e.g. a 55 XP level
-    and a 65 XP level each rounding up to their own 100-XP part when nothing
-    smaller is left, spending 200 XP of fodder for 120 XP of real cost. This
-    does not change which piece or level gets picked (that decision, and the
-    bag's affordability check at each step, are untouched) — it only
-    re-covers a run's *combined* real cost in one min-waste plan, refunding
-    the run's naive fodder into the bag first so the replan sees everything
-    that was actually available before the run started.
+    piece that stays a top (but not always *the* top) pick can pay for each
+    level with whatever's cheapest *at that moment* — e.g. a 55 XP level and
+    a 65 XP level each rounding up to their own 100-XP part when nothing
+    smaller is left, spending 200 XP of fodder for 120 XP of real cost. Worse,
+    the loop routinely ping-pongs between two or three near-tied pieces one
+    level at a time, so the same piece's own levels are rarely even adjacent
+    in the raw step list — nine raw rows for three pieces reads as far more
+    "still working" than three pieces actually is.
+
+    This groups every step for a piece — wherever it falls in the sequence —
+    in the order that piece was FIRST picked, and re-covers its whole net
+    level gain in one min-waste plan. It does not change which piece or
+    level gets picked, or the bag's affordability check at each step; it
+    only refunds a piece's naive fodder into the bag before replanning its
+    combined cost, exactly as a single contiguous run already did.
     """
+    order: list[str] = []
+    by_piece: dict[str, list[SpendStep]] = {}
+    for step in steps:
+        if step.piece_id not in by_piece:
+            order.append(step.piece_id)
+            by_piece[step.piece_id] = []
+        by_piece[step.piece_id].append(step)
+
     merged: list[SpendStep] = []
     bag = final_bag
-    i = 0
-    while i < len(steps):
-        j = i
-        run_xp = 0
-        run_fodder: dict[str, int] = {}
-        while j < len(steps) and steps[j].piece_id == steps[i].piece_id:
-            run_xp += steps[j].xp_spent
-            for kind, n in steps[j].fodder_spent.items():
-                run_fodder[kind] = run_fodder.get(kind, 0) + n
-            j += 1
-        run = steps[i:j]
+    for piece_id in order:
+        run = by_piece[piece_id]
         if len(run) == 1:
             merged.append(run[0])
-            i = j
             continue
+        run_xp = sum(s.xp_spent for s in run)
+        run_fodder: dict[str, int] = {}
+        for s in run:
+            for kind, n in s.fodder_spent.items():
+                run_fodder[kind] = run_fodder.get(kind, 0) + n
         refunded = bag
         for kind, n in run_fodder.items():
             refunded = replace(refunded, **{kind: getattr(refunded, kind) + n})
@@ -383,7 +392,7 @@ def _merge_consecutive_runs(
         bag = refunded.consume(new_plan)
         merged.append(
             SpendStep(
-                piece_id=run[0].piece_id,
+                piece_id=piece_id,
                 name=run[0].name,
                 from_level=run[0].from_level,
                 to_level=run[-1].to_level,
@@ -391,7 +400,6 @@ def _merge_consecutive_runs(
                 fodder_spent=new_plan,
             )
         )
-        i = j
     return merged, bag
 
 
@@ -484,11 +492,11 @@ def allocate_fodder_xp(
             f"utility now {current_u:.3f} ({elapsed:.1f}s elapsed)"
         )
 
-    merged_steps, merged_bag = _merge_consecutive_runs(steps, current_bag, values)
+    merged_steps, merged_bag = _merge_same_piece_steps(steps, current_bag, values)
     if len(merged_steps) != len(steps):
         _log(
             f"merged {len(steps)} step(s) into {len(merged_steps)} "
-            "(consecutive levels on the same piece, re-covered as one combined spend)"
+            "(same-piece levels re-covered as one combined spend each)"
         )
 
     _log(

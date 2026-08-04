@@ -10,7 +10,7 @@ from ks.heroes.gear_models import GearRecord
 from ks.heroes.models import HeroRecord, HeroStats
 from ks.heroes.optimize.spend_xp import (
     SpendStep,
-    _merge_consecutive_runs,
+    _merge_same_piece_steps,
     allocate_fodder_xp,
     apply_levels,
     build_event_utility,
@@ -119,7 +119,7 @@ def test_allocate_respects_cap() -> None:
     assert int(final[0].enhancement_level or 0) <= 80
 
 
-def test_merge_consecutive_runs_recombines_fodder_for_less_waste() -> None:
+def test_merge_same_piece_steps_recombines_fodder_for_less_waste() -> None:
     """Two levels on the same piece, each independently forced to round up
     to a whole 100-XP part because nothing smaller was available *at that
     step*, can waste more overall (200 XP of fodder for 120 XP of real
@@ -138,7 +138,7 @@ def test_merge_consecutive_runs_recombines_fodder_for_less_waste() -> None:
     ]
     final_bag = FodderBag(grey=5, part_100=3)
     values = load_fodder_xp_values()
-    merged, new_bag = _merge_consecutive_runs(steps, final_bag, values)
+    merged, new_bag = _merge_same_piece_steps(steps, final_bag, values)
 
     assert len(merged) == 1
     step = merged[0]
@@ -154,7 +154,13 @@ def test_merge_consecutive_runs_recombines_fodder_for_less_waste() -> None:
     assert new_bag.grey == 3
 
 
-def test_merge_consecutive_runs_leaves_non_adjacent_or_single_steps_alone() -> None:
+def test_merge_same_piece_steps_merges_across_interleaved_pieces() -> None:
+    """The greedy loop routinely ping-pongs between near-tied pieces one
+    level at a time — a's own levels can land at raw rows 1, 3, 5, 7 with a
+    different piece's level in between each time. The merge must still
+    collapse every one of "a"'s levels into a single row (in "a"'s own
+    first-to-last level order), not leave them scattered because they were
+    never adjacent to each other. "b" appears only once and stays as-is."""
     steps = [
         SpendStep(piece_id="a", name="A", from_level=0, to_level=1, xp_spent=10, fodder_spent={"grey": 1}),
         SpendStep(piece_id="b", name="B", from_level=0, to_level=1, xp_spent=10, fodder_spent={"grey": 1}),
@@ -162,32 +168,48 @@ def test_merge_consecutive_runs_leaves_non_adjacent_or_single_steps_alone() -> N
     ]
     bag = FodderBag(grey=10)
     values = load_fodder_xp_values()
-    merged, new_bag = _merge_consecutive_runs(steps, bag, values)
-    # "a" appears twice but not consecutively (separated by "b"), so nothing
-    # merges and the bag is untouched.
-    assert merged == steps
+    merged, new_bag = _merge_same_piece_steps(steps, bag, values)
+
+    assert len(merged) == 2
+    a_step, b_step = merged
+    assert a_step.piece_id == "a"
+    assert a_step.from_level == 0
+    assert a_step.to_level == 2
+    assert a_step.xp_spent == 25
+    assert a_step.fodder_spent == {"grey": 3}
+    assert b_step == steps[1]
+    # Refunding a's naive 3 grey (1+2) into bag(10) gives 13; re-covering 25
+    # XP from grey-only fodder still needs 3 grey (10 waste either way), so
+    # the bag nets back to exactly where it started.
     assert new_bag == bag
 
 
-def test_allocate_fodder_xp_merges_consecutive_levels_on_the_same_piece() -> None:
-    """End-to-end: the same wiring the unit test above exercises directly,
-    reached through the real search — a piece kept as the best pick for two
-    consecutive levels reports as one merged SpendStep, not two."""
-    gear = [_piece("a", level=9, rarity="epic")]  # epic cap 80
+def test_allocate_fodder_xp_merges_same_piece_levels_wherever_they_fall() -> None:
+    """End-to-end: two pieces trading the top ΔU/XP spot back and forth
+    (never adjacent to each other) must still report as one merged step per
+    piece — matching the real search's ping-pong behavior, not just the
+    simpler case where a piece happens to stay on top for a contiguous run."""
+    gear = [
+        _piece("a", level=9, rarity="epic", troop="infantry", slot="chest"),
+        _piece("b", level=9, rarity="epic", troop="infantry", slot="gloves"),
+    ]
 
     def utility(g):
-        lv = int(g[0].enhancement_level or 0)
-        return float(lv), {"level": lv}
+        levels = {p.piece_id: int(p.enhancement_level or 0) for p in g}
+        return float(levels.get("a", 9) + levels.get("b", 9)), {"levels": levels}
 
     ladder = load_xp_ladder()
-    bag = FodderBag(grey=5, part_100=3)
+    bag = FodderBag(grey=20, part_100=10)
     result = allocate_fodder_xp(
-        gear, bag, utility, event="test", max_steps=2, ladder=ladder
+        gear, bag, utility, event="test", max_steps=4, ladder=ladder
     )
-    assert len(result.steps) == 1
-    assert result.steps[0].piece_id == "a"
-    assert result.steps[0].from_level == 9
-    assert result.steps[0].to_level == 11
+    by_piece = {s.piece_id: s for s in result.steps}
+    assert set(by_piece) == {"a", "b"}
+    # Equal ΔU/XP ties broken by lower xp_cost (both start at the same
+    # level), so a and b alternate the whole way — never adjacent to each
+    # other — and each must still merge into exactly one row.
+    assert by_piece["a"].from_level == 9
+    assert by_piece["b"].from_level == 9
 
 
 def test_allocate_stops_when_no_positive_delta() -> None:
