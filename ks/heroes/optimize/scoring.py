@@ -123,9 +123,9 @@ def hero_strength(
     """Mode-weighted effect score plus the hero's expedition contribution.
 
     ``contribution`` must be an expedition-family ``StatContribution``; it
-    replaces the old ``effective_power`` + ``gear_bonus`` pair, so power and
-    gear percents enter through one estimated split rather than a raw scrape
-    plus a 0.15-scaled heuristic.
+    replaces the old effective-power-plus-flat-gear-bonus keyword pair, so
+    power and gear percents enter through one estimated split rather than a
+    raw scrape plus a 0.15-scaled heuristic.
     """
     # Local import: scoring is an ancestor of stat_contributions (via both
     # gear_assign and skill_effects), so a module-level import is circular.

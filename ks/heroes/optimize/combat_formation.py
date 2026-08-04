@@ -122,7 +122,7 @@ def hero_base_score(
 
     Strength comes from ``contribution`` — power plus the hero's conquest stat
     totals, gear included — replacing the old ``power/1e6`` term and the
-    0.15-scaled ``gear_bonus`` float. ``effective_power`` remains only as the
+    0.15-scaled flat gear bonus. ``effective_power`` remains only as the
     fallback for callers with no contribution to hand.
     """
     meta = _meta_for(hero.name, roles)
