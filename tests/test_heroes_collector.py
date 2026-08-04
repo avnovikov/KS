@@ -625,6 +625,63 @@ def test_power_i_missing_naked_sets_low_power_assurance(tmp_path):
     assert stored.power == 100_000  # numeric power must not be clobbered
 
 
+def test_power_i_total_minus_gear_fallback_marks_only_power_high(tmp_path):
+    """total−gear fallback: power → high/power_i_total_minus_gear; gear_strength NOT high/agree."""
+    from ks.heroes.power_breakdown import PowerBreakdown
+    from ks.heroes.power_i_capture import PowerICapture
+
+    cfg = load_heroes_config()
+    device = RecordingDevice(png_bytes=_png())
+    store = HeroStore(tmp_path)
+
+    hero_power = 250_000
+    gear = 30_000
+    expected_naked = hero_power - gear  # 220_000
+
+    def fake_scrape(
+        device, cfg, *, page, index, ocr_fn=None, sleep_fn=None, on_power_breakdown=None, **_kw
+    ):
+        if page != 0 or index != 0:
+            return None
+        if on_power_breakdown is not None:
+            on_power_breakdown(
+                PowerICapture(
+                    breakdown=PowerBreakdown(
+                        hero_power=hero_power,
+                        gear_strength=gear,
+                        # from_level / from_stars / from_skills intentionally absent
+                    ),
+                    observed_name="Echo",
+                    raw_name="Echo",
+                )
+            )
+        return HeroRecord(
+            name="Echo",
+            power=hero_power,
+            roster_page=0,
+            roster_index=0,
+            scraped_at="t0",
+        )
+
+    collect_heroes(device, cfg, store, sleep_fn=lambda _: None, scrape_fn=fake_scrape)
+
+    stored = next(h for h in store.all_heroes() if h.name == "Echo")
+    assert stored.power == expected_naked
+    assert stored.assurance["power"].level == "high"
+    assert stored.assurance["power"].reason == "power_i_total_minus_gear"
+    # gear_strength must not be elevated to high/agree in this fallback path
+    gear_a = stored.assurance.get("gear_strength")
+    assert gear_a is None or gear_a.reason != "power_i_agree", (
+        "gear_strength must not be marked high/power_i_agree in total-minus-gear fallback"
+    )
+    # L+S+K buckets are absent — no phantom assurance entries
+    for bucket in ("from_level", "from_stars", "from_skills"):
+        a = stored.assurance.get(bucket)
+        assert a is None or a.reason != "power_i_agree", (
+            f"{bucket} must not carry power_i_agree when components were not observed"
+        )
+
+
 def test_collect_applies_naked_to_slot_not_wrong_observed_hero(tmp_path):
     """Slot hero keeps Power-i naked even if tooltip name OCR points elsewhere."""
     from ks.heroes.power_breakdown import PowerBreakdown

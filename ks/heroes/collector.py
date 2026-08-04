@@ -416,23 +416,28 @@ def collect_heroes(
                 )
 
             # Power-i Level+Stars+Skills (or total−gear) is authoritative naked power.
-            target = hero
             naked = breakdown.naked_or_total_minus_gear()
             if naked is not None:
-                target = replace(hero, power=int(naked))
+                if breakdown.naked is not None:
+                    # Full L+S+K breakdown: all three components present and consistent.
+                    assurance = set_field(dict(hero.assurance), "power", "high", "power_i_agree")
+                    for bucket_name, bucket_val in [
+                        ("from_level", breakdown.from_level),
+                        ("from_stars", breakdown.from_stars),
+                        ("from_skills", breakdown.from_skills),
+                        ("gear_strength", breakdown.gear_strength),
+                    ]:
+                        if bucket_val is not None:
+                            assurance = set_field(assurance, bucket_name, "high", "power_i_agree")
+                else:
+                    # Fallback: naked derived from hero_power − gear only.
+                    # Do not mark gear_strength high/agree — components not individually verified.
+                    assurance = set_field(
+                        dict(hero.assurance), "power", "high", "power_i_total_minus_gear"
+                    )
+                target = replace(hero, power=int(naked), assurance=assurance)
                 store.upsert(target)
                 print(f"naked power {target.name} ← {naked} (Power-i Level+Stars+Skills)")
-                assurance = set_field(dict(target.assurance), "power", "high", "power_i_agree")
-                for bucket_name, bucket_val in [
-                    ("from_level", breakdown.from_level),
-                    ("from_stars", breakdown.from_stars),
-                    ("from_skills", breakdown.from_skills),
-                    ("gear_strength", breakdown.gear_strength),
-                ]:
-                    if bucket_val is not None:
-                        assurance = set_field(assurance, bucket_name, "high", "power_i_agree")
-                target = replace(target, assurance=assurance)
-                store.upsert(target)
             else:
                 assurance = set_field(dict(hero.assurance), "power", "low", "power_i_missing")
                 target = replace(hero, assurance=assurance)

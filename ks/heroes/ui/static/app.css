@@ -316,6 +316,17 @@ input[aria-invalid="true"] {
   background: var(--err-tint);
 }
 
+/* Invalid inputs must show the error tint even when they sit inside a td
+   that carries an assurance-level background.  The assurance selectors above
+   have specificity (0,3,1); the rules below add one extra class to beat them. */
+.data-table td[data-assurance="medium"] input.invalid.cell-input,
+.data-table td[data-assurance="medium"] input[aria-invalid="true"].cell-input,
+.data-table td[data-assurance="low"] input.invalid.cell-input,
+.data-table td[data-assurance="low"] input[aria-invalid="true"].cell-input {
+  border-color: var(--err);
+  background: var(--err-tint);
+}
+
 /* --- forms (troops editor) ----------------------------------------------- */
 
 .troops-form {
