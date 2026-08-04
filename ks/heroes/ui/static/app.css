@@ -1477,6 +1477,19 @@ table.contrib-table {
   font-weight: 600;
 }
 
+/* The "Front" / "Back" group header row inside the Arena/Conquest table —
+   mirrors .row-label's uppercase small-caps idiom rather than inventing a
+   second heading style. */
+.contrib-table tr.contrib-section td {
+  padding-top: 0.55rem;
+  border-bottom: none;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 .contrib-split {
   color: var(--muted-soft);
   font-size: 0.72rem;

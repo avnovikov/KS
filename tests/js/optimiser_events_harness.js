@@ -1939,6 +1939,29 @@ async function suiteStatContributions() {
     conquestBoard.toLowerCase().indexOf("formation") !== -1,
     conquestBoard.slice(0, 400)
   );
+  (function () {
+    // Arena/Conquest are the two-row (F1/F2 vs B1/B2/B3) events; the table
+    // must split into a Front section (Amadeus, Hilde) and a Back section
+    // (Marlin, Gordon, Saul) with its own subtotal each, in that order —
+    // mirroring the survival model's own tau_F/tau_B partition — rather
+    // than one flat five-hero list a player has to cross-reference against
+    // the formation slots above it to know who's even in the front.
+    var table = conquestBoard.slice(conquestBoard.indexOf("contrib-table"));
+    var iFront = table.indexOf(">Front<");
+    var iBack = table.indexOf(">Back<");
+    var iAmadeus = table.indexOf("Amadeus");
+    var iMarlin = table.indexOf("Marlin");
+    check(
+      "the conquest table splits into Front and Back sections in order",
+      iFront !== -1 && iBack !== -1 && iFront < iAmadeus && iAmadeus < iBack && iBack < iMarlin,
+      table.slice(0, 700)
+    );
+    check(
+      "each section carries its own subtotal row",
+      table.indexOf(">front<") !== -1 && table.indexOf(">back<") !== -1,
+      table.slice(0, 700)
+    );
+  })();
   check(
     "an estimated split says so",
     conquestBoard.toLowerCase().indexOf("estimated") !== -1,

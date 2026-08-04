@@ -690,6 +690,18 @@
   /** Conquest labels (Hero Attack, Escort Health, …) are shared across every
    *  troop already, so every hero has the same columns — no collapsing
    *  needed, just the union of whatever labels are present. */
+  /** Which of a formation row's placed names sit in FRONT_SLOTS / BACK_SLOTS,
+   *  in slot order — [] for either when the row has no formation at all. */
+  function frontBackNames(row, names) {
+    var formation = row.formation || {};
+    function inSlots(slots) {
+      return slots
+        .map(function (s) { return formation[s]; })
+        .filter(function (n) { return n && names.indexOf(n) !== -1; });
+    }
+    return { front: inSlots(FRONT_SLOTS), back: inSlots(BACK_SLOTS) };
+  }
+
   function renderConquestContributionTable(row, names, contributions, family) {
     var labels = [];
     names.forEach(function (name) {
@@ -698,25 +710,68 @@
       });
     });
 
+    function heroRow(name) {
+      var c = contributions[name];
+      return (
+        "<tr><td>" + esc(name) + "</td>" +
+        "<td>" + contribSplit(c.power, "conquest") + "</td>" +
+        labels
+          .map(function (l) {
+            return "<td>" + contribSplit((c.stats || {})[l], family) + "</td>";
+          })
+          .join("") +
+        "</tr>"
+      );
+    }
+
+    function subtotalRow(label, sectionNames) {
+      var power = 0;
+      var byLabel = {};
+      labels.forEach(function (l) { byLabel[l] = 0; });
+      sectionNames.forEach(function (name) {
+        var c = contributions[name];
+        power += c.power.total;
+        labels.forEach(function (l) {
+          var share = (c.stats || {})[l];
+          if (share) byLabel[l] += share.total;
+        });
+      });
+      return (
+        '<tr class="contrib-total"><td>' + esc(label) + "</td><td>" +
+        esc(fmtShare(power, "conquest")) + "</td>" +
+        labels
+          .map(function (l) { return "<td>" + esc(fmtShare(byLabel[l], family)) + "</td>"; })
+          .join("") +
+        "</tr>"
+      );
+    }
+
     var head =
       "<tr><th>hero</th><th>power</th>" +
       labels.map(function (l) { return "<th>" + esc(l) + "</th>"; }).join("") +
       "</tr>";
-    var body = names
-      .map(function (name) {
-        var c = contributions[name];
-        return (
-          "<tr><td>" + esc(name) + "</td>" +
-          "<td>" + contribSplit(c.power, "conquest") + "</td>" +
-          labels
-            .map(function (l) {
-              return "<td>" + contribSplit((c.stats || {})[l], family) + "</td>";
-            })
-            .join("") +
-          "</tr>"
-        );
-      })
-      .join("");
+
+    var sections = frontBackNames(row, names);
+    var body;
+    if (sections.front.length || sections.back.length) {
+      // Mirrors the survival model's own tau_F/tau_B split: a player reads
+      // "is my front row actually tanky" without re-deriving it from one
+      // flat five-hero list.
+      var colspan = 2 + labels.length;
+      var sectionHead = function (label) {
+        return '<tr class="contrib-section"><td colspan="' + colspan + '">' + esc(label) + "</td></tr>";
+      };
+      body =
+        sectionHead("Front") +
+        sections.front.map(heroRow).join("") +
+        subtotalRow("front", sections.front) +
+        sectionHead("Back") +
+        sections.back.map(heroRow).join("") +
+        subtotalRow("back", sections.back);
+    } else {
+      body = names.map(heroRow).join("");
+    }
+
     var totals = totalsOf(row);
     var totalRow = totals
       ? '<tr class="contrib-total"><td>formation</td><td>' +

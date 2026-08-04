@@ -742,6 +742,8 @@ def test_the_board_shows_where_strength_came_from(js_run: dict) -> None:
             "an estimated split says so",
             "the table shows skills and gear as deltas, not bare numbers",
             "the strip ranks stats by score weight, not raw magnitude",
+            "the conquest table splits into Front and Back sections in order",
+            "each section carries its own subtotal row",
         ],
     )
     board = js_run["data"]["conquest_board_html"]
