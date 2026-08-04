@@ -526,8 +526,17 @@ def test_expedition_labels_use_singular_archer_prefix() -> None:
 
 def test_conquest_split_backs_skills_out_of_naked_value() -> None:
     hero = _hero()
-    entry = CatalogEntry(name="Forrest", troop="infantry")
-    c = hero_contribution(hero, entry, family=CONQUEST)
+    # skill_effects.kind_family defaults "attack_up" to EXPEDITION and the real
+    # catalog agrees, so tag it conquest via a catalog override here to put the
+    # hero's scraped 16% Attack Up into the conquest split under test.
+    entry = CatalogEntry(
+        name="Forrest",
+        troop="infantry",
+        effects=(EffectTag("attack_up", 16.0, CONQUEST),),
+    )
+    c = hero_contribution(
+        hero, entry, family=CONQUEST, catalog={"Forrest": entry}
+    )
     attack = c.stats["Hero Attack"]
     # 16% attack skills → skills share is naked * 0.16 / 1.16.
     assert attack.skills == pytest.approx(1297 * 0.16 / 1.16)
