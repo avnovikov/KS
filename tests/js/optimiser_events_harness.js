@@ -581,14 +581,34 @@ function eventHero(name, role, points) {
  *  always a flat number, formatted with `family: "conquest"` regardless of
  *  the row's own family — stays on the same flat scale every other power
  *  figure on this board uses. */
+/** Cycled across names: each hero's expedition contribution only ever
+ *  carries its OWN troop's labels (never another troop's), so a fixture
+ *  with every hero on the same troop couldn't tell the difference between
+ *  collapsing labels correctly and not collapsing them at all. Two heroes
+ *  share the generic "Attack" stat under different troops so the formation
+ *  total's cross-troop sum ("Infantry Attack" + "Cavalry Attack") is
+ *  actually exercised, not just single-troop passthrough. */
+var EVENT_MODE_LABELS = [
+  { "Infantry Attack": share(6, 3, 1) },
+  { "Cavalry Attack": share(4, 2, 1) },
+  { "Archer Lethality": share(5, 1, 1) },
+];
+
 function eventMode(names, points) {
   var contributions = {};
-  names.forEach(function (name) {
-    contributions[name] = statContribs(
-      "expedition",
-      share(120, 60, 20),
-      { "Infantry Lethality": share(6, 3, 1) }
-    );
+  var totalStats = {};
+  names.forEach(function (name, i) {
+    var labelSet = EVENT_MODE_LABELS[i % EVENT_MODE_LABELS.length];
+    contributions[name] = statContribs("expedition", share(120, 60, 20), labelSet);
+    Object.keys(labelSet).forEach(function (label) {
+      var s = labelSet[label];
+      var acc = totalStats[label] || { hero: 0, skills: 0, gear: 0, total: 0 };
+      acc.hero += s.hero;
+      acc.skills += s.skills;
+      acc.gear += s.gear;
+      acc.total += s.total;
+      totalStats[label] = acc;
+    });
   });
   return {
     recommended_mode: "garrison",
@@ -618,7 +638,7 @@ function eventMode(names, points) {
     formation_totals: statContribs(
       "expedition",
       share(120 * names.length, 60 * names.length, 20 * names.length),
-      { "Infantry Lethality": share(6 * names.length, 3 * names.length, names.length) }
+      totalStats
     ),
     contributions: contributions,
   };
@@ -681,7 +701,12 @@ function conquestResult(formation) {
     contributions[name] = statContribs(
       "conquest",
       share(100, 50, 50),
-      { "Hero Attack": share(60, 20, 20) }
+      // Health's raw total (500) is bigger than Attack's (100) — a raw-
+      // magnitude sort would rank it first — but Health is scaled down 10x
+      // more than Attack in contribution_strength, so it actually matters
+      // less to the score. This is exactly the fixture shape that catches a
+      // regression to sorting the strip's top stats by raw total again.
+      { "Hero Attack": share(60, 20, 20), "Hero Health": share(300, 100, 100) }
     );
   });
   return {
@@ -708,7 +733,10 @@ function conquestResult(formation) {
     formation_totals: statContribs(
       "conquest",
       share(100 * names.length, 50 * names.length, 50 * names.length),
-      { "Hero Attack": share(60 * names.length, 20 * names.length, 20 * names.length) }
+      {
+        "Hero Attack": share(60 * names.length, 20 * names.length, 20 * names.length),
+        "Hero Health": share(300 * names.length, 100 * names.length, 100 * names.length),
+      }
     ),
     contributions: contributions,
   };
@@ -1884,6 +1912,23 @@ async function suiteStatContributions() {
     conquestBoard.indexOf("contrib-table") !== -1,
     conquestBoard.slice(0, 400)
   );
+  (function () {
+    // The strip only, before the table's own "Hero Attack"/"Hero Health"
+    // column headers can confuse an indexOf search: Health's raw total
+    // (500 per hero) is bigger than Attack's (100), so a strip that still
+    // sorted its top stats by raw magnitude would list Health first.
+    // contribution_strength scales Health down 10x more than Attack/
+    // Defense, so Attack must outrank it once the strip weighs stats the
+    // same way the score does.
+    var stripOnly = conquestBoard.slice(0, conquestBoard.indexOf("contrib-table"));
+    check(
+      "the strip ranks stats by score weight, not raw magnitude",
+      stripOnly.indexOf("Hero Attack") !== -1 &&
+        stripOnly.indexOf("Hero Health") !== -1 &&
+        stripOnly.indexOf("Hero Attack") < stripOnly.indexOf("Hero Health"),
+      stripOnly.slice(0, 600)
+    );
+  })();
   check(
     "the contribution table has a row per placed hero",
     (conquestBoard.match(/<tr/g) || []).length >= 2,
@@ -1913,6 +1958,49 @@ async function suiteStatContributions() {
     "the hero sheet does not repeat the contribution table",
     sheet.indexOf("contrib-table") === -1,
     sheet.slice(0, 400)
+  );
+
+  // --- expedition contribution table collapses per-troop labels ------------
+  // goodBundle's garrison mode places Hilde (Infantry Attack), Howard
+  // (Cavalry Attack) and Saul (Archer Lethality) — three different troops,
+  // two of them sharing the generic "Attack" stat. A table that still keyed
+  // its columns off the raw troop-prefixed labels would need six columns
+  // (Infantry/Cavalry/Archer × Attack/Lethality) with most cells dashed;
+  // the fix collapses that to a "unit" column plus one shared "Attack"
+  // column (formation total 6+4=10) and one "Lethality" column (total 5).
+  d.selectEvent("sword");
+  var swordBoard = boardEl.innerHTML;
+  record("sword_board_html", swordBoard);
+  // The strip's own top-stat chips legitimately show full troop-prefixed
+  // labels ("Infantry Attack") — only the TABLE (everything from
+  // "contrib-table" on) is supposed to collapse them, so every check below
+  // scopes to that slice rather than the whole board.
+  var swordTable = swordBoard.slice(swordBoard.indexOf("contrib-table"));
+  check(
+    "the expedition table has a unit column instead of per-troop columns",
+    swordTable.indexOf("<th>unit</th>") !== -1,
+    swordTable.slice(0, 500)
+  );
+  check(
+    "the expedition table collapses troop-prefixed labels to a generic stat name",
+    swordTable.indexOf("<th>Attack</th>") !== -1 &&
+      swordTable.indexOf("Infantry Attack") === -1 &&
+      swordTable.indexOf("Cavalry Attack") === -1,
+    swordTable.slice(0, 500)
+  );
+  check(
+    "the expedition formation total sums the same stat across troops",
+    // Infantry Attack (total 10 = 6+3+1) + Cavalry Attack (total 7 = 4+2+1)
+    // must combine into one "Attack" total of 17.0%, not stay split across
+    // two per-troop columns each showing its own smaller number.
+    swordTable.indexOf("contrib-total") !== -1 &&
+      swordTable
+        .slice(swordTable.indexOf("contrib-total"))
+        .indexOf("17.0%") !== -1,
+    swordTable.slice(
+      swordTable.indexOf("contrib-total"),
+      swordTable.indexOf("contrib-total") + 400
+    )
   );
 }
 
