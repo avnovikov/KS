@@ -111,7 +111,12 @@ def test_optimize_arena_dispatches_sides() -> None:
 def test_arena_result_dict_carries_contributions() -> None:
     heroes, catalog = _roster()
     roles = load_arena_roles("config/arena_roles.yaml", catalog=catalog)
-    payload = optimize_arena("attack", heroes, catalog, roles).to_dict()
+    # with_survival=False keeps this test on the path Task 4 owns; the
+    # survival pipeline is rewired in Task 5, and the end-to-end
+    # with-survival path is covered by the Task 9 wiring suite.
+    payload = optimize_arena(
+        "attack", heroes, catalog, roles, with_survival=False
+    ).to_dict()
     assert payload["stat_family"] == "conquest"
     assert set(payload["contributions"]) == set(payload["heroes"])
     for contrib in payload["contributions"].values():

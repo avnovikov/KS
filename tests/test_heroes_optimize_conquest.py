@@ -142,7 +142,12 @@ def test_cli_conquest_argparse_smoke(tmp_path: Path) -> None:
 
 def test_conquest_result_dict_carries_contributions() -> None:
     roles = load_combat_roles("config/conquest_roles.yaml", catalog=_catalog())
-    payload = optimize_conquest(_heroes(), _catalog(), roles).to_dict()
+    # with_survival=False keeps this test on the path Task 4 owns; the
+    # survival pipeline is rewired in Task 5, and the end-to-end
+    # with-survival path is covered by the Task 9 wiring suite.
+    payload = optimize_conquest(
+        _heroes(), _catalog(), roles, with_survival=False
+    ).to_dict()
     assert payload["stat_family"] == "conquest"
     assert set(payload["contributions"]) == set(payload["heroes"])
     for contrib in payload["contributions"].values():
