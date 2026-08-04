@@ -9,12 +9,14 @@ import pytest
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.models import HeroRecord, HeroStats
 from ks.heroes.optimize.spend_xp import (
+    SpendResult,
     SpendStep,
     _merge_same_piece_steps,
     _value_summary,
     allocate_fodder_xp,
     apply_levels,
     build_event_utility,
+    iter_allocate_fodder_xp,
 )
 from ks.heroes.optimize.xp_ladder import FodderBag, load_fodder_xp_values, load_xp_ladder
 
@@ -292,6 +294,61 @@ def test_allocate_fodder_xp_summarizes_value_captured_vs_xp_burned() -> None:
     assert result.value_summary is not None
     assert "XP" in result.value_summary
     assert "point gain" in result.value_summary
+
+
+def test_iter_allocate_fodder_xp_streams_start_step_and_done_events() -> None:
+    """The generator a streaming HTTP response drains: one event per phase
+    of the search, ending in a "done" event carrying the same SpendResult
+    allocate_fodder_xp itself returns — so a caller with its own I/O (a log
+    line, a streamed reply) never has to wait out the whole search blind."""
+    gear = [
+        _piece("a", level=0, troop="infantry", slot="helmet"),
+        _piece("b", level=0, troop="cavalry", slot="helmet"),
+    ]
+
+    def utility(g):
+        levels = {p.piece_id: int(p.enhancement_level or 0) for p in g}
+        u = 100.0 * levels.get("a", 0) + 1.0 * levels.get("b", 0)
+        return u, {"levels": levels}
+
+    bag = FodderBag(grey=5)
+    events = list(
+        iter_allocate_fodder_xp(gear, bag, utility, event="test", max_steps=2)
+    )
+    kinds = [e["type"] for e in events]
+    assert kinds[0] == "start"
+    assert kinds[-1] == "done"
+    assert kinds.count("step") >= 1
+
+    start = events[0]
+    assert start["event"] == "test"
+    assert start["gear_count"] == 2
+    assert start["max_steps"] == 2
+
+    step = next(e for e in events if e["type"] == "step")
+    assert step["step_no"] == 1
+    assert step["chosen"]["piece_id"] == "a"
+    assert step["top"][0]["piece_id"] == "a"  # ranked best-first
+
+    done = events[-1]
+    assert isinstance(done["result"], SpendResult)
+    assert done["result"].steps[0].piece_id == "a"
+
+
+def test_iter_allocate_fodder_xp_reports_why_it_stopped() -> None:
+    gear = [_piece("a", level=1)]
+
+    def utility(g):
+        return 1.0, {}  # constant: nothing ever raises utility
+
+    bag = FodderBag(grey=10)
+    events = list(
+        iter_allocate_fodder_xp(gear, bag, utility, event="test", max_steps=5)
+    )
+    stop = next(e for e in events if e["type"] == "stop")
+    assert stop["step_no"] == 1
+    assert "no affordable candidate raises utility" in stop["reason"]
+    assert events[-1]["result"].steps == ()
 
 
 _ROOT = Path(__file__).resolve().parents[1]

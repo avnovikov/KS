@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from pathlib import Path
@@ -2868,6 +2869,88 @@ def test_gear_xp_api_targets_the_mode_the_page_asked_for(tmp_path: Path) -> None
     assert best["best_summary"]["mode"] != "joiner"
     assert joiner["best_summary"]["mode"] == "joiner"
     assert joiner["baseline_utility"] != best["baseline_utility"]
+
+
+# --- POST /api/optimize/gear-xp/stream: per-step progress -------------------
+
+
+def _ndjson_events(res: Any) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in res.text.splitlines() if line.strip()]
+
+
+def test_gear_xp_stream_emits_ndjson_events_ending_in_a_done_event_with_the_result(
+    tmp_path: Path,
+) -> None:
+    """The interactive planner drains this instead of the blocking endpoint
+    so a multi-minute search shows real per-step progress; the final event
+    must still carry the exact same answer the blocking endpoint returns."""
+    c = _gear_xp_client(tmp_path)
+    bag = {"grey": 4, "green": 2, "blue": 0, "purple": 0, "part_100": 0}
+    res = c.post("/api/optimize/gear-xp/stream", json={"event": "swordland", **bag})
+    assert res.status_code == 200, res.text
+    assert res.headers["content-type"].startswith("application/x-ndjson")
+
+    events = _ndjson_events(res)
+    assert events, "expected at least one NDJSON line"
+    assert events[0]["type"] == "start"
+    assert events[0]["event"] == "swordland"
+    assert events[-1]["type"] == "done"
+
+    result = events[-1]["result"]
+    assert {
+        "event",
+        "baseline_utility",
+        "best_utility",
+        "delta_utility",
+        "steps",
+        "leftover",
+        "best_summary",
+    } <= set(result)
+    assert result["event"] == "swordland"
+
+    step_events = [e for e in events if e["type"] == "step"]
+    if step_events:
+        assert step_events[0]["step_no"] == 1
+        assert "label" in step_events[0]["chosen"]
+
+
+def test_gear_xp_stream_matches_the_blocking_endpoints_answer(tmp_path: Path) -> None:
+    """Same search, same request — the streamed reply's final result must be
+    the blocking endpoint's answer, not a second, independently-drifting
+    implementation."""
+    c = _gear_xp_client(tmp_path)
+    bag = {"grey": 4, "green": 2, "blue": 0, "purple": 0, "part_100": 0}
+    body = {"event": "swordland", **bag}
+
+    blocking = c.post("/api/optimize/gear-xp", json=body).json()
+    streamed = _ndjson_events(
+        c.post("/api/optimize/gear-xp/stream", json=body)
+    )[-1]["result"]
+
+    assert streamed == blocking
+
+
+def test_gear_xp_stream_rejects_bad_input_before_opening_the_stream(
+    tmp_path: Path,
+) -> None:
+    """Validation errors (a bad count, no gear configured) are still plain
+    4xx JSON, exactly like the blocking endpoint — they are caught before
+    the response commits to a stream, so the page's existing error handling
+    (read the JSON `detail`) works unchanged for this endpoint too."""
+    c = _gear_xp_client(tmp_path)
+    res = c.post(
+        "/api/optimize/gear-xp/stream",
+        json={"event": "arena_attack", "grey": -1},
+    )
+    assert res.status_code == 400
+    assert res.json()["detail"] == "grey must be non-negative"
+
+    no_gear = _gear_xp_client(tmp_path / "no-gear", with_gear=False)
+    res = no_gear.post(
+        "/api/optimize/gear-xp/stream", json={"event": "arena_attack", "grey": 1}
+    )
+    assert res.status_code == 400
+    assert res.json()["detail"] == "gear inventory required; start UI with --gear"
 
 
 def test_gear_xp_styles_are_phone_first(tmp_path: Path) -> None:
