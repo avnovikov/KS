@@ -95,22 +95,28 @@ def test_every_optimal_section_reports_contributions(bundle: dict) -> None:
                 assert contrib["family"] == "expedition"
                 _check(contrib)
             seen += 1
-    for row in (bundle["arena"]["attack"], bundle["arena"]["defense"], bundle["conquest"]):
-        if row.get("status") != "Optimal":
-            continue
+    assert seen >= 1, "expected at least one Optimal sword/bear mode to check"
+
+    # The three combat rows are asserted Optimal outright, not skipped on
+    # infeasibility — a `seen` counter shared with the sword/bear loop above
+    # let all three go infeasible here without failing the test at all.
+    combat_rows = (
+        ("arena.attack", bundle["arena"]["attack"]),
+        ("arena.defense", bundle["arena"]["defense"]),
+        ("conquest", bundle["conquest"]),
+    )
+    for label, row in combat_rows:
+        assert row["status"] == "Optimal", f"{label}: {row.get('error') or row['status']}"
         assert row["stat_family"] == "conquest"
         _check(row["formation_totals"])
         for contrib in (row["contributions"] or {}).values():
             assert contrib["family"] == "conquest"
             _check(contrib)
-        seen += 1
-    assert seen >= 3, "expected at least three optimal sections to check"
 
 
 def test_formation_totals_equal_sum_of_hero_contributions(bundle: dict) -> None:
     for row in (bundle["arena"]["attack"], bundle["conquest"]):
-        if row.get("status") != "Optimal":
-            continue
+        assert row["status"] == "Optimal", row.get("error") or row["status"]
         totals = row["formation_totals"]
         contribs = list((row["contributions"] or {}).values())
         assert totals["power"]["total"] == pytest.approx(
