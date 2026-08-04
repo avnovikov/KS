@@ -33,7 +33,13 @@ from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.gear_assign import infer_slot
 from ks.heroes.optimize.gear_stats import expedition_stat_fraction
 from ks.heroes.optimize.scoring import normalize_troop
-from ks.heroes.optimize.skill_effects import CONQUEST, EXPEDITION, family_percents
+from ks.heroes.optimize.skill_effects import (
+    CONQUEST,
+    EXPEDITION,
+    catalog_percents,
+    family_percents,
+    skill_percents,
+)
 from ks.heroes.optimize.types import CatalogEntry
 
 __all__ = [
@@ -284,6 +290,40 @@ def _expedition_stats(
     }
 
 
+def _conquest_percents(
+    hero: HeroRecord,
+    entry: CatalogEntry | None,
+    catalog: dict[str, CatalogEntry] | None,
+) -> tuple[dict[str, float], bool]:
+    """Conquest-eligible skill percents — trusts ``_CONQUEST_KIND_LABELS``'s
+    own key set, not ``skill_effects.kind_family``'s catalog-driven family
+    tag.
+
+    ``kind_family`` answers "which family does this hero's catalog *kit*
+    effect belong to" (e.g. a first-skill widget bonus scraped as
+    ``applies_to: expedition``) — a narrower question than "does a skill of
+    this kind count in this family's split." In practice, no catalog entry
+    for any hero ever tags ``attack_up``/``defense_up``/``health_up``/
+    ``damage_taken_down``/``opp_damage_down`` as conquest, so routing
+    conquest through ``family_percents`` silently dropped every Defense
+    Up/Health Up/Damage Taken Down/Enemy Troops Attack Down skill before it
+    ever reached ``_conquest_stats`` — Hero/Escort Defense and Health skills
+    share read as 0 for every hero with only these (very common) skills.
+    """
+    scraped, incomplete = skill_percents(hero)
+    fallback = catalog_percents(entry, hero.stars, hero.pellets)
+    merged: dict[str, float] = {}
+    for kind, value in scraped.items():
+        if kind in _CONQUEST_KIND_LABELS:
+            merged[kind] = value
+    for kind, value in fallback.items():
+        if kind in merged or kind not in _CONQUEST_KIND_LABELS:
+            continue
+        merged[kind] = value
+        incomplete = True
+    return merged, incomplete
+
+
 def hero_contribution(
     hero: HeroRecord,
     entry: CatalogEntry | None,
@@ -306,12 +346,13 @@ def hero_contribution(
     else:
         pieces = list(gear_pieces or ())
 
-    percents, incomplete = family_percents(
-        hero, entry, family=family, catalog=catalog
-    )
     if family == CONQUEST:
+        percents, incomplete = _conquest_percents(hero, entry, catalog)
         stats = _conquest_stats(hero, percents, pieces)
     else:
+        percents, incomplete = family_percents(
+            hero, entry, family=family, catalog=catalog
+        )
         stats = _expedition_stats(
             hero, _hero_troop(hero, entry), percents, pieces
         )
