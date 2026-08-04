@@ -157,3 +157,18 @@ def test_conquest_result_dict_carries_contributions() -> None:
             assert share["total"] == pytest.approx(
                 share["hero"] + share["skills"] + share["gear"]
             )
+
+
+def test_conquest_result_keeps_contributions_with_survival_attached() -> None:
+    # attach_survival rebuilds CombatFormationResult from the pre-survival
+    # result; it must forward stat_family/contributions/formation_totals
+    # rather than letting them reset to the dataclass defaults. with_survival
+    # defaults to True everywhere in the app, so this is the path real
+    # callers actually take.
+    roles = load_combat_roles("config/conquest_roles.yaml", catalog=_catalog())
+    payload = optimize_conquest(_heroes(), _catalog(), roles).to_dict()
+    assert payload["status"] == "Optimal"
+    assert "survival" in payload
+    assert payload["stat_family"] == "conquest"
+    assert payload["formation_totals"] is not None
+    assert set(payload["contributions"]) == set(payload["heroes"])

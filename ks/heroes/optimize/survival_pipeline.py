@@ -470,4 +470,7 @@ def attach_survival(
         reasons=result.reasons,
         status=result.status,
         explanations=explanations,
+        stat_family=result.stat_family,
+        contributions=result.contributions,
+        formation_totals=result.formation_totals,
     )
