@@ -226,6 +226,8 @@ function makePage(spec) {
   var emptyEl = el("p", "spend-empty", "empty");
   emptyEl.hidden = true;
   var leftoverEl = el("p", "leftover-line", "leftover-line");
+  var valueSummaryEl = el("p", "value-summary-line", "value-summary-line");
+  valueSummaryEl.hidden = true;
 
   var eventButtons = EVENT_SEGMENTS.map(function (seg, i) {
     var btn = new El("button");
@@ -276,6 +278,7 @@ function makePage(spec) {
     "spend-list": listEl,
     "spend-empty": emptyEl,
     "leftover-line": leftoverEl,
+    "value-summary-line": valueSummaryEl,
   };
 
   globalThis.document = {
@@ -366,6 +369,7 @@ function makePage(spec) {
     listEl: listEl,
     emptyEl: emptyEl,
     leftoverEl: leftoverEl,
+    valueSummaryEl: valueSummaryEl,
     calls: calls,
     toasts: toasts,
 
@@ -460,8 +464,12 @@ function makePage(spec) {
         listEl.deepHtmlWrites() +
         emptyEl.deepHtmlWrites() +
         leftoverEl.deepHtmlWrites() +
+        valueSummaryEl.deepHtmlWrites() +
         statusEl.deepHtmlWrites()
       );
+    },
+    valueSummary: function () {
+      return { hidden: valueSummaryEl.hidden, text: valueSummaryEl.textContent };
     },
   };
 }
@@ -530,6 +538,9 @@ function goodResult() {
       heroes: ["Hilde", "Howard", "Saul"],
       expected_personal_points: 26410.86,
     },
+    value_summary:
+      "The first 1,290 XP (80% of 1,620 XP spent) already captured 95% of the " +
+      "258.42-point gain — the rest spends spare fodder for diminishing returns.",
   };
 }
 
@@ -666,6 +677,11 @@ async function suiteHappyPath() {
     "leftovers list only what is actually left",
     d.leftoverEl.textContent === "Left in the bag: 3 Green, 1 Blue",
     d.leftoverEl.textContent
+  );
+  check(
+    "the coarse value-vs-burn summary the server composed is shown verbatim",
+    d.valueSummary().hidden === false && d.valueSummary().text === goodResult().value_summary,
+    JSON.stringify(d.valueSummary())
   );
   check(
     "the empty-result line stays out of the way",
@@ -939,6 +955,22 @@ async function suiteNoSpendsFound() {
     "the count reads zero, not blank",
     d.statusEl.textContent === "0 spends proposed.",
     d.statusEl.textContent
+  );
+}
+
+async function suiteNoValueSummary() {
+  var flat = goodResult();
+  flat.value_summary = null;
+  var d = makePage({ result: flat });
+  await boot(d);
+  fillBag(d);
+  d.submit();
+  await settle();
+
+  check(
+    "no value summary from the server means the line stays out of the way",
+    d.valueSummary().hidden === true && d.valueSummary().text === "",
+    JSON.stringify(d.valueSummary())
   );
 }
 
@@ -1271,6 +1303,7 @@ async function suiteLocale() {
     suiteRefusesUnsendableCounts,
     suiteEmptyBag,
     suiteNoSpendsFound,
+    suiteNoValueSummary,
     suiteSingularAndFallbacks,
     suiteArenaSummary,
     suiteRequestFailure,

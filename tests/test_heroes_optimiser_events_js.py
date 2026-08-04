@@ -727,28 +727,61 @@ def test_degenerate_bundles_do_not_render_a_broken_board(js_run: dict) -> None:
 
 
 def test_the_board_shows_where_strength_came_from(js_run: dict) -> None:
-    """Design decision C: formation totals on the board, per-hero in the sheet."""
+    """Formation totals AND the per-hero split both live on the board itself
+    — a player reads this on every lineup, not only behind a tap into one
+    hero's sheet."""
     _assert_ran(
         js_run,
         [
             "the board carries a stat contribution strip",
             "the strip names the stat family",
             "the strip splits power into hero, skills and gear",
+            "the board carries a contribution table",
+            "the contribution table has a row per placed hero",
+            "the contribution table totals the formation",
+            "an estimated split says so",
+            "the table shows skills and gear as deltas, not bare numbers",
+            "the strip ranks stats by score weight, not raw magnitude",
+            "the conquest table splits into Front and Back sections in order",
+            "each section carries its own subtotal row",
         ],
     )
     board = js_run["data"]["conquest_board_html"]
     assert "contrib-strip" in board
+    assert "contrib-table" in board
 
 
-def test_the_hero_sheet_breaks_the_split_down_per_hero(js_run: dict) -> None:
+def test_the_hero_sheet_does_not_duplicate_the_contribution_table(
+    js_run: dict,
+) -> None:
+    _assert_ran(js_run, ["the hero sheet does not repeat the contribution table"])
+    sheet = js_run["data"]["conquest_sheet_html"]
+    assert "contrib-table" not in sheet
+
+
+def test_expedition_table_collapses_per_troop_columns_to_unit_and_generic_stat(
+    js_run: dict,
+) -> None:
+    """Sword/Bear heroes are each on exactly one troop, so their expedition
+    contribution only ever carries that troop's own labels. Listing every
+    troop's labels as its own column produced a wall of columns that were
+    "—" for every hero but one; this collapses to a Unit column plus one
+    shared Attack/Defense/Health/Lethality set, summing same-stat labels
+    across troops for the formation total."""
     _assert_ran(
         js_run,
         [
-            "the hero sheet carries a contribution table",
-            "the contribution table has a row per placed hero",
-            "the contribution table totals the formation",
-            "an estimated split says so",
+            "the expedition table has a unit column instead of per-troop columns",
+            "the expedition table collapses troop-prefixed labels to a generic stat name",
+            "the expedition formation total sums the same stat across troops",
         ],
     )
-    sheet = js_run["data"]["conquest_sheet_html"]
-    assert "contrib-table" in sheet
+    board = js_run["data"]["sword_board_html"]
+    # The strip's own top-stat chips legitimately show full troop-prefixed
+    # labels ("Infantry Attack") — only the table is supposed to collapse
+    # them, so these assertions scope to that slice, same as the JS checks.
+    table = board[board.index("contrib-table") :]
+    assert "<th>unit</th>" in table
+    assert "<th>Attack</th>" in table
+    assert "Infantry Attack" not in table
+    assert "Cavalry Attack" not in table

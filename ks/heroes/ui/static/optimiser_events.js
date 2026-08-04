@@ -364,8 +364,7 @@
     var explain = explainFor(entry.row, name);
     if (explain && explain.slot) context.push(explain.slot);
     modalSub.textContent = context.join(" · ");
-    modalBody.innerHTML =
-      renderWhy(explain) + renderContributionTable(entry.row) + renderGearGrid(assignment[name]);
+    modalBody.innerHTML = renderWhy(explain) + renderGearGrid(assignment[name]);
     modal.hidden = false;
     modal.classList.add("open");
     if (modalClose && typeof modalClose.focus === "function") modalClose.focus();
@@ -495,7 +494,28 @@
     return totals && totals.power ? totals : null;
   }
 
-  /** Chips: the power split, then the largest stat totals for that family. */
+  /** Mirrors stat_contributions.contribution_strength's own per-family
+   *  scale (combat / 10,000, health / 100,000): a stat's raw total is not a
+   *  fair measure of how much it actually moves the ILP score. Health is
+   *  naturally an order of magnitude bigger than Attack/Defense even on a
+   *  lineup where Attack/Defense contribute more to the number that decides
+   *  the formation — picking "top 3 by raw total" would show HP every time
+   *  regardless of which stats the optimiser actually weighed heavier. */
+  var CONQUEST_HEALTH_LABELS = ["Hero Health", "Escort Health"];
+  var CONQUEST_COMBAT_SCALE = 10000;
+  var CONQUEST_HEALTH_SCALE = 100000;
+
+  function scoreWeight(label, total, family) {
+    if (family !== "conquest") return total;
+    var scale =
+      CONQUEST_HEALTH_LABELS.indexOf(label) !== -1
+        ? CONQUEST_HEALTH_SCALE
+        : CONQUEST_COMBAT_SCALE;
+    return total / scale;
+  }
+
+  /** Chips: the power split, then the stats that most moved the score for
+   *  that family — not simply the largest raw numbers (see scoreWeight). */
   function renderContributionStrip(row) {
     var totals = totalsOf(row);
     if (!totals) return "";
@@ -515,7 +535,10 @@
         return pair[1] && pair[1].total > 0;
       })
       .sort(function (a, b) {
-        return b[1].total - a[1].total;
+        return (
+          scoreWeight(b[0], b[1].total, family) -
+          scoreWeight(a[0], a[1].total, family)
+        );
       })
       .slice(0, 3)
       .forEach(function (pair) {
@@ -538,16 +561,148 @@
     return '<div class="contrib-strip">' + chips + "</div>" + note;
   }
 
-  /** One row per placed hero, plus a formation total row. */
-  function renderContributionTable(row) {
-    var contributions = (row && row.contributions) || null;
-    if (!contributions) return "";
-    var family = row.stat_family || "conquest";
-    var names = orderedHeroNames(row).filter(function (n) {
-      return contributions[n];
-    });
-    if (!names.length) return "";
+  function contribSplit(share, fam) {
+    if (!share) return "—";
+    return (
+      esc(fmtShare(share.total, fam)) +
+      '<br><span class="contrib-split">' +
+      esc(fmtShare(share.hero, fam)) + " hero · +" +
+      esc(fmtShare(share.skills, fam)) + " skills · +" +
+      esc(fmtShare(share.gear, fam)) + " gear" +
+      "</span>"
+    );
+  }
 
+  /** Wraps the assembled head/body/total rows in the shared table chrome —
+   *  heading, note (with the estimated/skills-partial flags every family
+   *  shares), and the scroll container. */
+  function contribTableShell(family, totals, headHtml, bodyHtml, totalRowHtml, extraNote) {
+    var flags = [];
+    if (totals && totals.estimated) flags.push("estimated");
+    if (totals && totals.skills_incomplete) flags.push("skills partial");
+    var bits = ["each cell: total, then hero · skills delta (+) · gear delta (+)"];
+    if (extraNote) bits.push(extraNote);
+    if (flags.length) bits.push(flags.join(" · "));
+    return (
+      '<h3 class="section-title">Stat contributions · ' + esc(family) + "</h3>" +
+      '<p class="contrib-note">' + esc(bits.join(" · ")) + "</p>" +
+      '<div class="table-scroll"><table class="contrib-table"><thead>' +
+      headHtml + "</thead><tbody>" + bodyHtml + totalRowHtml + "</tbody></table></div>"
+    );
+  }
+
+  /** "Cavalry Attack" -> "Attack": the stat name shared across every troop. */
+  function genericStatName(label) {
+    var parts = String(label).split(" ");
+    return parts[parts.length - 1];
+  }
+
+  /** "Cavalry Attack" -> "Cavalry": everything before the stat name. */
+  function unitOf(label) {
+    var parts = String(label).split(" ");
+    return parts.slice(0, parts.length - 1).join(" ");
+  }
+
+  var EXPEDITION_STAT_ORDER = ["Attack", "Defense", "Health", "Lethality"];
+
+  /** A hero's expedition contribution only ever carries its own troop's four
+   *  labels ("Cavalry Attack", "Cavalry Defense", ...) — every other troop's
+   *  columns would just be "—" for that hero. Collapse to one generic
+   *  Attack/Defense/Health/Lethality column plus a Unit column naming which
+   *  troop the numbers belong to, and sum same-stat labels across troops for
+   *  the formation total (so "Attack" totals Infantry + Cavalry + Archer). */
+  function renderExpeditionContributionTable(row, names, contributions, family) {
+    var perHero = {};
+    var presentStats = [];
+    names.forEach(function (name) {
+      var stats = contributions[name].stats || {};
+      var unit = null;
+      var byStat = {};
+      Object.keys(stats).forEach(function (label) {
+        var stat = genericStatName(label);
+        if (unit === null) unit = unitOf(label);
+        byStat[stat] = stats[label];
+        if (presentStats.indexOf(stat) === -1) presentStats.push(stat);
+      });
+      perHero[name] = { unit: unit, byStat: byStat };
+    });
+    var order = EXPEDITION_STAT_ORDER.filter(function (s) {
+      return presentStats.indexOf(s) !== -1;
+    });
+
+    var head =
+      "<tr><th>hero</th><th>power</th><th>unit</th>" +
+      order.map(function (s) { return "<th>" + esc(s) + "</th>"; }).join("") +
+      "</tr>";
+    var body = names
+      .map(function (name) {
+        var c = contributions[name];
+        var info = perHero[name];
+        return (
+          "<tr><td>" + esc(name) + "</td>" +
+          "<td>" + contribSplit(c.power, "conquest") + "</td>" +
+          "<td>" + esc(info.unit || "—") + "</td>" +
+          order
+            .map(function (s) {
+              return "<td>" + contribSplit(info.byStat[s], family) + "</td>";
+            })
+            .join("") +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    var totals = totalsOf(row);
+    var totalRow = "";
+    if (totals) {
+      var totalByStat = {};
+      Object.keys(totals.stats || {}).forEach(function (label) {
+        var stat = genericStatName(label);
+        var share = totals.stats[label];
+        var acc = totalByStat[stat] || { hero: 0, skills: 0, gear: 0, total: 0 };
+        acc.hero += share.hero;
+        acc.skills += share.skills;
+        acc.gear += share.gear;
+        acc.total += share.total;
+        totalByStat[stat] = acc;
+      });
+      totalRow =
+        '<tr class="contrib-total"><td>formation</td><td>' +
+        esc(fmtShare(totals.power.total, "conquest")) + "</td><td>—</td>" +
+        order
+          .map(function (s) {
+            var share = totalByStat[s];
+            return "<td>" + esc(share ? fmtShare(share.total, family) : "—") + "</td>";
+          })
+          .join("") +
+        "</tr>";
+    }
+    return contribTableShell(
+      family,
+      totals,
+      head,
+      body,
+      totalRow,
+      "unit is each hero's own troop"
+    );
+  }
+
+  /** Conquest labels (Hero Attack, Escort Health, …) are shared across every
+   *  troop already, so every hero has the same columns — no collapsing
+   *  needed, just the union of whatever labels are present. */
+  /** Which of a formation row's placed names sit in FRONT_SLOTS / BACK_SLOTS,
+   *  in slot order — [] for either when the row has no formation at all. */
+  function frontBackNames(row, names) {
+    var formation = row.formation || {};
+    function inSlots(slots) {
+      return slots
+        .map(function (s) { return formation[s]; })
+        .filter(function (n) { return n && names.indexOf(n) !== -1; });
+    }
+    return { front: inSlots(FRONT_SLOTS), back: inSlots(BACK_SLOTS) };
+  }
+
+  function renderConquestContributionTable(row, names, contributions, family) {
     var labels = [];
     names.forEach(function (name) {
       Object.keys(contributions[name].stats || {}).forEach(function (label) {
@@ -555,43 +710,68 @@
       });
     });
 
-    function split(share, fam) {
-      if (!share) return "—";
+    function heroRow(name) {
+      var c = contributions[name];
       return (
-        esc(fmtShare(share.total, fam)) +
-        '<br><span class="contrib-split">' +
-        esc(
-          fmtShare(share.hero, fam) + " · " +
-          fmtShare(share.skills, fam) + " · " +
-          fmtShare(share.gear, fam)
-        ) +
-        "</span>"
+        "<tr><td>" + esc(name) + "</td>" +
+        "<td>" + contribSplit(c.power, "conquest") + "</td>" +
+        labels
+          .map(function (l) {
+            return "<td>" + contribSplit((c.stats || {})[l], family) + "</td>";
+          })
+          .join("") +
+        "</tr>"
+      );
+    }
+
+    function subtotalRow(label, sectionNames) {
+      var power = 0;
+      var byLabel = {};
+      labels.forEach(function (l) { byLabel[l] = 0; });
+      sectionNames.forEach(function (name) {
+        var c = contributions[name];
+        power += c.power.total;
+        labels.forEach(function (l) {
+          var share = (c.stats || {})[l];
+          if (share) byLabel[l] += share.total;
+        });
+      });
+      return (
+        '<tr class="contrib-total"><td>' + esc(label) + "</td><td>" +
+        esc(fmtShare(power, "conquest")) + "</td>" +
+        labels
+          .map(function (l) { return "<td>" + esc(fmtShare(byLabel[l], family)) + "</td>"; })
+          .join("") +
+        "</tr>"
       );
     }
 
     var head =
       "<tr><th>hero</th><th>power</th>" +
-      labels
-        .map(function (l) {
-          return "<th>" + esc(l) + "</th>";
-        })
-        .join("") +
+      labels.map(function (l) { return "<th>" + esc(l) + "</th>"; }).join("") +
       "</tr>";
-    var body = names
-      .map(function (name) {
-        var c = contributions[name];
-        return (
-          "<tr><td>" + esc(name) + "</td>" +
-          "<td>" + split(c.power, "conquest") + "</td>" +
-          labels
-            .map(function (l) {
-              return "<td>" + split((c.stats || {})[l], family) + "</td>";
-            })
-            .join("") +
-          "</tr>"
-        );
-      })
-      .join("");
+
+    var sections = frontBackNames(row, names);
+    var body;
+    if (sections.front.length || sections.back.length) {
+      // Mirrors the survival model's own tau_F/tau_B split: a player reads
+      // "is my front row actually tanky" without re-deriving it from one
+      // flat five-hero list.
+      var colspan = 2 + labels.length;
+      var sectionHead = function (label) {
+        return '<tr class="contrib-section"><td colspan="' + colspan + '">' + esc(label) + "</td></tr>";
+      };
+      body =
+        sectionHead("Front") +
+        sections.front.map(heroRow).join("") +
+        subtotalRow("front", sections.front) +
+        sectionHead("Back") +
+        sections.back.map(heroRow).join("") +
+        subtotalRow("back", sections.back);
+    } else {
+      body = names.map(heroRow).join("");
+    }
+
     var totals = totalsOf(row);
     var totalRow = totals
       ? '<tr class="contrib-total"><td>formation</td><td>' +
@@ -604,23 +784,21 @@
           .join("") +
         "</tr>"
       : "";
-    // Mirrors the strip's own flags: whether this split is measured or
-    // estimated (a hero missing skill data, say) is exactly what a user
-    // reading raw numbers next to their own roster needs to know before
-    // trusting them.
-    var flags = [];
-    if (totals && totals.estimated) flags.push("estimated");
-    if (totals && totals.skills_incomplete) flags.push("skills partial");
-    var note =
-      '<p class="contrib-note">each cell: total, then hero · skills · gear' +
-      (flags.length ? " · " + esc(flags.join(" · ")) : "") +
-      "</p>";
-    return (
-      '<h3 class="section-title">Stat contributions · ' + esc(family) + "</h3>" +
-      note +
-      '<div class="table-scroll"><table class="contrib-table"><thead>' +
-      head + "</thead><tbody>" + body + totalRow + "</tbody></table></div>"
-    );
+    return contribTableShell(family, totals, head, body, totalRow, null);
+  }
+
+  /** One row per placed hero, plus a formation total row. */
+  function renderContributionTable(row) {
+    var contributions = (row && row.contributions) || null;
+    if (!contributions) return "";
+    var family = row.stat_family || "conquest";
+    var names = orderedHeroNames(row).filter(function (n) {
+      return contributions[n];
+    });
+    if (!names.length) return "";
+    return family === "expedition"
+      ? renderExpeditionContributionTable(row, names, contributions, family)
+      : renderConquestContributionTable(row, names, contributions, family);
   }
 
   function renderBoard(entry) {
@@ -666,18 +844,27 @@
       }
       boardEl.appendChild(boardRowEl("Front", FRONT_SLOTS, placed(FRONT_SLOTS), entry));
       boardEl.appendChild(boardRowEl("Back", BACK_SLOTS, placed(BACK_SLOTS), entry));
-      return;
+    } else {
+      // No F/B structure (the sword/bear events march three heroes together).
+      var heroes = (row.heroes || []).filter(function (hero) {
+        return heroName(hero);
+      });
+      if (!heroes.length) {
+        appendText("p", "empty", "No heroes in this result.");
+        return;
+      }
+      boardEl.appendChild(boardRowEl("March", null, heroes, entry));
     }
 
-    // No F/B structure (the sword/bear events march three heroes together).
-    var heroes = (row.heroes || []).filter(function (hero) {
-      return heroName(hero);
-    });
-    if (!heroes.length) {
-      appendText("p", "empty", "No heroes in this result.");
-      return;
+    // Per-hero split lives on the board itself, not behind a tap into the
+    // hero sheet — it's the number a player checks every time they look at
+    // a lineup, not an occasional drill-down.
+    var table = renderContributionTable(row);
+    if (table) {
+      var tableEl = document.createElement("div");
+      tableEl.innerHTML = table;
+      boardEl.appendChild(tableEl);
     }
-    boardEl.appendChild(boardRowEl("March", null, heroes, entry));
   }
 
   function renderNote() {

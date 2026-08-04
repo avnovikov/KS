@@ -38,6 +38,7 @@
   var listEl = document.getElementById("spend-list");
   var emptyEl = document.getElementById("spend-empty");
   var leftoverEl = document.getElementById("leftover-line");
+  var valueSummaryEl = document.getElementById("value-summary-line");
   // Every one of these is dereferenced unguarded below, so every one is
   // checked: a half-present shell must be inert, not half-wired.
   if (
@@ -48,7 +49,8 @@
     !targetEl ||
     !listEl ||
     !emptyEl ||
-    !leftoverEl
+    !leftoverEl ||
+    !valueSummaryEl
   ) {
     return;
   }
@@ -315,6 +317,17 @@
     leftoverEl.textContent = "Left in the bag: " + (fmtFodder(counts) || "nothing");
   }
 
+  /** Coarse "gear to burn vs necessary points" line — a single sentence the
+   *  server already composed (see spend_xp._value_summary), so this only
+   *  decides whether there is one to show. Hidden entirely when the reply
+   *  has nothing to say (e.g. no gain, or the whole plan was already
+   *  efficient with no burn tail to call out). */
+  function renderValueSummary(text) {
+    var has = typeof text === "string" && text !== "";
+    valueSummaryEl.hidden = !has;
+    valueSummaryEl.textContent = has ? text : "";
+  }
+
   function render(target, data) {
     var baseline = Number(data.baseline_utility);
     var best = Number(data.best_utility);
@@ -324,6 +337,7 @@
     renderTarget(target.label, data.best_summary);
     renderSteps(data.steps);
     renderLeftover(data.leftover);
+    renderValueSummary(data.value_summary);
     resultEl.hidden = false;
     return Array.isArray(data.steps) ? data.steps.length : 0;
   }
