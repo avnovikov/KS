@@ -1412,6 +1412,76 @@ button.hero-slot:hover {
   font-variant-numeric: tabular-nums;
 }
 
+/* --- stat contributions ---------------------------------------------------
+   The board strip reuses .fact/.fact-k/.fact-v chips on the same auto-fill
+   grid as .gear-grid and .mode-chips; the sheet table follows .stat-table's
+   compact idiom rather than .data-table's sortable inventory grid. */
+
+.contrib-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr));
+  gap: 0.4rem;
+  margin: 0 0 0.35rem;
+}
+
+.contrib-note {
+  margin: 0 0 0.9rem;
+  color: var(--muted-soft);
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+/* A wide formation can carry six stat columns; let it scroll rather than
+   squeeze the sheet, which is only ~22rem on a 390px viewport. */
+.table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+table.contrib-table {
+  width: 100%;
+  margin-bottom: 0.5rem;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.contrib-table th,
+.contrib-table td {
+  padding: 0.35rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+  vertical-align: top;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.contrib-table th:first-child,
+.contrib-table td:first-child {
+  text-align: left;
+}
+
+.contrib-table th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.contrib-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.contrib-table tr.contrib-total td {
+  font-weight: 600;
+}
+
+.contrib-split {
+  color: var(--muted-soft);
+  font-size: 0.72rem;
+}
+
 /* --- optimiser: gear XP spend (layout A) --------------------------------- */
 
 /* A group header sitting at the top of its panel already has the panel's

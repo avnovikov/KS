@@ -71,8 +71,29 @@ Object.defineProperty(El.prototype, "className", {
   },
 });
 
+/** A real DOM's `innerHTML` getter always serializes the live tree, however
+ *  it was built — a raw string assignment, or a run of `appendChild` calls.
+ *  This mock kept only the string half until the board itself started mixing
+ *  the two (title and meta as text nodes, a stat-contribution strip as a
+ *  child whose *own* innerHTML was set directly): reading a container built
+ *  that way returned whatever string was last assigned to it — "", from the
+ *  `boardEl.innerHTML = ""` every render starts with — never what was
+ *  appended after. A leaf (no children) still reads back its own `_html` or
+ *  `_text` exactly as before, so every existing direct-string caller
+ *  (chip.innerHTML, modalBody.innerHTML) is unaffected. */
+function serializeChildren(node) {
+  if (node.children && node.children.length) {
+    return node.children.map(serializeChildren).join("");
+  }
+  if (node._html) return node._html;
+  return node._text || "";
+}
+
 Object.defineProperty(El.prototype, "innerHTML", {
   get: function () {
+    if (this.children && this.children.length) {
+      return this.children.map(serializeChildren).join("");
+    }
     return this._html;
   },
   set: function (value) {
@@ -322,6 +343,27 @@ function makePage(spec) {
       return null;
     },
     eventButtons: eventButtons,
+    /** Taps the segment for that event, same as a user's finger would. */
+    selectEvent: function (key) {
+      var btn = this.eventButton(key);
+      if (btn) btn.fire("click");
+    },
+    /** Opens the sheet for the first non-empty slot on the current board,
+     *  wherever the event/mode picker currently has it — the equivalent of
+     *  a user tapping whichever hero is drawn first. */
+    openFirstHero: function () {
+      var rows = this.rows();
+      for (var i = 0; i < rows.length; i++) {
+        for (var j = 0; j < rows[i].slots.length; j++) {
+          var slot = rows[i].slots[j];
+          if (!slot.empty) {
+            slot.el.fire("click");
+            return slot.name;
+          }
+        }
+      }
+      return null;
+    },
 
     chips: function () {
       return chipsEl.children.slice();
@@ -471,6 +513,21 @@ async function boot(page) {
 
 /* --- fixtures --------------------------------------------------------------- */
 
+/** A stat-contributions share, `{hero, skills, gear, total}` with `total`
+ *  summed — Task 7's frozen contract shape, reused for both a per-hero
+ *  `contributions` entry and a `formation_totals` row. Small round numbers
+ *  throughout, so a failing check's `detail` slice reads at a glance. */
+function share(hero, skills, gear) {
+  return { hero: hero, skills: skills, gear: gear, total: hero + skills + gear };
+}
+
+/** One `{family, estimated, skills_incomplete, power, stats}` payload — the
+ *  shape Task 7 gives both `formation_totals` and each entry of
+ *  `contributions`. */
+function statContribs(family, power, stats) {
+  return { family: family, estimated: true, skills_incomplete: false, power: power, stats: stats };
+}
+
 function loo(points, alternates) {
   return {
     baseline_points: 26152.4,
@@ -519,7 +576,20 @@ function eventHero(name, role, points) {
   };
 }
 
+/** Sword/Bear rows are `family: "expedition"` per Task 7's contract, so their
+ *  stat shares are percent points (Infantry Lethality, say) while `power` —
+ *  always a flat number, formatted with `family: "conquest"` regardless of
+ *  the row's own family — stays on the same flat scale every other power
+ *  figure on this board uses. */
 function eventMode(names, points) {
+  var contributions = {};
+  names.forEach(function (name) {
+    contributions[name] = statContribs(
+      "expedition",
+      share(120, 60, 20),
+      { "Infantry Lethality": share(6, 3, 1) }
+    );
+  });
   return {
     recommended_mode: "garrison",
     heroes: names.map(function (n, i) {
@@ -544,6 +614,13 @@ function eventMode(names, points) {
         { slot: "boots", piece_id: "p2", name: "Warden Greaves", rarity: "epic", power: 41000 },
       ],
     },
+    stat_family: "expedition",
+    formation_totals: statContribs(
+      "expedition",
+      share(120 * names.length, 60 * names.length, 20 * names.length),
+      { "Infantry Lethality": share(6 * names.length, 3 * names.length, names.length) }
+    ),
+    contributions: contributions,
   };
 }
 
@@ -596,12 +673,21 @@ function arenaSide(side, formation) {
  * conquest section too, so the sheet has real gear to draw.
  */
 function conquestResult(formation) {
+  var names = Object.keys(formation).map(function (s) {
+    return formation[s];
+  });
+  var contributions = {};
+  names.forEach(function (name) {
+    contributions[name] = statContribs(
+      "conquest",
+      share(100, 50, 50),
+      { "Hero Attack": share(60, 20, 20) }
+    );
+  });
   return {
     mode: "conquest",
     formation: formation,
-    heroes: Object.keys(formation).map(function (s) {
-      return formation[s];
-    }),
+    heroes: names,
     score: 512.75,
     gear_assignment: {
       Amadeus: [
@@ -618,6 +704,13 @@ function conquestResult(formation) {
     },
     reasons: { Amadeus: "troop=infantry slot=F1" },
     status: "Optimal",
+    stat_family: "conquest",
+    formation_totals: statContribs(
+      "conquest",
+      share(100 * names.length, 50 * names.length, 50 * names.length),
+      { "Hero Attack": share(60 * names.length, 20 * names.length, 20 * names.length) }
+    ),
+    contributions: contributions,
   };
 }
 
@@ -630,6 +723,7 @@ function goodBundle() {
       label: "Swordland",
       event: "swordland",
       status: "ok",
+      stat_family: "expedition",
       modes: {
         garrison: eventMode(["Hilde", "Howard", "Saul"], 26152.46),
         rally_lead: eventMode(["Amadeus", "Jabel", "Diana"], 18110.2),
@@ -638,6 +732,7 @@ function goodBundle() {
     bear: {
       label: "Bear Trap",
       status: "ok",
+      stat_family: "expedition",
       modes: { solo: eventMode(["Helga", "Chenko", "Marlin"], 9000.4) },
     },
     arena: {
@@ -1751,6 +1846,64 @@ async function suiteLocale() {
   }
 }
 
+/* Task 7's frozen contract puts `stat_family`, `formation_totals` and
+ * `contributions` on every mode/formation row. Conquest carries the whole
+ * board strip *and* the sheet table in one pass, since that is the row the
+ * new checks below need clicked open anyway; Sword/Bear share `eventMode`,
+ * so they got the same three keys for free above. */
+async function suiteStatContributions() {
+  var d = makePage({ bundle: goodBundle() });
+  await boot(d);
+  var boardEl = d.boardEl;
+  var modalBody = d.modalBody;
+
+  // --- stat contributions --------------------------------------------------
+  d.selectEvent("conquest");
+  var conquestBoard = boardEl.innerHTML;
+  record("conquest_board_html", conquestBoard);
+  check(
+    "the board carries a stat contribution strip",
+    conquestBoard.indexOf("contrib-strip") !== -1,
+    conquestBoard.slice(0, 400)
+  );
+  check(
+    "the strip names the stat family",
+    conquestBoard.toLowerCase().indexOf("conquest") !== -1,
+    conquestBoard.slice(0, 400)
+  );
+  check(
+    "the strip splits power into hero, skills and gear",
+    ["hero", "skills", "gear"].every(function (k) {
+      return conquestBoard.toLowerCase().indexOf(k) !== -1;
+    }),
+    conquestBoard.slice(0, 400)
+  );
+
+  d.openFirstHero();
+  var sheet = modalBody.innerHTML;
+  record("conquest_sheet_html", sheet);
+  check(
+    "the hero sheet carries a contribution table",
+    sheet.indexOf("contrib-table") !== -1,
+    sheet.slice(0, 400)
+  );
+  check(
+    "the contribution table has a row per placed hero",
+    (sheet.match(/<tr/g) || []).length >= 2,
+    sheet.slice(0, 400)
+  );
+  check(
+    "the contribution table totals the formation",
+    sheet.toLowerCase().indexOf("formation") !== -1,
+    sheet.slice(0, 400)
+  );
+  check(
+    "an estimated split says so",
+    sheet.toLowerCase().indexOf("estimated") !== -1,
+    sheet.slice(0, 400)
+  );
+}
+
 /* --- run -------------------------------------------------------------------- */
 
 /* Each suite is caught on its own: a scenario that throws must not take the
@@ -1777,6 +1930,7 @@ async function suiteLocale() {
     suiteApiPortraits,
     suiteWhitespaceSmuggledOrigins,
     suiteLocale,
+    suiteStatContributions,
   ];
   var threw = [];
   for (var i = 0; i < suites.length; i++) {
