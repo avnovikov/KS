@@ -12,6 +12,7 @@ from typing import Any, Callable
 
 import yaml
 
+from ks.heroes.assurance import set_field
 from ks.heroes.config import DEFAULT_HEROES_CONFIG
 from ks.heroes.gear_config import DEFAULT_GEAR_CONFIG
 from ks.heroes.gear_models import GearRecord
@@ -402,16 +403,29 @@ def update_hero_stars(
     ):
         return hero
 
+    new_assurance = dict(hero.assurance)
+    if new_stars != hero.stars:
+        new_assurance = set_field(new_assurance, "stars", "high", "manual_confirm")
+    if new_pellets != hero.pellets:
+        new_assurance = set_field(new_assurance, "pellets", "high", "manual_confirm")
+    if new_level != hero.level:
+        new_assurance = set_field(new_assurance, "level", "high", "manual_confirm")
+    if power_explicit and new_power != hero.power:
+        new_assurance = set_field(new_assurance, "power", "high", "manual_confirm")
+    elif stars_changed and not power_explicit and new_power != hero.power:
+        new_assurance = set_field(new_assurance, "power", "medium", "scaled_from_stars")
+
     updated = replace(
         hero,
         stars=new_stars,
         pellets=new_pellets,
         power=new_power,
         level=new_level,
+        assurance=new_assurance,
     )
     overwrite = frozenset(
-        field
-        for field, before, after in (
+        f
+        for f, before, after in (
             ("stars", hero.stars, new_stars),
             ("pellets", hero.pellets, new_pellets),
             ("power", hero.power, new_power),
