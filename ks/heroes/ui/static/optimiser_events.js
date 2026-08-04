@@ -251,6 +251,20 @@
     return map;
   }
 
+  /** Hero names for a row in the same order the board places them: the
+   *  formation slots (F1, F2, B1..B3) when the row has one, otherwise the
+   *  heroes list order the sword/bear march uses. The contribution table
+   *  and the board's own row-builder both need one hero list in one order. */
+  function orderedHeroNames(row) {
+    if (hasFormation(row)) {
+      var f = row.formation;
+      return ALL_SLOTS.map(function (s) {
+        return f[s];
+      }).filter(Boolean);
+    }
+    return (row.heroes || []).map(heroName).filter(Boolean);
+  }
+
   function explainFor(row, name) {
     if (row.explanations && row.explanations[name]) return row.explanations[name];
     var hero = (row.heroes || []).find(function (h) {
@@ -350,7 +364,8 @@
     var explain = explainFor(entry.row, name);
     if (explain && explain.slot) context.push(explain.slot);
     modalSub.textContent = context.join(" · ");
-    modalBody.innerHTML = renderWhy(explain) + renderGearGrid(assignment[name]);
+    modalBody.innerHTML =
+      renderWhy(explain) + renderContributionTable(entry.row) + renderGearGrid(assignment[name]);
     modal.hidden = false;
     modal.classList.add("open");
     if (modalClose && typeof modalClose.focus === "function") modalClose.focus();
@@ -459,6 +474,155 @@
     return el;
   }
 
+  /* --- stat contributions ---------------------------------------------------
+   *
+   * Every optimiser row carries the same three keys (see optimize_run.py):
+   * `stat_family`, `formation_totals` and `contributions`. Conquest shares are
+   * flat stat points and sum; expedition shares are percent points and also
+   * sum — which is why the formatter takes the family rather than guessing
+   * from magnitude.
+   */
+
+  function fmtShare(n, family) {
+    if (n == null || !Number.isFinite(Number(n))) return "—";
+    if (family === "expedition") return Number(n).toFixed(1) + "%";
+    return Math.round(Number(n)).toLocaleString("en-US");
+  }
+
+  /** The row's formation-level split, or null when the row is not Optimal. */
+  function totalsOf(row) {
+    var totals = row && row.formation_totals;
+    return totals && totals.power ? totals : null;
+  }
+
+  /** Chips: the power split, then the largest stat totals for that family. */
+  function renderContributionStrip(row) {
+    var totals = totalsOf(row);
+    if (!totals) return "";
+    var family = row.stat_family || totals.family || "conquest";
+    var p = totals.power;
+    var facts = [
+      ["power", fmtShare(p.total, "conquest")],
+      ["from hero", fmtShare(p.hero, "conquest")],
+      ["from skills", fmtShare(p.skills, "conquest")],
+      ["from gear", fmtShare(p.gear, "conquest")]
+    ];
+    Object.keys(totals.stats || {})
+      .map(function (label) {
+        return [label, totals.stats[label]];
+      })
+      .filter(function (pair) {
+        return pair[1] && pair[1].total > 0;
+      })
+      .sort(function (a, b) {
+        return b[1].total - a[1].total;
+      })
+      .slice(0, 3)
+      .forEach(function (pair) {
+        facts.push([pair[0], fmtShare(pair[1].total, family)]);
+      });
+    var chips = facts
+      .map(function (pair) {
+        return (
+          '<div class="fact"><div class="fact-k">' + esc(pair[0]) +
+          '</div><div class="fact-v">' + esc(pair[1]) + "</div></div>"
+        );
+      })
+      .join("");
+    var flags = [];
+    if (totals.estimated) flags.push("estimated");
+    if (totals.skills_incomplete) flags.push("skills partial");
+    var note = flags.length
+      ? '<p class="contrib-note">' + esc(family + " · " + flags.join(" · ")) + "</p>"
+      : '<p class="contrib-note">' + esc(family) + "</p>";
+    return '<div class="contrib-strip">' + chips + "</div>" + note;
+  }
+
+  /** One row per placed hero, plus a formation total row. */
+  function renderContributionTable(row) {
+    var contributions = (row && row.contributions) || null;
+    if (!contributions) return "";
+    var family = row.stat_family || "conquest";
+    var names = orderedHeroNames(row).filter(function (n) {
+      return contributions[n];
+    });
+    if (!names.length) return "";
+
+    var labels = [];
+    names.forEach(function (name) {
+      Object.keys(contributions[name].stats || {}).forEach(function (label) {
+        if (labels.indexOf(label) === -1) labels.push(label);
+      });
+    });
+
+    function split(share, fam) {
+      if (!share) return "—";
+      return (
+        esc(fmtShare(share.total, fam)) +
+        '<br><span class="contrib-split">' +
+        esc(
+          fmtShare(share.hero, fam) + " · " +
+          fmtShare(share.skills, fam) + " · " +
+          fmtShare(share.gear, fam)
+        ) +
+        "</span>"
+      );
+    }
+
+    var head =
+      "<tr><th>hero</th><th>power</th>" +
+      labels
+        .map(function (l) {
+          return "<th>" + esc(l) + "</th>";
+        })
+        .join("") +
+      "</tr>";
+    var body = names
+      .map(function (name) {
+        var c = contributions[name];
+        return (
+          "<tr><td>" + esc(name) + "</td>" +
+          "<td>" + split(c.power, "conquest") + "</td>" +
+          labels
+            .map(function (l) {
+              return "<td>" + split((c.stats || {})[l], family) + "</td>";
+            })
+            .join("") +
+          "</tr>"
+        );
+      })
+      .join("");
+    var totals = totalsOf(row);
+    var totalRow = totals
+      ? '<tr class="contrib-total"><td>formation</td><td>' +
+        esc(fmtShare(totals.power.total, "conquest")) + "</td>" +
+        labels
+          .map(function (l) {
+            var share = (totals.stats || {})[l];
+            return "<td>" + esc(share ? fmtShare(share.total, family) : "—") + "</td>";
+          })
+          .join("") +
+        "</tr>"
+      : "";
+    // Mirrors the strip's own flags: whether this split is measured or
+    // estimated (a hero missing skill data, say) is exactly what a user
+    // reading raw numbers next to their own roster needs to know before
+    // trusting them.
+    var flags = [];
+    if (totals && totals.estimated) flags.push("estimated");
+    if (totals && totals.skills_incomplete) flags.push("skills partial");
+    var note =
+      '<p class="contrib-note">each cell: total, then hero · skills · gear' +
+      (flags.length ? " · " + esc(flags.join(" · ")) : "") +
+      "</p>";
+    return (
+      '<h3 class="section-title">Stat contributions · ' + esc(family) + "</h3>" +
+      note +
+      '<div class="table-scroll"><table class="contrib-table"><thead>' +
+      head + "</thead><tbody>" + body + totalRow + "</tbody></table></div>"
+    );
+  }
+
   function renderBoard(entry) {
     boardEl.innerHTML = "";
     if (!entry) {
@@ -481,6 +645,13 @@
       : fmtPoints(row.expected_personal_points) + " pts · " + troopsLine(row);
     var extra = isScored(activeEvent) ? "" : breakdownLine(row);
     appendText("p", "board-meta", extra ? meta + " · " + extra : meta);
+
+    var strip = renderContributionStrip(row);
+    if (strip) {
+      var stripEl = document.createElement("div");
+      stripEl.innerHTML = strip;
+      boardEl.appendChild(stripEl);
+    }
 
     if (hasFormation(row)) {
       var f = row.formation;
