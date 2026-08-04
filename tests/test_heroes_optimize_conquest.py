@@ -138,3 +138,17 @@ def test_cli_conquest_argparse_smoke(tmp_path: Path) -> None:
     assert args.heroes == heroes_file
     assert args.roles.name == "conquest_roles.yaml"
     assert args.gear is None
+
+
+def test_conquest_result_dict_carries_contributions() -> None:
+    roles = load_combat_roles("config/conquest_roles.yaml", catalog=_catalog())
+    payload = optimize_conquest(_heroes(), _catalog(), roles).to_dict()
+    assert payload["stat_family"] == "conquest"
+    assert set(payload["contributions"]) == set(payload["heroes"])
+    for contrib in payload["contributions"].values():
+        assert contrib["family"] == "conquest"
+        for share in contrib["stats"].values():
+            assert share["hero"] >= 0
+            assert share["total"] == pytest.approx(
+                share["hero"] + share["skills"] + share["gear"]
+            )

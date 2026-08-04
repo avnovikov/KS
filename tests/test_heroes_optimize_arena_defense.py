@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.arena import (
     load_arena_roles,
@@ -104,3 +106,18 @@ def test_optimize_arena_dispatches_sides() -> None:
     assert defense.side == "defense"
     assert attack.status == "Optimal"
     assert defense.status == "Optimal"
+
+
+def test_arena_result_dict_carries_contributions() -> None:
+    heroes, catalog = _roster()
+    roles = load_arena_roles("config/arena_roles.yaml", catalog=catalog)
+    payload = optimize_arena("attack", heroes, catalog, roles).to_dict()
+    assert payload["stat_family"] == "conquest"
+    assert set(payload["contributions"]) == set(payload["heroes"])
+    for contrib in payload["contributions"].values():
+        assert contrib["family"] == "conquest"
+        for share in contrib["stats"].values():
+            assert share["hero"] >= 0
+            assert share["total"] == pytest.approx(
+                share["hero"] + share["skills"] + share["gear"]
+            )
