@@ -51,6 +51,48 @@ def test_allocate_prefers_piece_that_raises_utility() -> None:
     assert all(s.piece_id == "a" for s in result.steps)
 
 
+def test_allocate_reports_real_progress_by_default(capsys: pytest.CaptureFixture) -> None:
+    """The search re-solves the target event once per affordable candidate
+    piece, so a real inventory can take a while — this must never be a
+    silent wait: real, running progress on stdout, not just a status string
+    the caller has to trust. Sorted (best ΔU/XP first) and capped, not a
+    flat unordered dump of every piece in the bag."""
+    gear = [
+        _piece("a", level=0, troop="infantry", slot="helmet"),
+        _piece("b", level=0, troop="cavalry", slot="helmet"),
+    ]
+
+    def utility(g):
+        levels = {p.piece_id: int(p.enhancement_level or 0) for p in g}
+        u = 100.0 * levels.get("a", 0) + 1.0 * levels.get("b", 0)
+        return u, {"levels": levels}
+
+    bag = FodderBag(grey=5)
+    allocate_fodder_xp(gear, bag, utility, event="test", max_steps=2)
+    out = capsys.readouterr().out
+    assert "[gear-xp] searching event=test" in out
+    assert "2 gear piece(s)" in out
+    assert "step 1/2" in out
+    assert "-> chose Piece a" in out
+    assert "done: " in out
+    # Ranked, not a flat dump: the better candidate is listed before the
+    # worse one under the same step.
+    step1 = out.split("step 1/2", 1)[1].split("step 2/2", 1)[0]
+    assert step1.index("Piece a") < step1.index("Piece b")
+
+
+def test_allocate_verbose_false_is_silent(capsys: pytest.CaptureFixture) -> None:
+    gear = [_piece("a", level=0, troop="infantry", slot="helmet")]
+
+    def utility(g):
+        levels = {p.piece_id: int(p.enhancement_level or 0) for p in g}
+        return 100.0 * levels.get("a", 0), {}
+
+    bag = FodderBag(grey=5)
+    allocate_fodder_xp(gear, bag, utility, event="test", max_steps=2, verbose=False)
+    assert capsys.readouterr().out == ""
+
+
 def test_allocate_respects_cap() -> None:
     ladder = load_xp_ladder()
     # Epic cap 80 — start at 79, one grey may not cover next cost; give part_100

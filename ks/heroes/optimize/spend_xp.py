@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
@@ -256,6 +257,13 @@ def _is_better_candidate(candidate: _UpgradeCandidate, best: _UpgradeCandidate) 
     return candidate.xp_cost < best.xp_cost
 
 
+# How many of a step's evaluated candidates get logged, sorted best-first —
+# the search itself still considers every affordable piece; only the log
+# line is capped, so a 30-piece inventory reads as "here is where the XP
+# would go" instead of a wall of every candidate evaluated.
+_LOG_TOP_CANDIDATES = 5
+
+
 def _best_upgrade_candidate(
     by_id: dict[str, GearRecord],
     levels: dict[str, int],
@@ -265,9 +273,14 @@ def _best_upgrade_candidate(
     gear: list[GearRecord],
     utility_fn: UtilityFn,
     current_u: float,
-) -> _UpgradeCandidate | None:
-    """Scan every piece for the affordable +1 with the best ΔU per XP."""
-    best: _UpgradeCandidate | None = None
+) -> tuple[_UpgradeCandidate | None, list[_UpgradeCandidate]]:
+    """Scan every piece for the affordable +1 with the best ΔU per XP.
+
+    Returns ``(best, ranked)`` — ``ranked`` is every affordable candidate
+    found this step, best-first, so a caller can report progress without
+    re-scanning.
+    """
+    candidates: list[_UpgradeCandidate] = []
     for piece_id, piece in by_id.items():
         cur_lv = int(levels.get(piece_id, piece.enhancement_level or 0))
         cap = cap_for_rarity(piece.rarity, ladder=xp_ladder)
@@ -286,12 +299,15 @@ def _best_upgrade_candidate(
         if trial_u == float("-inf"):
             continue
         delta = trial_u - current_u
-        cand = _UpgradeCandidate(
-            delta, int(cost), piece_id, cur_lv, cur_lv + 1, plan
+        candidates.append(
+            _UpgradeCandidate(delta, int(cost), piece_id, cur_lv, cur_lv + 1, plan)
         )
+    best: _UpgradeCandidate | None = None
+    for cand in candidates:
         if best is None or _is_better_candidate(cand, best):
             best = cand
-    return best
+    candidates.sort(key=lambda c: (-c.delta_per_xp, -c.delta, c.xp_cost))
+    return best, candidates
 
 
 def _apply_upgrade_step(
@@ -322,6 +338,16 @@ def _apply_upgrade_step(
     return new_bag, new_u, new_summary, step
 
 
+def _candidate_label(piece: GearRecord | None, piece_id: str) -> str:
+    if piece is None:
+        return piece_id
+    bits = [piece.name or piece_id]
+    tags = [t for t in (piece.slot, piece.rarity) if t]
+    if tags:
+        bits.append("(" + ", ".join(tags) + ")")
+    return " ".join(bits)
+
+
 def allocate_fodder_xp(
     gear: list[GearRecord],
     bag: FodderBag,
@@ -331,8 +357,17 @@ def allocate_fodder_xp(
     max_steps: int = 50,
     ladder: dict[str, Any] | None = None,
     fodder_values: dict[str, int] | None = None,
+    verbose: bool = True,
 ) -> SpendResult:
-    """Greedy: repeatedly take the next +1 level with best positive ΔU/XP."""
+    """Greedy: repeatedly take the next +1 level with best positive ΔU/XP.
+
+    Each step re-solves the target event's optimiser once per affordable
+    candidate piece, so a large inventory can take a while — ``verbose``
+    (on by default) prints real progress to stdout as it runs: how many
+    pieces were affordable this step, the top candidates ranked by ΔU per
+    XP (not every one scanned), which was chosen, and a running clock, so
+    "searching" is never a silent wait.
+    """
     if not gear:
         raise ValueError("gear inventory is empty")
     xp_ladder = ladder or load_xp_ladder()
@@ -340,21 +375,43 @@ def allocate_fodder_xp(
     levels = current_levels(gear)
     by_id = {p.piece_id: p for p in gear if p.piece_id}
 
+    def _log(msg: str) -> None:
+        if verbose:
+            print(f"[gear-xp] {msg}", flush=True)
+
+    started = time.monotonic()
     baseline_u, baseline_summary = utility_fn(gear)
     if baseline_u == float("-inf"):
         raise ValueError("baseline event utility is infeasible")
+    _log(
+        f"searching event={event}: {len(by_id)} gear piece(s), "
+        f"baseline utility={baseline_u:.3f}, up to {max_steps} step(s)"
+    )
 
     steps: list[SpendStep] = []
     current_bag = bag
     current_u = baseline_u
     current_summary = baseline_summary
 
-    for _ in range(max_steps):
-        candidate = _best_upgrade_candidate(
+    for step_no in range(1, max_steps + 1):
+        candidate, ranked = _best_upgrade_candidate(
             by_id, levels, xp_ladder, values, current_bag, gear, utility_fn, current_u
         )
+        elapsed = time.monotonic() - started
         if candidate is None or candidate.delta <= 0:
+            reason = "no affordable candidate raises utility" if ranked else "nothing affordable in the bag"
+            _log(f"step {step_no}/{max_steps}: {reason} — stopping ({elapsed:.1f}s elapsed)")
             break
+        _log(
+            f"step {step_no}/{max_steps}: {len(ranked)} affordable candidate(s), "
+            f"top {min(_LOG_TOP_CANDIDATES, len(ranked))} by ΔU/XP:"
+        )
+        for rank, cand in enumerate(ranked[:_LOG_TOP_CANDIDATES], start=1):
+            _log(
+                f"  {rank}. {_candidate_label(by_id.get(cand.piece_id), cand.piece_id)} "
+                f"+{cand.from_level}→+{cand.to_level}  ΔU={cand.delta:+.3f}  "
+                f"cost={cand.xp_cost:,} XP"
+            )
         current_bag, current_u, current_summary, step = _apply_upgrade_step(
             candidate,
             gear=gear,
@@ -365,6 +422,15 @@ def allocate_fodder_xp(
             utility_fn=utility_fn,
         )
         steps.append(step)
+        _log(
+            f"  -> chose {_candidate_label(by_id.get(candidate.piece_id), candidate.piece_id)}, "
+            f"utility now {current_u:.3f} ({elapsed:.1f}s elapsed)"
+        )
+
+    _log(
+        f"done: {len(steps)} step(s), ΔU total={current_u - baseline_u:+.3f} "
+        f"({time.monotonic() - started:.1f}s elapsed)"
+    )
 
     return SpendResult(
         event=event,
