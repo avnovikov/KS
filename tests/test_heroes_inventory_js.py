@@ -126,7 +126,7 @@ def _assert_ran(js_run: dict, names: list[str]) -> None:
 
 def test_inventory_js_runs_under_a_real_engine(js_run: dict) -> None:
     """Sanity floor: the source parsed and every suite reached its end."""
-    assert len(js_run["checks"]) >= 60, len(js_run["checks"])
+    assert len(js_run["checks"]) >= 65, len(js_run["checks"])
     assert not _failures(js_run, ["harness ran to completion"])
 
 
@@ -206,6 +206,7 @@ def test_a_blank_box_never_becomes_a_null_the_api_rejects(js_run: dict) -> None:
         "level": 40,
         "stars": None,
         "pellets": 0,
+        "power": 1000000,
     }
 
 
@@ -600,6 +601,7 @@ def test_the_pin_tracks_the_store_and_not_the_box(js_run: dict) -> None:
         "level": None,
         "stars": 2,
         "pellets": 0,
+        "power": 1000000,
     }
 
 
@@ -658,6 +660,23 @@ def test_a_piece_cannot_be_deleted_by_one_tap(js_run: dict) -> None:
         ],
     )
     assert js_run["data"]["remove_calls_before_confirm"] == 0
+
+
+def test_assurance_cells_are_painted_by_server_reply(js_run: dict) -> None:
+    """After a successful PATCH, if the server reply includes an assurance map,
+    applyServerRow must tint the corresponding cells and update the power input
+    value (power is now editable, not a read-only text cell)."""
+    _assert_ran(
+        js_run,
+        [
+            "applyServerRow updates the power input value from the server reply",
+            "and keeps the row sort key in step",
+            "applyServerRow paints data-assurance on the power cell",
+            "and sets title from the assurance reason",
+            "applyServerRow paints assurance on the stars cell too",
+            "a field absent from the assurance payload has its tint cleared",
+        ],
+    )
 
 
 def test_one_script_serves_both_inventory_pages(js_run: dict) -> None:

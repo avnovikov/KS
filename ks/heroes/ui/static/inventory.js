@@ -385,12 +385,37 @@
     if (!payload) return;
     syncLocks(state, payload);
     var power = payload.power;
-    var cell = state.tr.querySelector(".power-cell");
-    // Plain String(), not toLocaleString(): the server-rendered cell this
-    // replaces is an ungrouped Jinja "{{ p.power }}", and a locale-grouped
-    // replacement would change style the moment the user typed.
-    if (cell) cell.textContent = power === null || power === undefined ? "—" : String(power);
-    state.tr.dataset.power = power === null || power === undefined ? "" : String(power);
+    var powerStr = power === null || power === undefined ? "" : String(power);
+    var powerInput = state.tr.querySelector("input[data-field=power]");
+    if (powerInput) {
+      // Power is now an editable input; update its value from the server
+      // response (e.g. rescaled after a star edit) so the box stays in
+      // step. Plain String(), not toLocaleString() — the box value must
+      // round-trip through readInt() unchanged.
+      powerInput.value = powerStr;
+    } else {
+      // Gear rows or legacy pages: update the text cell as before.
+      var cell = state.tr.querySelector(".power-cell");
+      if (cell) cell.textContent = powerStr || "—";
+    }
+    state.tr.dataset.power = powerStr;
+
+    if (payload.assurance) {
+      ["power", "stars", "level", "pellets"].forEach(function (field) {
+        var assur = payload.assurance[field];
+        var input = state.tr.querySelector("input[data-field=" + field + "]");
+        if (!input) return;
+        var td = input.closest("td");
+        if (!td) return;
+        if (assur) {
+          td.dataset.assurance = assur.level;
+          td.title = assur.reason || "";
+        } else {
+          delete td.dataset.assurance;
+          td.title = "";
+        }
+      });
+    }
   }
 
   /* The rarity column has been colour-coded since before this rewrite; the

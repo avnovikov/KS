@@ -775,6 +775,20 @@ table.data-table {
   font-variant-numeric: tabular-nums;
 }
 
+/* Assurance-level tints: low (insufficient confidence) → red, medium
+   (OCR-derived) → amber. The .cell-input rule is stated explicitly: a
+   focused or active input can reset its own background, so the cue must
+   survive focus rather than relying on inheritance alone. */
+.data-table td[data-assurance="low"],
+.data-table td[data-assurance="low"] .cell-input {
+  background: var(--err-tint);
+}
+
+.data-table td[data-assurance="medium"],
+.data-table td[data-assurance="medium"] .cell-input {
+  background: var(--warn-tint);
+}
+
 .rarity {
   text-transform: capitalize;
   font-weight: 600;
