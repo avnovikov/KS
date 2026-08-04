@@ -16,6 +16,7 @@ from ks.heroes.optimize.combat_formation import (
     placement_mult,
 )
 from ks.heroes.optimize.front_survival import (
+    rarity_median_powers,
     roster_median_power,
     sanitize_power,
 )
@@ -205,10 +206,13 @@ def _sanitized_power_map(
 ) -> dict[str, float]:
     median = roster_median_power(heroes)
     max_abs, median_factor = _sanitize_knobs(roles)
+    rarity_medians = rarity_median_powers(heroes, max_abs=max_abs)
     return {
         h.name: sanitize_power(
             h.power,
             median_power=median,
+            rarity=h.rarity,
+            rarity_medians=rarity_medians,
             max_abs=max_abs,
             median_factor=median_factor,
         )

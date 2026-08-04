@@ -101,3 +101,63 @@ def test_naive_max_power_puts_infantry_front() -> None:
     assert foe.formation["F1"] in {"Howard", "Helga"}
     assert foe.formation["F2"] in {"Howard", "Helga"}
     assert foe.formation["F1"] != foe.formation["F2"]
+
+
+import pytest
+
+from ks.heroes.models import HeroRecord
+from ks.heroes.optimize.front_survival import rarity_median_powers, sanitize_power
+
+
+def _h(name: str, power: int | None, rarity: str | None) -> HeroRecord:
+    return HeroRecord(name=name, power=power, rarity=rarity)
+
+
+def test_rarity_median_powers_groups_by_rarity() -> None:
+    medians = rarity_median_powers(
+        [
+            _h("a", 100_000, "epic"),
+            _h("b", 300_000, "epic"),
+            _h("c", 900_000, "legendary"),
+        ]
+    )
+    assert medians["epic"] == pytest.approx(200_000.0)
+    assert medians["legendary"] == pytest.approx(900_000.0)
+
+
+def test_rarity_median_ignores_blowups_so_they_cannot_poison_their_own_bucket() -> None:
+    medians = rarity_median_powers(
+        [
+            _h("a", 100_000, "epic"),
+            _h("b", 300_000, "epic"),
+            _h("bad", 9_000_000, "epic"),
+        ]
+    )
+    assert medians["epic"] == pytest.approx(200_000.0)
+
+
+def test_sanitize_prefers_same_rarity_median_over_roster_median() -> None:
+    assert sanitize_power(
+        9_000_000,
+        median_power=238_487.0,
+        rarity="legendary",
+        rarity_medians={"legendary": 337_100.0, "epic": 276_600.0},
+    ) == pytest.approx(337_100.0)
+
+
+def test_sanitize_falls_back_to_roster_median_without_same_rarity_peers() -> None:
+    assert sanitize_power(
+        9_000_000,
+        median_power=238_487.0,
+        rarity="mythic",
+        rarity_medians={"legendary": 337_100.0},
+    ) == pytest.approx(238_487.0)
+
+
+def test_sanitize_is_rarity_insensitive_for_plausible_power() -> None:
+    assert sanitize_power(
+        250_000,
+        median_power=238_487.0,
+        rarity="legendary",
+        rarity_medians={"legendary": 337_100.0},
+    ) == pytest.approx(250_000.0)

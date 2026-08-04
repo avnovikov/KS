@@ -41,36 +41,77 @@ class SurvivalBreakdown:
         }
 
 
-def sanitize_power(
-    power: int | None,
-    *,
-    median_power: float,
-    max_abs: int = 2_000_000,
-    median_factor: float = 20.0,
-) -> float:
-    """Drop OCR blow-ups before naive top-N selection / ILP scoring."""
-    if power is None or power <= 0:
-        return 0.0
-    if max_abs <= 0:
-        raise ValueError(f"max_abs must be positive; got {max_abs}")
-    if median_factor <= 0:
-        raise ValueError(f"median_factor must be positive; got {median_factor}")
-    p = float(power)
-    if p > max_abs:
-        return median_power
-    if median_power > 0 and p > float(median_factor) * median_power:
-        return median_power
-    return p
-
-
-def roster_median_power(heroes: list[HeroRecord]) -> float:
-    vals = sorted(float(h.power) for h in heroes if h.power and h.power > 0)
+def _median(values: list[float]) -> float:
+    vals = sorted(values)
     if not vals:
         return 0.0
     mid = len(vals) // 2
     if len(vals) % 2:
         return vals[mid]
     return 0.5 * (vals[mid - 1] + vals[mid])
+
+
+def rarity_median_powers(
+    heroes: list[HeroRecord],
+    *,
+    max_abs: int = 2_000_000,
+) -> dict[str, float]:
+    """Median scraped power per rarity, blow-ups excluded.
+
+    Values above ``max_abs`` are dropped *before* the median is taken, so a
+    corrupt reading cannot poison the very bucket used to replace it — with
+    only two or three peers in a rarity that is a real risk, not a theoretical
+    one.
+    """
+    by_rarity: dict[str, list[float]] = {}
+    for hero in heroes:
+        if not hero.power or hero.power <= 0 or hero.power > max_abs:
+            continue
+        key = (hero.rarity or "").strip().lower()
+        if not key:
+            continue
+        by_rarity.setdefault(key, []).append(float(hero.power))
+    return {k: _median(v) for k, v in by_rarity.items() if v}
+
+
+def sanitize_power(
+    power: int | None,
+    *,
+    median_power: float,
+    rarity: str | None = None,
+    rarity_medians: dict[str, float] | None = None,
+    max_abs: int = 2_000_000,
+    median_factor: float = 20.0,
+) -> float:
+    """Drop OCR blow-ups before naive top-N selection / ILP scoring.
+
+    An outlier is replaced by the median of its **same-rarity** peers when one
+    is known — a legendary should not collapse to a roster median weighted by
+    rares — and by the roster median otherwise.
+    """
+    if power is None or power <= 0:
+        return 0.0
+    if max_abs <= 0:
+        raise ValueError(f"max_abs must be positive; got {max_abs}")
+    if median_factor <= 0:
+        raise ValueError(f"median_factor must be positive; got {median_factor}")
+
+    def _replacement() -> float:
+        peer = (rarity_medians or {}).get((rarity or "").strip().lower())
+        if peer and peer > 0:
+            return float(peer)
+        return median_power
+
+    p = float(power)
+    if p > max_abs:
+        return _replacement()
+    if median_power > 0 and p > float(median_factor) * median_power:
+        return _replacement()
+    return p
+
+
+def roster_median_power(heroes: list[HeroRecord]) -> float:
+    return _median([float(h.power) for h in heroes if h.power and h.power > 0])
 
 
 def conquest_stat(hero: HeroRecord, key: str) -> int:

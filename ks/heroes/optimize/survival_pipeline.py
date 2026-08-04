@@ -19,6 +19,7 @@ from ks.heroes.optimize.front_survival import (
     formation_tau,
     hero_tau,
     pressure_scale,
+    rarity_median_powers,
     roster_median_power,
     sanitize_power,
     survival_score,
@@ -52,11 +53,14 @@ def sanitize_hero_powers(
     max_abs = int(cfg.get("power_sanitize_max", 2_000_000))
     median_factor = float(cfg.get("power_sanitize_median_factor", 20.0))
     median = roster_median_power(heroes)
+    rarity_medians = rarity_median_powers(heroes, max_abs=max_abs)
     out: dict[str, int | None] = {}
     for h in heroes:
         cleaned = sanitize_power(
             h.power,
             median_power=median,
+            rarity=h.rarity,
+            rarity_medians=rarity_medians,
             max_abs=max_abs,
             median_factor=median_factor,
         )
