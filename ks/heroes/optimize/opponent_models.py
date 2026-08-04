@@ -22,6 +22,7 @@ from ks.heroes.optimize.front_survival import (
 )
 from ks.heroes.optimize.gear_assign import assign_exclusive_sets
 from ks.heroes.optimize.scoring import normalize_troop
+from ks.heroes.optimize.stat_contributions import CONQUEST, StatContribution
 from ks.heroes.optimize.types import CatalogEntry
 
 GEAR_FRONT_FIRST = ("F1", "F2", "B2", "B1", "B3")
@@ -34,6 +35,7 @@ class OpponentLineup:
     heroes: tuple[str, ...]
     gear_assignment: dict[str, dict[str, GearRecord]]
     heuristic_offense: float
+    contributions: dict[str, dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         gear_out: dict[str, list[dict[str, Any]]] = {}
@@ -55,6 +57,7 @@ class OpponentLineup:
             "heroes": list(self.heroes),
             "heuristic_offense": self.heuristic_offense,
             "gear_assignment": gear_out,
+            "contributions": self.contributions,
         }
 
 
@@ -137,25 +140,34 @@ def _sanitize_knobs(roles: dict[str, Any]) -> tuple[int, float]:
     )
 
 
-def _gear_bonus_map(
+def _contribution_map(
     formation: dict[str, str],
     heroes: list[HeroRecord],
     catalog: dict[str, CatalogEntry],
     gear_asg: dict[str, dict[str, GearRecord]],
     *,
-    profile: str,
-) -> dict[str, float]:
-    """ILP-style gear bonuses from the foe's *already assigned* pieces.
+    power_by_name: dict[str, float] | None = None,
+) -> dict[str, StatContribution]:
+    """Conquest contributions from the foe's *already assigned* pieces.
 
     Must not flatten pieces back into a pool and re-assign by roster power —
-    that clobbers explicit exclusive assignments (Bugbot high).
+    that clobbers explicit exclusive assignments (PR #26 invariant 1).
     """
-    del heroes, catalog  # assignment is authoritative; keep signature stable
-    from ks.heroes.optimize.combat_formation import gear_bonus_from_assignment
+    from ks.heroes.optimize.combat_formation import contributions_from_assignment
 
     selected = [formation[s] for s in ALL_SLOTS if s in formation]
     scoped = {name: gear_asg.get(name, {}) for name in selected}
-    return gear_bonus_from_assignment(scoped, profile=profile)
+    powers = {
+        name: int(round(v)) if v else None
+        for name, v in (power_by_name or {}).items()
+    }
+    return contributions_from_assignment(
+        scoped,
+        catalog=catalog,
+        heroes_by_name={h.name: h for h in heroes},
+        power_by_name=powers,
+        family=CONQUEST,
+    )
 
 
 def _heuristic_offense(
@@ -164,20 +176,20 @@ def _heuristic_offense(
     catalog: dict[str, CatalogEntry],
     roles: dict[str, Any],
     *,
-    gear_bonus_by_hero: dict[str, float] | None = None,
+    contributions: dict[str, StatContribution] | None = None,
     power_by_name: dict[str, float] | None = None,
     side: str = "attack",
     base_score_fn: Callable[..., float] | None = None,
 ) -> float:
-    gear_bonus_by_hero = gear_bonus_by_hero or {}
+    contributions = contributions or {}
     power_by_name = power_by_name or {}
     score_fn = base_score_fn or (
-        lambda h, entry, roles, *, effective_power, gear_bonus: hero_base_score(
+        lambda h, entry, roles, *, effective_power, contribution: hero_base_score(
             h,
             entry,
             roles,
             effective_power=effective_power,
-            gear_bonus=gear_bonus,
+            contribution=contribution,
             side=side,
         )
     )
@@ -194,7 +206,7 @@ def _heuristic_offense(
             entry,
             roles,
             effective_power=int(round(eff_power)) if eff_power else hero.power,
-            gear_bonus=float(gear_bonus_by_hero.get(name, 0.0)),
+            contribution=contributions.get(name),
         )
         total += base * placement_mult(troop, slot, name, roles, side=side)
     return float(total)
@@ -245,15 +257,15 @@ def build_naive_max_power(
     ranked = sorted(by_name.keys(), key=power_key, reverse=True)[:5]
     formation = _place_infantry_first(ranked, by_name, catalog, power_key=power_key)
     gear_asg = _assign_gear(formation, usable, catalog, gear, profile=gear_profile)
-    gear_bonus = _gear_bonus_map(
-        formation, usable, catalog, gear_asg, profile=gear_profile
+    contributions = _contribution_map(
+        formation, usable, catalog, gear_asg, power_by_name=power_map
     )
     offense = _heuristic_offense(
         formation,
         by_name,
         catalog,
         roles,
-        gear_bonus_by_hero=gear_bonus,
+        contributions=contributions,
         power_by_name=power_map,
         side=side,
         base_score_fn=base_score_fn,
@@ -265,6 +277,7 @@ def build_naive_max_power(
         heroes=ordered,
         gear_assignment=gear_asg,
         heuristic_offense=offense,
+        contributions={n: c.to_dict() for n, c in contributions.items()},
     )
 
 
@@ -313,15 +326,15 @@ def build_troop_balanced_naive(
                 break
     formation = _place_infantry_first(picked[:5], by_name, catalog, power_key=power_key)
     gear_asg = _assign_gear(formation, usable, catalog, gear, profile=gear_profile)
-    gear_bonus = _gear_bonus_map(
-        formation, usable, catalog, gear_asg, profile=gear_profile
+    contributions = _contribution_map(
+        formation, usable, catalog, gear_asg, power_by_name=power_map
     )
     offense = _heuristic_offense(
         formation,
         by_name,
         catalog,
         roles,
-        gear_bonus_by_hero=gear_bonus,
+        contributions=contributions,
         power_by_name=power_map,
         side=side,
         base_score_fn=base_score_fn,
@@ -333,6 +346,7 @@ def build_troop_balanced_naive(
         heroes=ordered,
         gear_assignment=gear_asg,
         heuristic_offense=offense,
+        contributions={n: c.to_dict() for n, c in contributions.items()},
     )
 
 
@@ -354,15 +368,15 @@ def opponent_from_formation(
         formation, list(by_name.values()), catalog, gear, profile=gear_profile
     )
     power_map = _sanitized_power_map(list(by_name.values()), roles)
-    gear_bonus = _gear_bonus_map(
-        formation, list(by_name.values()), catalog, gear_asg, profile=gear_profile
+    contributions = _contribution_map(
+        formation, list(by_name.values()), catalog, gear_asg, power_by_name=power_map
     )
     offense = _heuristic_offense(
         formation,
         by_name,
         catalog,
         roles,
-        gear_bonus_by_hero=gear_bonus,
+        contributions=contributions,
         power_by_name=power_map,
         side=side,
         base_score_fn=base_score_fn,
@@ -374,4 +388,5 @@ def opponent_from_formation(
         heroes=ordered,
         gear_assignment=gear_asg,
         heuristic_offense=offense,
+        contributions={n: c.to_dict() for n, c in contributions.items()},
     )

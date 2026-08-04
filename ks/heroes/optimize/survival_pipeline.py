@@ -33,6 +33,7 @@ from ks.heroes.optimize.opponent_models import (
     opponent_from_formation,
 )
 from ks.heroes.optimize.scoring import normalize_troop
+from ks.heroes.optimize.stat_contributions import CONQUEST, StatContribution
 from ks.heroes.optimize.types import CatalogEntry
 
 BaseScoreFn = Callable[..., float]
@@ -100,9 +101,9 @@ def slot_utilities(
     side: str,
     base_score_fn: BaseScoreFn,
     power_by_name: dict[str, int | None] | None = None,
-    gear_bonus_by_hero: dict[str, float] | None = None,
+    contributions: dict[str, StatContribution] | None = None,
 ) -> tuple[float, float, dict[str, float]]:
-    gear_bonus_by_hero = gear_bonus_by_hero or {}
+    contributions = contributions or {}
     u_front = 0.0
     u_back = 0.0
     per: dict[str, float] = {}
@@ -124,7 +125,7 @@ def slot_utilities(
             entry,
             roles,
             effective_power=power,
-            gear_bonus=float(gear_bonus_by_hero.get(name, 0.0)),
+            contribution=contributions.get(name),
         )
         contrib = base * placement_mult(troop, slot, name, roles, side=side)
         per[name] = contrib
@@ -142,12 +143,15 @@ def roster_pressure_scale(
     *,
     base_score_fn: BaseScoreFn,
     power_by_name: dict[str, int | None] | None = None,
+    contributions: dict[str, StatContribution] | None = None,
 ) -> float:
+    contributions = contributions or {}
     by_name = {h.name: h for h in heroes if h.name in catalog}
     tau_samples: list[float] = []
     u_samples: list[float] = []
     for name, hero in by_name.items():
-        tau_samples.append(hero_tau(hero))
+        contribution = contributions.get(name)
+        tau_samples.append(hero_tau(hero, contribution=contribution))
         entry = catalog.get(name)
         power = (
             power_by_name.get(name, hero.power)
@@ -155,7 +159,7 @@ def roster_pressure_scale(
             else hero.power
         )
         base = base_score_fn(
-            hero, entry, roles, effective_power=power, gear_bonus=0.0
+            hero, entry, roles, effective_power=power, contribution=contribution
         )
         u_samples.append(base)
     return pressure_scale(tau_samples=tau_samples, U_samples=u_samples)
@@ -175,13 +179,11 @@ def evaluate_vs_foe(
     O_scale: float = 1.0,
     power_by_name: dict[str, int | None] | None = None,
     gear_profile: str = "early_game_combat",
+    contributions: dict[str, StatContribution] | None = None,
 ) -> dict[str, Any]:
     by_name = {h.name: h for h in heroes}
-    tau_f, tau_b, tau_by = formation_tau(formation, by_name, our_gear)
-    from ks.heroes.optimize.combat_formation import gear_bonus_from_assignment
-
-    our_gear_bonus = (
-        gear_bonus_from_assignment(our_gear, profile=gear_profile) if our_gear else {}
+    tau_f, tau_b, tau_by = formation_tau(
+        formation, by_name, our_gear, contributions=contributions
     )
     u_front, u_back, _ = slot_utilities(
         formation,
@@ -191,7 +193,7 @@ def evaluate_vs_foe(
         side=side,
         base_score_fn=base_score_fn,
         power_by_name=power_by_name,
-        gear_bonus_by_hero=our_gear_bonus,
+        contributions=contributions,
     )
     breakdown = survival_score(
         tau_F=tau_f,
@@ -225,12 +227,12 @@ def build_self_play_foes(
 ) -> list[OpponentLineup]:
     wanted = foe_names or ["naive_max_power", "troop_balanced_naive", "heuristic_foe"]
     score_fn = base_score_fn or (
-        lambda h, entry, roles, *, effective_power, gear_bonus: hero_base_score(
+        lambda h, entry, roles, *, effective_power, contribution: hero_base_score(
             h,
             entry,
             roles,
             effective_power=effective_power,
-            gear_bonus=gear_bonus,
+            contribution=contribution,
             side=heuristic_side or "attack",
         )
     )
@@ -338,6 +340,15 @@ def attach_survival(
         profile=gear_profile,
         gear_order=gear_order,
     )
+    from ks.heroes.optimize.combat_formation import contributions_from_assignment
+
+    our_contributions = contributions_from_assignment(
+        {name: our_gear.get(name, {}) for name in result.formation.values()},
+        catalog=catalog,
+        heroes_by_name={h.name: h for h in usable},
+        power_by_name=power_by_name,
+        family=CONQUEST,
+    )
     foe_names = list(
         survival_cfg.get("foes")
         or ["naive_max_power", "troop_balanced_naive", "heuristic_foe"]
@@ -363,6 +374,7 @@ def attach_survival(
         roles,
         base_score_fn=base_score_fn,
         power_by_name=power_by_name,
+        contributions=our_contributions,
     )
     foe_blocks: dict[str, Any] = {}
     score_eff_primary = None
@@ -380,18 +392,17 @@ def attach_survival(
             O_scale=o_scale,
             power_by_name=power_by_name,
             gear_profile=gear_profile,
+            contributions=our_contributions,
         )
         foe_blocks[foe.model] = block
         if foe.model == primary:
             score_eff_primary = block["score_eff"]
 
-    from ks.heroes.optimize.combat_formation import gear_bonus_from_assignment
-
-    our_gear_bonus = (
-        gear_bonus_from_assignment(our_gear, profile=gear_profile) if our_gear else {}
-    )
     tau_f, tau_b, tau_by = formation_tau(
-        result.formation, {h.name: h for h in usable}, our_gear
+        result.formation,
+        {h.name: h for h in usable},
+        our_gear,
+        contributions=our_contributions,
     )
     u_front, u_back, _ = slot_utilities(
         result.formation,
@@ -401,7 +412,7 @@ def attach_survival(
         side=side,
         base_score_fn=base_score_fn,
         power_by_name=power_by_name,
-        gear_bonus_by_hero=our_gear_bonus,
+        contributions=our_contributions,
     )
     sensitivity = None
     primary_foe_obj = next((f for f in foes if f.model == primary), None)
@@ -422,6 +433,7 @@ def attach_survival(
             lambda_tau=lambda_tau,
             O_scale=o_scale,
             power_by_name=power_by_name,
+            contributions=our_contributions,
         )
 
     survival = {
@@ -432,6 +444,8 @@ def attach_survival(
             "U_front": u_front,
             "U_back": u_back,
             "tau_by_hero": tau_by,
+            "stat_family": CONQUEST,
+            "contributions": {n: c.to_dict() for n, c in our_contributions.items()},
         },
         "foes": foe_blocks,
         "primary_foe": primary,

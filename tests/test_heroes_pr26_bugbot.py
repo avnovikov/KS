@@ -5,12 +5,12 @@ from __future__ import annotations
 from ks.heroes.gear_models import GearRecord, GearStats
 from ks.heroes.models import HeroRecord, SkillRecord
 from ks.heroes.optimize.combat_formation import (
-    _provisional_gear_bonus,
-    gear_bonus_from_assignment,
+    _provisional_contributions,
+    contributions_from_assignment,
 )
 from ks.heroes.optimize.conquest import _conquest_base_score, ultimate_level_multiplier
 from ks.heroes.optimize.opponent_models import (
-    _gear_bonus_map,
+    _contribution_map,
     _heuristic_offense,
     opponent_from_formation,
 )
@@ -45,7 +45,7 @@ def _piece(piece_id: str, *, power: int = 50_000) -> GearRecord:
     )
 
 
-def test_gear_bonus_uses_assigned_pieces_not_repooled() -> None:
+def test_contribution_map_uses_assigned_pieces_not_repooled() -> None:
     """Bugbot high: flattening assigned gear must not re-assign by roster power."""
     heroes = [
         _hero("A", 100_000),
@@ -56,7 +56,6 @@ def test_gear_bonus_uses_assigned_pieces_not_repooled() -> None:
     ]
     catalog = {h.name: _cat(h.name) for h in heroes}
     formation = {"F1": "A", "F2": "B", "B1": "C", "B2": "D", "B3": "E"}
-    best = _piece("best", power=250_000)
     best = GearRecord(
         piece_id="best",
         name="Mythic Helm best",
@@ -77,7 +76,7 @@ def test_gear_bonus_uses_assigned_pieces_not_repooled() -> None:
         power=10_000,
         stats=GearStats(lethality=5.0, expedition={"Infantry Lethality": 5.0}),
     )
-    # Give best to weak A, junk to strong E — re-pool would flip that.
+    # Give best to weak A, junk to strong E — re-pool by roster power would flip that.
     gear_asg = {
         "A": {"helmet": best},
         "B": {},
@@ -85,13 +84,15 @@ def test_gear_bonus_uses_assigned_pieces_not_repooled() -> None:
         "D": {},
         "E": {"helmet": junk},
     }
-    bonuses = _gear_bonus_map(
-        formation, heroes, catalog, gear_asg, profile="early_game_combat"
+    contributions = _contribution_map(formation, heroes, catalog, gear_asg)
+    # A's gear-derived power share must reflect its own assigned piece (best,
+    # 250k) — not E's despite E's much higher roster power (900k).
+    assert contributions["A"].power.gear > contributions["E"].power.gear
+    direct = contributions_from_assignment(
+        gear_asg, catalog=catalog, heroes_by_name={h.name: h for h in heroes}
     )
-    assert bonuses["A"] > bonuses["E"]
-    direct = gear_bonus_from_assignment(gear_asg, profile="early_game_combat")
-    assert bonuses["A"] == direct["A"]
-    assert bonuses["E"] == direct["E"]
+    assert contributions["A"].power.gear == direct["A"].power.gear
+    assert contributions["E"].power.gear == direct["E"].power.gear
 
 
 def test_heuristic_offense_honors_conquest_base_score() -> None:
@@ -129,7 +130,7 @@ def test_sanitize_hero_powers_catalog_usable_median() -> None:
 
 
 def test_slot_utilities_include_gear_bonus() -> None:
-    """Bugbot medium: our U_front/U_back must include assigned gear bonuses."""
+    """Bugbot medium: our U_front/U_back must include assigned gear contributions."""
     hero = _hero("Helga", 400_000)
     catalog = {"Helga": _cat("Helga")}
     roles: dict = {"heroes": {}, "placement": {}, "slots": {}}
@@ -143,6 +144,20 @@ def test_slot_utilities_include_gear_bonus() -> None:
         side="attack",
         base_score_fn=_conquest_base_score,
     )
+    piece = GearRecord(
+        piece_id="helm",
+        name="Mythic Helm",
+        rarity="legendary",
+        troop_type="infantry",
+        slot="helmet",
+        enhancement_level=10,
+        power=250_000,
+        stats=GearStats(conquest={"Hero Attack": 50}),
+    )
+    gear_asg = {"Helga": {"helmet": piece}}
+    contributions = contributions_from_assignment(
+        gear_asg, catalog=catalog, heroes_by_name=by_name
+    )
     geared = slot_utilities(
         formation,
         by_name,
@@ -150,7 +165,7 @@ def test_slot_utilities_include_gear_bonus() -> None:
         roles,
         side="attack",
         base_score_fn=_conquest_base_score,
-        gear_bonus_by_hero={"Helga": 50.0},
+        contributions=contributions,
     )
     assert geared[0] > zero[0]
 
@@ -162,19 +177,24 @@ def test_provisional_gear_priority_uses_sanitized_power() -> None:
     usable = [blowup, normal]
     catalog = {h.name: _cat(h.name) for h in usable}
     pieces = [_piece("only", power=100_000)]
-    bonuses_raw = _provisional_gear_bonus(
+    contributions_raw = _provisional_contributions(
         usable, catalog, pieces, "early_game_combat"
     )
-    assert bonuses_raw["Helga"] > bonuses_raw["Howard"]
+    assert (
+        contributions_raw["Helga"].power.gear > contributions_raw["Howard"].power.gear
+    )
     power_by_name = {"Helga": 100_000, "Howard": 400_000}
-    bonuses_san = _provisional_gear_bonus(
+    contributions_san = _provisional_contributions(
         usable,
         catalog,
         pieces,
         "early_game_combat",
         power_by_name=power_by_name,
     )
-    assert bonuses_san["Howard"] > bonuses_san["Helga"]
+    assert (
+        contributions_san["Howard"].power.gear
+        > contributions_san["Helga"].power.gear
+    )
 
 
 def test_opponent_from_formation_keeps_explicit_assignment_bonus() -> None:

@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.combat_formation import BACK, FRONT
 from ks.heroes.optimize.gear_assign import infer_slot
 from ks.heroes.optimize.gear_stats import expedition_stat_fraction
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ks.heroes.optimize.stat_contributions import StatContribution
 
 
 @dataclass(frozen=True)
@@ -138,23 +141,41 @@ def gear_health_bonus(pieces: Mapping[str, GearRecord] | None) -> float:
     return total
 
 
+def _share_total(contribution: "StatContribution", label: str) -> float:
+    share = contribution.stats.get(label)
+    return share.total if share is not None else 0.0
+
+
 def hero_tau(
     hero: HeroRecord,
     *,
+    contribution: "StatContribution | None" = None,
     gear_pieces: Mapping[str, GearRecord] | None = None,
 ) -> float:
-    hp = max(1, conquest_stat(hero, "Hero Health"))
-    defense = max(1, conquest_stat(hero, "Hero Defense"))
-    g = gear_health_bonus(gear_pieces)
-    return float(hp) * float(defense) * (1.0 + g)
+    """Toughness proxy: health × defense, with expedition gear health on top.
+
+    With a ``contribution`` the health/defense totals already carry the hero +
+    skills + gear conquest flats. The expedition health fraction from
+    chest/gloves is still applied as a multiplier because it is a percent buff
+    on a different axis, not one of those flats.
+    """
+    if contribution is not None:
+        hp = max(1.0, _share_total(contribution, "Hero Health"))
+        defense = max(1.0, _share_total(contribution, "Hero Defense"))
+    else:
+        hp = float(max(1, conquest_stat(hero, "Hero Health")))
+        defense = float(max(1, conquest_stat(hero, "Hero Defense")))
+    return hp * defense * (1.0 + gear_health_bonus(gear_pieces))
 
 
 def formation_tau(
     formation: Mapping[str, str],
     heroes_by_name: Mapping[str, HeroRecord],
     gear_by_hero: Mapping[str, Mapping[str, GearRecord]] | None = None,
+    contributions: Mapping[str, "StatContribution"] | None = None,
 ) -> tuple[float, float, dict[str, float]]:
     gear_by_hero = gear_by_hero or {}
+    contributions = contributions or {}
     by_hero: dict[str, float] = {}
     tau_f = 0.0
     tau_b = 0.0
@@ -164,7 +185,11 @@ def formation_tau(
             raise ValueError(
                 f"formation references unknown hero {name!r} in slot {slot!r}"
             )
-        tau = hero_tau(hero, gear_pieces=gear_by_hero.get(name))
+        tau = hero_tau(
+            hero,
+            contribution=contributions.get(name),
+            gear_pieces=gear_by_hero.get(name),
+        )
         by_hero[name] = tau
         if slot in FRONT:
             tau_f += tau

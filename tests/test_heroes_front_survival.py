@@ -161,3 +161,58 @@ def test_sanitize_is_rarity_insensitive_for_plausible_power() -> None:
         rarity="legendary",
         rarity_medians={"legendary": 337_100.0},
     ) == pytest.approx(250_000.0)
+
+
+from ks.heroes.models import HeroStats
+from ks.heroes.optimize.front_survival import formation_tau, hero_tau
+from ks.heroes.optimize.stat_contributions import CONQUEST, Share, StatContribution
+
+
+def _contrib(health: float, defense: float) -> StatContribution:
+    return StatContribution(
+        family=CONQUEST,
+        estimated=True,
+        skills_incomplete=False,
+        power=Share(0.0, 0.0, 0.0),
+        stats={
+            "Hero Health": Share(health * 0.6, health * 0.1, health * 0.3),
+            "Hero Defense": Share(defense * 0.6, defense * 0.1, defense * 0.3),
+        },
+    )
+
+
+def test_hero_tau_uses_contribution_totals() -> None:
+    hero = HeroRecord(
+        name="A", stats=HeroStats(conquest={"Hero Health": 100, "Hero Defense": 10})
+    )
+    assert hero_tau(hero, contribution=_contrib(500.0, 50.0)) == pytest.approx(
+        500.0 * 50.0
+    )
+
+
+def test_hero_tau_falls_back_to_scrape_without_contribution() -> None:
+    hero = HeroRecord(
+        name="A", stats=HeroStats(conquest={"Hero Health": 100, "Hero Defense": 10})
+    )
+    assert hero_tau(hero) == pytest.approx(100.0 * 10.0)
+
+
+def test_hero_tau_never_below_one() -> None:
+    assert hero_tau(HeroRecord(name="A"), contribution=_contrib(0.0, 0.0)) >= 1.0
+
+
+def test_formation_tau_splits_front_and_back_from_contributions() -> None:
+    heroes = {
+        n: HeroRecord(
+            name=n, stats=HeroStats(conquest={"Hero Health": 10, "Hero Defense": 2})
+        )
+        for n in ("a", "b", "c", "d", "e")
+    }
+    formation = {"F1": "a", "F2": "b", "B1": "c", "B2": "d", "B3": "e"}
+    contributions = {n: _contrib(100.0, 10.0) for n in heroes}
+    tau_f, tau_b, by_hero = formation_tau(
+        formation, heroes, None, contributions=contributions
+    )
+    assert tau_f == pytest.approx(2 * 100.0 * 10.0)
+    assert tau_b == pytest.approx(3 * 100.0 * 10.0)
+    assert set(by_hero) == set(heroes)
