@@ -2,10 +2,15 @@
  *
  * One column, one request: pick the event (and optionally the mode/side),
  * enter how much fodder is in the bag, and POST it all to
- * /api/optimize/gear-xp. The reply is a *proposal* — a baseline→best utility
- * delta, the ordered +1-level steps that got there, and what is left in the
- * bag. Nothing is written back to gear.json, by design; the user applies the
- * spends in game.
+ * /api/optimize/gear-xp/stream. The search re-solves the target event's
+ * optimiser once per affordable candidate piece, so it can run for minutes —
+ * the reply is one NDJSON line per step (see readNdjson/run below) so the
+ * status line shows real progress instead of a static "Searching…" the
+ * whole time. The final line is a "done" event carrying the same proposal
+ * shape the blocking /api/optimize/gear-xp endpoint returns: a baseline→best
+ * utility delta, the ordered +1-level steps that got there, and what is left
+ * in the bag. Nothing is written back to gear.json, by design; the user
+ * applies the spends in game.
  *
  * Labels are never spelled twice. The event names, the unit each event's
  * utility is measured in (`data-unit`) and the fodder names (`data-label`)
@@ -56,6 +61,11 @@
   }
 
   var API_URL = form.dataset.apiUrl || "/api/optimize/gear-xp";
+  // Same handler, streamed: one NDJSON line per step instead of one blocking
+  // reply, so a search that can run for minutes shows real progress rather
+  // than a static "Searching…" the whole time. No template attribute for
+  // this one — it is always the blocking endpoint's own path plus "/stream".
+  var STREAM_URL = API_URL + "/stream";
   var NO_STEPS =
     "No spend raises this lineup — the bag is too small for the next level, " +
     "or every piece is already at its cap.";
@@ -353,6 +363,59 @@
     return window.detailOf(data, "spend search failed (" + status + ")");
   }
 
+  /** One line of live progress from a "step" event — the piece it just
+   *  bought and the running utility, so "searching" is never a silent wait.
+   *  Mirrors the wording spend_xp.py's own stdout logging uses, minus the
+   *  ranked-candidates detail that only makes sense on a wide terminal. */
+  function progressLine(label, ev) {
+    var parts = [
+      "Searching " + label + " spends… step " + ev.step_no + "/" + ev.max_steps
+    ];
+    if (ev.chosen) {
+      parts.push("chose " + ev.chosen.label);
+      parts.push("utility " + fmtUtility(ev.utility));
+    }
+    if (ev.elapsed != null) parts.push(Math.round(ev.elapsed) + "s elapsed");
+    return parts.join(" · ");
+  }
+
+  /** Read a POST reply as newline-delimited JSON, calling `onEvent` with
+   *  each parsed line as it arrives. Real browsers stream `res.body` as it
+   *  downloads, so a multi-minute search's early events reach `onEvent`
+   *  immediately rather than waiting for the whole reply — anywhere that
+   *  streaming body is unavailable, this falls back to reading the whole
+   *  reply at once and replaying every line in order, which still dispatches
+   *  the same events, just without the progressive delivery. */
+  async function readNdjson(res, onEvent) {
+    function emit(line) {
+      var trimmed = line.trim();
+      if (trimmed) onEvent(JSON.parse(trimmed));
+    }
+    if (res.body && typeof res.body.getReader === "function") {
+      var reader = res.body.getReader();
+      var decoder = typeof TextDecoder !== "undefined" ? new TextDecoder() : null;
+      var buffer = "";
+      for (;;) {
+        var chunk = await reader.read();
+        if (chunk.done) break;
+        var text =
+          typeof chunk.value === "string"
+            ? chunk.value
+            : decoder
+            ? decoder.decode(chunk.value, { stream: true })
+            : String(chunk.value);
+        buffer += text;
+        var lines = buffer.split("\n");
+        buffer = lines.pop();
+        lines.forEach(emit);
+      }
+      emit(buffer);
+      return;
+    }
+    var whole = await res.text();
+    whole.split("\n").forEach(emit);
+  }
+
   /** {ok, body} or {ok: false, message} — every blank/invalid box is decided
    *  before anything is sent, so no request can carry a null count. */
   function collect() {
@@ -406,23 +469,47 @@
     setBusy(true);
     setStatus("Searching " + meta.label + " spends…", "");
     try {
-      var res = await fetch(API_URL, {
+      var res = await fetch(STREAM_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(collected.body)
       });
-      var text = await res.text();
-      var data = null;
-      try {
-        data = JSON.parse(text);
-      } catch (_) {
-        data = null;
+      if (!res.ok) {
+        var text = await res.text();
+        var errData = null;
+        try {
+          errData = JSON.parse(text);
+        } catch (_) {
+          errData = null;
+        }
+        throw new Error(detailOf(errData, res));
       }
-      if (!res.ok) throw new Error(detailOf(data, res));
-      if (!data || typeof data !== "object") {
+      var finalResult = null;
+      var streamError = null;
+      await readNdjson(res, function (ev) {
+        if (streamError) return; // first error wins; later lines are noise
+        if (ev.type === "error") {
+          streamError = ev.detail || "spend search failed";
+        } else if (ev.type === "start") {
+          setStatus(
+            "Searching " +
+              meta.label +
+              " spends… (" +
+              groupInt(ev.gear_count) +
+              " piece(s) in the bag)",
+            ""
+          );
+        } else if (ev.type === "step") {
+          setStatus(progressLine(meta.label, ev), "");
+        } else if (ev.type === "done") {
+          finalResult = ev.result;
+        }
+      });
+      if (streamError) throw new Error(streamError);
+      if (!finalResult || typeof finalResult !== "object") {
         throw new Error("spend search returned no result");
       }
-      var count = render(meta, data);
+      var count = render(meta, finalResult);
       setStatus(
         count === 1 ? "1 spend proposed." : count + " spends proposed.",
         "ok"

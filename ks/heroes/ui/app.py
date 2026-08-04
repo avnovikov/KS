@@ -117,7 +117,7 @@ def with_cache_bust(url: str | None, bust: str) -> str | None:
 
 try:
     from fastapi import Body, FastAPI, HTTPException, Request
-    from fastapi.responses import HTMLResponse, RedirectResponse
+    from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
     from fastapi.staticfiles import StaticFiles
     from fastapi.templating import Jinja2Templates
 except ImportError:  # pragma: no cover - exercised when ui extras missing
@@ -127,6 +127,7 @@ except ImportError:  # pragma: no cover - exercised when ui extras missing
     Request = None  # type: ignore[assignment,misc]
     HTMLResponse = None  # type: ignore[assignment,misc]
     RedirectResponse = None  # type: ignore[assignment,misc]
+    StreamingResponse = None  # type: ignore[assignment,misc]
     StaticFiles = None  # type: ignore[assignment,misc]
     Jinja2Templates = None  # type: ignore[assignment,misc]
 
@@ -1093,16 +1094,18 @@ def create_app(
         bundle["heroes_dir"] = str(heroes_path)
         return bundle
 
-    @app.post("/api/optimize/gear-xp")
-    def api_optimize_gear_xp(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
-        """Allocate fodder XP to maximize event utility (propose only)."""
+    def _prepare_gear_xp_search(body: dict[str, Any]) -> tuple[str, Any, list[GearRecord], Any]:
+        """Shared request parsing for the blocking and streaming gear-XP
+        endpoints: validates fodder counts, resolves the roster/gear/troops
+        the body asks for, and builds the utility function the search will
+        call. Raises HTTPException for anything the client sent wrong."""
         heroes_path, hero_store_local = _require_heroes()
         if gear_store is None or resolved_gear is None:
             raise HTTPException(
                 status_code=400,
                 detail="gear inventory required; start UI with --gear",
             )
-        from ks.heroes.optimize.spend_xp import allocate_fodder_xp, build_event_utility
+        from ks.heroes.optimize.spend_xp import build_event_utility
         from ks.heroes.optimize.xp_ladder import FodderBag
 
         event = str(body.get("event") or "swordland").strip().lower()
@@ -1140,15 +1143,56 @@ def create_app(
             utility_fn = build_event_utility(
                 event, heroes, mode=mode_s, troops_path=app.state.troops_path
             )
-            result = allocate_fodder_xp(
-                gear_pieces,
-                bag,
-                utility_fn,
-                event=event,
-            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return event, bag, gear_pieces, utility_fn
+
+    @app.post("/api/optimize/gear-xp")
+    def api_optimize_gear_xp(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        """Allocate fodder XP to maximize event utility (propose only)."""
+        from ks.heroes.optimize.spend_xp import allocate_fodder_xp
+
+        event, bag, gear_pieces, utility_fn = _prepare_gear_xp_search(body)
+        try:
+            result = allocate_fodder_xp(gear_pieces, bag, utility_fn, event=event)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return result.to_dict()
+
+    @app.post("/api/optimize/gear-xp/stream")
+    def api_optimize_gear_xp_stream(body: dict[str, Any] = Body(...)) -> Any:
+        """Same search as /api/optimize/gear-xp, streamed as newline-delimited
+        JSON progress events instead of one blocking reply — see
+        ks.heroes.optimize.spend_xp.iter_allocate_fodder_xp for the event
+        shapes. The plain endpoint's response contract is untouched for any
+        other consumer; only the interactive planner page uses this one, so
+        a search that can take minutes shows real per-step progress instead
+        of a silent wait.
+
+        Request validation (bad counts, missing gear, unsupported event)
+        still happens before the stream opens and still reports as a normal
+        4xx — only a failure discovered *during* the search (an infeasible
+        baseline) has already committed to a 200 response and is reported as
+        an in-stream ``{"type": "error", "detail": ...}`` line instead.
+        """
+        import json
+
+        from ks.heroes.optimize.spend_xp import iter_allocate_fodder_xp
+
+        event, bag, gear_pieces, utility_fn = _prepare_gear_xp_search(body)
+
+        def _events() -> Any:
+            try:
+                for ev in iter_allocate_fodder_xp(
+                    gear_pieces, bag, utility_fn, event=event
+                ):
+                    if ev["type"] == "done":
+                        ev = {**ev, "result": ev["result"].to_dict()}
+                    yield json.dumps(ev) + "\n"
+            except ValueError as exc:
+                yield json.dumps({"type": "error", "detail": str(exc)}) + "\n"
+
+        return StreamingResponse(_events(), media_type="application/x-ndjson")
 
     return app
 

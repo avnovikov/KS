@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.models import HeroRecord
@@ -453,7 +453,20 @@ def _candidate_label(piece: GearRecord | None, piece_id: str) -> str:
     return " ".join(bits)
 
 
-def allocate_fodder_xp(
+def _candidate_event(
+    by_id: dict[str, GearRecord], candidate: _UpgradeCandidate
+) -> dict[str, Any]:
+    return {
+        "piece_id": candidate.piece_id,
+        "label": _candidate_label(by_id.get(candidate.piece_id), candidate.piece_id),
+        "from_level": candidate.from_level,
+        "to_level": candidate.to_level,
+        "delta": candidate.delta,
+        "xp_cost": candidate.xp_cost,
+    }
+
+
+def iter_allocate_fodder_xp(
     gear: list[GearRecord],
     bag: FodderBag,
     utility_fn: UtilityFn,
@@ -462,16 +475,17 @@ def allocate_fodder_xp(
     max_steps: int = 50,
     ladder: dict[str, Any] | None = None,
     fodder_values: dict[str, int] | None = None,
-    verbose: bool = True,
-) -> SpendResult:
-    """Greedy: repeatedly take the next +1 level with best positive ΔU/XP.
+) -> Iterator[dict[str, Any]]:
+    """Same greedy search as ``allocate_fodder_xp``, as a stream of progress
+    events instead of a blocking return.
 
     Each step re-solves the target event's optimiser once per affordable
-    candidate piece, so a large inventory can take a while — ``verbose``
-    (on by default) prints real progress to stdout as it runs: how many
-    pieces were affordable this step, the top candidates ranked by ΔU per
-    XP (not every one scanned), which was chosen, and a running clock, so
-    "searching" is never a silent wait.
+    candidate piece, so a large inventory can take a while — this yields one
+    event per step as it happens (plus start/stop/merge/done markers) so a
+    caller with its own I/O (a log line, a streamed HTTP response) can show
+    real progress instead of waiting out the whole search in silence. The
+    final event is always ``{"type": "done", "result": SpendResult,
+    "elapsed": float}``.
     """
     if not gear:
         raise ValueError("gear inventory is empty")
@@ -480,18 +494,17 @@ def allocate_fodder_xp(
     levels = current_levels(gear)
     by_id = {p.piece_id: p for p in gear if p.piece_id}
 
-    def _log(msg: str) -> None:
-        if verbose:
-            print(f"[gear-xp] {msg}", flush=True)
-
     started = time.monotonic()
     baseline_u, baseline_summary = utility_fn(gear)
     if baseline_u == float("-inf"):
         raise ValueError("baseline event utility is infeasible")
-    _log(
-        f"searching event={event}: {len(by_id)} gear piece(s), "
-        f"baseline utility={baseline_u:.3f}, up to {max_steps} step(s)"
-    )
+    yield {
+        "type": "start",
+        "event": event,
+        "gear_count": len(by_id),
+        "baseline_utility": float(baseline_u),
+        "max_steps": max_steps,
+    }
 
     steps: list[SpendStep] = []
     raw_deltas: list[tuple[int, float]] = []
@@ -506,18 +519,14 @@ def allocate_fodder_xp(
         elapsed = time.monotonic() - started
         if candidate is None or candidate.delta <= 0:
             reason = "no affordable candidate raises utility" if ranked else "nothing affordable in the bag"
-            _log(f"step {step_no}/{max_steps}: {reason} — stopping ({elapsed:.1f}s elapsed)")
+            yield {
+                "type": "stop",
+                "step_no": step_no,
+                "max_steps": max_steps,
+                "reason": reason,
+                "elapsed": elapsed,
+            }
             break
-        _log(
-            f"step {step_no}/{max_steps}: {len(ranked)} affordable candidate(s), "
-            f"top {min(_LOG_TOP_CANDIDATES, len(ranked))} by ΔU/XP:"
-        )
-        for rank, cand in enumerate(ranked[:_LOG_TOP_CANDIDATES], start=1):
-            _log(
-                f"  {rank}. {_candidate_label(by_id.get(cand.piece_id), cand.piece_id)} "
-                f"+{cand.from_level}→+{cand.to_level}  ΔU={cand.delta:+.3f}  "
-                f"cost={cand.xp_cost:,} XP"
-            )
         current_bag, current_u, current_summary, step = _apply_upgrade_step(
             candidate,
             gear=gear,
@@ -529,24 +538,26 @@ def allocate_fodder_xp(
         )
         steps.append(step)
         raw_deltas.append((candidate.xp_cost, candidate.delta))
-        _log(
-            f"  -> chose {_candidate_label(by_id.get(candidate.piece_id), candidate.piece_id)}, "
-            f"utility now {current_u:.3f} ({elapsed:.1f}s elapsed)"
-        )
+        yield {
+            "type": "step",
+            "step_no": step_no,
+            "max_steps": max_steps,
+            "candidate_count": len(ranked),
+            "top": [_candidate_event(by_id, c) for c in ranked[:_LOG_TOP_CANDIDATES]],
+            "chosen": _candidate_event(by_id, candidate),
+            "utility": float(current_u),
+            "elapsed": elapsed,
+        }
 
     merged_steps, merged_bag = _merge_same_piece_steps(steps, current_bag, values)
     if len(merged_steps) != len(steps):
-        _log(
-            f"merged {len(steps)} step(s) into {len(merged_steps)} "
-            "(same-piece levels re-covered as one combined spend each)"
-        )
+        yield {
+            "type": "merge",
+            "before": len(steps),
+            "after": len(merged_steps),
+        }
 
-    _log(
-        f"done: {len(merged_steps)} step(s), ΔU total={current_u - baseline_u:+.3f} "
-        f"({time.monotonic() - started:.1f}s elapsed)"
-    )
-
-    return SpendResult(
+    result = SpendResult(
         event=event,
         baseline_utility=float(baseline_u),
         best_utility=float(current_u),
@@ -556,3 +567,79 @@ def allocate_fodder_xp(
         best_summary=dict(current_summary),
         value_summary=_value_summary(raw_deltas, current_u - baseline_u),
     )
+    yield {"type": "done", "result": result, "elapsed": time.monotonic() - started}
+
+
+def allocate_fodder_xp(
+    gear: list[GearRecord],
+    bag: FodderBag,
+    utility_fn: UtilityFn,
+    *,
+    event: str = "swordland",
+    max_steps: int = 50,
+    ladder: dict[str, Any] | None = None,
+    fodder_values: dict[str, int] | None = None,
+    verbose: bool = True,
+) -> SpendResult:
+    """Drain ``iter_allocate_fodder_xp`` and print its progress to stdout.
+
+    ``verbose`` (on by default) is what made the search's real progress
+    visible to a caller with no other way to see it (a script, a test) —
+    stays the default here; the streaming HTTP API renders the same events
+    to the browser instead of the console (see
+    ``ks.heroes.ui.app.api_optimize_gear_xp_stream``).
+    """
+
+    def _log(msg: str) -> None:
+        if verbose:
+            print(f"[gear-xp] {msg}", flush=True)
+
+    result: SpendResult | None = None
+    for ev in iter_allocate_fodder_xp(
+        gear,
+        bag,
+        utility_fn,
+        event=event,
+        max_steps=max_steps,
+        ladder=ladder,
+        fodder_values=fodder_values,
+    ):
+        kind = ev["type"]
+        if kind == "start":
+            _log(
+                f"searching event={ev['event']}: {ev['gear_count']} gear piece(s), "
+                f"baseline utility={ev['baseline_utility']:.3f}, up to {ev['max_steps']} step(s)"
+            )
+        elif kind == "step":
+            _log(
+                f"step {ev['step_no']}/{ev['max_steps']}: {ev['candidate_count']} affordable candidate(s), "
+                f"top {len(ev['top'])} by ΔU/XP:"
+            )
+            for rank, cand in enumerate(ev["top"], start=1):
+                _log(
+                    f"  {rank}. {cand['label']} +{cand['from_level']}→+{cand['to_level']}  "
+                    f"ΔU={cand['delta']:+.3f}  cost={cand['xp_cost']:,} XP"
+                )
+            _log(
+                f"  -> chose {ev['chosen']['label']}, utility now {ev['utility']:.3f} "
+                f"({ev['elapsed']:.1f}s elapsed)"
+            )
+        elif kind == "stop":
+            _log(
+                f"step {ev['step_no']}/{ev['max_steps']}: {ev['reason']} — "
+                f"stopping ({ev['elapsed']:.1f}s elapsed)"
+            )
+        elif kind == "merge":
+            _log(
+                f"merged {ev['before']} step(s) into {ev['after']} "
+                "(same-piece levels re-covered as one combined spend each)"
+            )
+        else:  # "done"
+            result = ev["result"]
+            _log(
+                f"done: {len(result.steps)} step(s), "
+                f"ΔU total={result.best_utility - result.baseline_utility:+.3f} "
+                f"({ev['elapsed']:.1f}s elapsed)"
+            )
+    assert result is not None
+    return result
