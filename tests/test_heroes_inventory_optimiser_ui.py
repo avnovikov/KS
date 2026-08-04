@@ -1026,16 +1026,16 @@ def test_only_mastery_bearing_rarities_require_a_mastery_value(
     assert re.search(r'data-field="enhancement_level"[^>]*data-required', blue, re.S)
 
 
-def test_hero_row_with_no_power_is_incomplete_in_a_way_editing_cannot_clear(
+def test_hero_row_with_no_power_is_marked_incomplete_and_has_editable_power(
     tmp_path: Path,
 ) -> None:
-    """`_hero_incomplete` counts a missing power as incomplete, and nothing
-    on this page can supply one (star edits rescale power, and None rescales
-    to None). The row says so, or the script would helpfully un-flag it the
-    first time the user touched its stars."""
+    """`_hero_incomplete` counts a missing power as incomplete. Power is now
+    an editable input, so the user can supply it directly and the row is no
+    longer locked in its incompleteness."""
     blocks = _row_blocks(_spreadsheet_client(tmp_path).get("/inventory/heroes").text)
     assert 'data-incomplete="1"' in blocks["Gordon"]
-    assert 'data-incomplete-locked="1"' in blocks["Gordon"]
+    assert 'data-incomplete-locked="1"' not in blocks["Gordon"]
+    assert 'data-field="power"' in blocks["Gordon"]
     assert 'data-incomplete="1"' not in blocks["Helga"]
 
 

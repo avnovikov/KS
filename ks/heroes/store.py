@@ -5,7 +5,10 @@ import sqlite3
 from dataclasses import replace
 from pathlib import Path
 
+from ks.heroes.assurance import ensure_legacy
 from ks.heroes.models import HeroRecord
+
+_LEGACY_PRESENT_FIELDS = frozenset({"power", "stars", "level", "pellets"})
 
 # Fields often set by hand / follow-up edits; keep prior value if update leaves them empty.
 _PRESERVE_IF_NONE = ("level", "pellets", "stars", "escorts", "power", "rarity", "troop_type")
@@ -111,6 +114,8 @@ class HeroStore:
                 conn.execute("ALTER TABLE heroes ADD COLUMN pellets INTEGER")
             if "level" not in hero_cols:
                 conn.execute("ALTER TABLE heroes ADD COLUMN level INTEGER")
+            if "assurance_json" not in hero_cols:
+                conn.execute("ALTER TABLE heroes ADD COLUMN assurance_json TEXT")
 
     def _load_existing_json(self) -> None:
         if not self.json_path.is_file():
@@ -124,7 +129,17 @@ class HeroStore:
             )
         for item in heroes:
             hero = HeroRecord.from_dict(item)
+            hero = self._apply_legacy_assurance(hero)
             self._heroes[hero.name] = hero
+
+    @staticmethod
+    def _apply_legacy_assurance(hero: HeroRecord) -> HeroRecord:
+        """Fill assurance entries for present roster fields that lack one."""
+        present = {f: getattr(hero, f) for f in _LEGACY_PRESENT_FIELDS}
+        filled = ensure_legacy(hero.assurance, present_fields=present)
+        if filled == hero.assurance:
+            return hero
+        return replace(hero, assurance=filled)
 
     def upsert(self, hero: HeroRecord, overwrite: frozenset[str] | None = None) -> HeroRecord:
         """Merge and persist hero; return the final stored record.
@@ -138,6 +153,7 @@ class HeroStore:
         prev = self._heroes.get(hero.name)
         if prev is not None:
             hero = _merge_preserved(prev, hero, overwrite=ow)
+        hero = self._apply_legacy_assurance(hero)
         self._heroes[hero.name] = hero
         self._write_json()
         self._write_sqlite(hero)
@@ -166,13 +182,14 @@ class HeroStore:
         )
 
     def _write_sqlite(self, hero: HeroRecord) -> None:
+        assurance_json = json.dumps(hero.to_dict()["assurance"]) if hero.assurance else None
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO heroes (
                     name, power, level, rarity, troop_type, escorts, stars, pellets,
-                    roster_page, roster_index, scraped_at, name_screenshot
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    roster_page, roster_index, scraped_at, name_screenshot, assurance_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(name) DO UPDATE SET
                     power=excluded.power,
                     level=excluded.level,
@@ -184,7 +201,8 @@ class HeroStore:
                     roster_page=excluded.roster_page,
                     roster_index=excluded.roster_index,
                     scraped_at=excluded.scraped_at,
-                    name_screenshot=excluded.name_screenshot
+                    name_screenshot=excluded.name_screenshot,
+                    assurance_json=excluded.assurance_json
                 """,
                 (
                     hero.name,
@@ -199,6 +217,7 @@ class HeroStore:
                     hero.roster_index,
                     hero.scraped_at,
                     hero.name_screenshot,
+                    assurance_json,
                 ),
             )
             conn.execute("DELETE FROM hero_stats WHERE hero_name = ?", (hero.name,))

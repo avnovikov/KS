@@ -176,6 +176,8 @@ function makePage(spec) {
 
     var powerCell = new El("td");
     powerCell.classes["power-cell"] = true;
+    // textContent is only kept for gear rows (no power input). For heroes
+    // rows the power input carries the value; the td is the input's parent.
     powerCell.textContent =
       rowSpec.power === undefined || rowSpec.power === null ? "—" : String(rowSpec.power);
 
@@ -205,7 +207,15 @@ function makePage(spec) {
       control.dataset.label = inputSpec.label || rowSpec.id + " " + inputSpec.field;
       control.value = inputSpec.value === undefined ? "" : String(inputSpec.value);
 
-      var cell = new El("td");
+      // Power inputs live inside powerCell (the td with class power-cell),
+      // matching the template. Every other input gets its own td.
+      var cell;
+      if (inputSpec.field === "power") {
+        cell = powerCell;
+        powerCell.textContent = ""; // input carries the value now
+      } else {
+        cell = new El("td");
+      }
       // Only the store's locked fields get the pin markup, exactly as the
       // templates render it — hero stars/pellets are plain cells with
       // nowhere to put a pin.
@@ -242,6 +252,15 @@ function makePage(spec) {
         });
       }
       if (selector === ".power-cell") return [powerCell];
+      // input[data-field=<name>] — used by applyServerRow to set the power
+      // input value and to look up cells for assurance painting.
+      var m = selector.match(/^input\[data-field=(\w+)\]$/);
+      if (m) {
+        var fieldName = m[1];
+        return inputs.filter(function (inp) {
+          return inp.dataset.field === fieldName;
+        });
+      }
       return null;
     };
     tbody.appendChild(tr);
@@ -566,7 +585,11 @@ function makePage(spec) {
       removeDialog.fire("click", { target: removeConfirm });
     },
     powerCell: function (id) {
-      return this.row(id).querySelector(".power-cell").textContent;
+      var row = this.row(id);
+      var input = row.querySelector("input[data-field=power]");
+      // Heroes rows have an editable power input; gear rows keep the text cell.
+      if (input) return input.value;
+      return row.querySelector(".power-cell").textContent;
     },
     /* Read off the tbody rather than the build-time row list, so a row the
        delete path detached really is gone from what this reports. */
@@ -787,6 +810,11 @@ function heroRow(name, opts) {
       {
         field: "pellets", sortKey: "pellets", blank: "null",
         label: name + " pellets", min: "0", max: "5", value: opts.pellets,
+      },
+      {
+        field: "power", sortKey: "power", blank: "null",
+        label: name + " power", min: "0", max: "99999999",
+        value: opts.power === null || opts.power === undefined ? "" : String(opts.power),
       },
     ],
   };
@@ -2132,6 +2160,83 @@ async function suiteRemove() {
   );
 }
 
+/* Test that applyServerRow paints assurance tints and updates the power input. */
+async function suiteAssurance() {
+  var d = makePage(heroesSpec());
+  boot(d);
+  await settle();
+
+  var powerInput = d.input("Helga", "power");
+  var powerCell = d.cell("Helga", "power");
+  var starsCell = d.cell("Helga", "stars");
+  var starsInput = d.input("Helga", "stars");
+
+  // Set up the reply before firing the event — the fake fetch consumes
+  // nextResponse synchronously and settles the promise in the microtask queue.
+  d.jsonReply({
+    hero: {
+      power: 1050000,
+      level: 40,
+      stars: 3,
+      pellets: 0,
+      assurance: {
+        power: { level: "medium", reason: "scaled_from_stars" },
+        stars: { level: "high", reason: "manual_confirm" },
+      },
+    },
+  });
+  starsInput.value = "3";
+  starsInput.fire("blur");
+  await settle();
+
+  check(
+    "applyServerRow updates the power input value from the server reply",
+    powerInput && powerInput.value === "1050000",
+    powerInput ? powerInput.value : "no-input"
+  );
+  check(
+    "and keeps the row sort key in step",
+    d.row("Helga").dataset.power === "1050000",
+    d.row("Helga").dataset.power
+  );
+  check(
+    "applyServerRow paints data-assurance on the power cell",
+    powerCell && powerCell.dataset.assurance === "medium",
+    powerCell ? String(powerCell.dataset.assurance) : "no-cell"
+  );
+  check(
+    "and sets title from the assurance reason",
+    powerCell && powerCell.title === "scaled_from_stars",
+    powerCell ? powerCell.title : "no-cell"
+  );
+  check(
+    "applyServerRow paints assurance on the stars cell too",
+    starsCell && starsCell.dataset.assurance === "high",
+    starsCell ? String(starsCell.dataset.assurance) : "no-cell"
+  );
+
+  // A follow-up reply with no assurance for power clears that tint.
+  d.jsonReply({
+    hero: {
+      power: 1000000,
+      level: 40,
+      stars: 2,
+      pellets: 0,
+      assurance: {
+        stars: { level: "high", reason: "manual_confirm" },
+      },
+    },
+  });
+  starsInput.value = "2";
+  starsInput.fire("blur");
+  await settle();
+  check(
+    "a field absent from the assurance payload has its tint cleared",
+    powerCell && powerCell.dataset.assurance === undefined,
+    powerCell ? String(powerCell.dataset.assurance) : "no-cell"
+  );
+}
+
 /* --- run ------------------------------------------------------------------- */
 
 (async function main() {
@@ -2149,6 +2254,7 @@ async function suiteRemove() {
     await suitePickers();
     await suiteLocks();
     await suiteRemove();
+    await suiteAssurance();
   } catch (err) {
     check("harness ran to completion", false, String((err && err.stack) || err));
   }
