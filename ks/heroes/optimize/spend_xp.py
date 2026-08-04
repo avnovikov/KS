@@ -338,6 +338,63 @@ def _apply_upgrade_step(
     return new_bag, new_u, new_summary, step
 
 
+def _merge_consecutive_runs(
+    steps: list[SpendStep],
+    final_bag: FodderBag,
+    values: dict[str, int],
+) -> tuple[list[SpendStep], FodderBag]:
+    """Collapse consecutive +1 levels on the same piece into one step.
+
+    The greedy loop covers each level's cost independently as it goes, so a
+    piece that stays the best pick for several levels in a row can pay for
+    each one with whatever's cheapest *at that moment* — e.g. a 55 XP level
+    and a 65 XP level each rounding up to their own 100-XP part when nothing
+    smaller is left, spending 200 XP of fodder for 120 XP of real cost. This
+    does not change which piece or level gets picked (that decision, and the
+    bag's affordability check at each step, are untouched) — it only
+    re-covers a run's *combined* real cost in one min-waste plan, refunding
+    the run's naive fodder into the bag first so the replan sees everything
+    that was actually available before the run started.
+    """
+    merged: list[SpendStep] = []
+    bag = final_bag
+    i = 0
+    while i < len(steps):
+        j = i
+        run_xp = 0
+        run_fodder: dict[str, int] = {}
+        while j < len(steps) and steps[j].piece_id == steps[i].piece_id:
+            run_xp += steps[j].xp_spent
+            for kind, n in steps[j].fodder_spent.items():
+                run_fodder[kind] = run_fodder.get(kind, 0) + n
+            j += 1
+        run = steps[i:j]
+        if len(run) == 1:
+            merged.append(run[0])
+            i = j
+            continue
+        refunded = bag
+        for kind, n in run_fodder.items():
+            refunded = replace(refunded, **{kind: getattr(refunded, kind) + n})
+        # refunded always covers run_xp (it held at least run_fodder's raw XP
+        # value before the refund), so this cannot return None in practice —
+        # the fallback keeps a working result if that ever stops holding.
+        new_plan = refunded.plan_cover(run_xp, values=values) or run_fodder
+        bag = refunded.consume(new_plan)
+        merged.append(
+            SpendStep(
+                piece_id=run[0].piece_id,
+                name=run[0].name,
+                from_level=run[0].from_level,
+                to_level=run[-1].to_level,
+                xp_spent=run_xp,
+                fodder_spent=new_plan,
+            )
+        )
+        i = j
+    return merged, bag
+
+
 def _candidate_label(piece: GearRecord | None, piece_id: str) -> str:
     if piece is None:
         return piece_id
@@ -427,8 +484,15 @@ def allocate_fodder_xp(
             f"utility now {current_u:.3f} ({elapsed:.1f}s elapsed)"
         )
 
+    merged_steps, merged_bag = _merge_consecutive_runs(steps, current_bag, values)
+    if len(merged_steps) != len(steps):
+        _log(
+            f"merged {len(steps)} step(s) into {len(merged_steps)} "
+            "(consecutive levels on the same piece, re-covered as one combined spend)"
+        )
+
     _log(
-        f"done: {len(steps)} step(s), ΔU total={current_u - baseline_u:+.3f} "
+        f"done: {len(merged_steps)} step(s), ΔU total={current_u - baseline_u:+.3f} "
         f"({time.monotonic() - started:.1f}s elapsed)"
     )
 
@@ -436,8 +500,8 @@ def allocate_fodder_xp(
         event=event,
         baseline_utility=float(baseline_u),
         best_utility=float(current_u),
-        steps=tuple(steps),
-        leftover=current_bag,
+        steps=tuple(merged_steps),
+        leftover=merged_bag,
         baseline_summary=dict(baseline_summary),
         best_summary=dict(current_summary),
     )

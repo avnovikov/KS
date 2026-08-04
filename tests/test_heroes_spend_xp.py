@@ -8,8 +8,14 @@ import pytest
 
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.models import HeroRecord, HeroStats
-from ks.heroes.optimize.spend_xp import allocate_fodder_xp, apply_levels, build_event_utility
-from ks.heroes.optimize.xp_ladder import FodderBag, load_xp_ladder
+from ks.heroes.optimize.spend_xp import (
+    SpendStep,
+    _merge_consecutive_runs,
+    allocate_fodder_xp,
+    apply_levels,
+    build_event_utility,
+)
+from ks.heroes.optimize.xp_ladder import FodderBag, load_fodder_xp_values, load_xp_ladder
 
 
 def _piece(
@@ -111,6 +117,77 @@ def test_allocate_respects_cap() -> None:
     assert all(s.to_level <= 80 for s in result.steps)
     final = apply_levels(gear, {gear[0].piece_id: result.steps[-1].to_level}) if result.steps else gear
     assert int(final[0].enhancement_level or 0) <= 80
+
+
+def test_merge_consecutive_runs_recombines_fodder_for_less_waste() -> None:
+    """Two levels on the same piece, each independently forced to round up
+    to a whole 100-XP part because nothing smaller was available *at that
+    step*, can waste more overall (200 XP of fodder for 120 XP of real
+    cost) than covering their combined real cost in one plan. By the time
+    the run ends some grey has freed up elsewhere in the bag, so the merge
+    finds the exact-cost 1×part_100 + 2×grey cover instead."""
+    steps = [
+        SpendStep(
+            piece_id="a", name="Crusader's Breastplate", from_level=9, to_level=10,
+            xp_spent=55, fodder_spent={"part_100": 1},
+        ),
+        SpendStep(
+            piece_id="a", name="Crusader's Breastplate", from_level=10, to_level=11,
+            xp_spent=65, fodder_spent={"part_100": 1},
+        ),
+    ]
+    final_bag = FodderBag(grey=5, part_100=3)
+    values = load_fodder_xp_values()
+    merged, new_bag = _merge_consecutive_runs(steps, final_bag, values)
+
+    assert len(merged) == 1
+    step = merged[0]
+    assert step.piece_id == "a"
+    assert step.name == "Crusader's Breastplate"
+    assert step.from_level == 9
+    assert step.to_level == 11
+    assert step.xp_spent == 120
+    assert step.fodder_spent == {"part_100": 1, "grey": 2}
+    # Refunding the run's naive 2×part_100 and re-covering 120 XP exactly
+    # frees a part_100 and spends 2 of the 5 grey that had freed up elsewhere.
+    assert new_bag.part_100 == 4
+    assert new_bag.grey == 3
+
+
+def test_merge_consecutive_runs_leaves_non_adjacent_or_single_steps_alone() -> None:
+    steps = [
+        SpendStep(piece_id="a", name="A", from_level=0, to_level=1, xp_spent=10, fodder_spent={"grey": 1}),
+        SpendStep(piece_id="b", name="B", from_level=0, to_level=1, xp_spent=10, fodder_spent={"grey": 1}),
+        SpendStep(piece_id="a", name="A", from_level=1, to_level=2, xp_spent=15, fodder_spent={"grey": 2}),
+    ]
+    bag = FodderBag(grey=10)
+    values = load_fodder_xp_values()
+    merged, new_bag = _merge_consecutive_runs(steps, bag, values)
+    # "a" appears twice but not consecutively (separated by "b"), so nothing
+    # merges and the bag is untouched.
+    assert merged == steps
+    assert new_bag == bag
+
+
+def test_allocate_fodder_xp_merges_consecutive_levels_on_the_same_piece() -> None:
+    """End-to-end: the same wiring the unit test above exercises directly,
+    reached through the real search — a piece kept as the best pick for two
+    consecutive levels reports as one merged SpendStep, not two."""
+    gear = [_piece("a", level=9, rarity="epic")]  # epic cap 80
+
+    def utility(g):
+        lv = int(g[0].enhancement_level or 0)
+        return float(lv), {"level": lv}
+
+    ladder = load_xp_ladder()
+    bag = FodderBag(grey=5, part_100=3)
+    result = allocate_fodder_xp(
+        gear, bag, utility, event="test", max_steps=2, ladder=ladder
+    )
+    assert len(result.steps) == 1
+    assert result.steps[0].piece_id == "a"
+    assert result.steps[0].from_level == 9
+    assert result.steps[0].to_level == 11
 
 
 def test_allocate_stops_when_no_positive_delta() -> None:
