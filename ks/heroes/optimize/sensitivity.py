@@ -7,6 +7,7 @@ from typing import Any, Callable, Mapping
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.opponent_models import GEAR_FRONT_FIRST, OpponentLineup
+from ks.heroes.optimize.stat_contributions import CONQUEST, StatContribution
 from ks.heroes.optimize.types import CatalogEntry
 
 BaseScoreFn = Callable[..., float]
@@ -75,9 +76,17 @@ def build_sensitivity(
     lambda_tau: float = 5.0,
     O_scale: float = 1.0,
     power_by_name: dict[str, int | None] | None = None,
+    contributions: dict[str, StatContribution] | None = None,
 ) -> dict[str, Any]:
-    """Evaluate gear-order and F1↔F2 variants vs a fixed primary foe."""
+    """Evaluate gear-order and F1↔F2 variants vs a fixed primary foe.
+
+    Each variant re-assigns gear via ``gear_maps_for_formation``, so each
+    variant rebuilds its **own** contributions from *its* gear map — reusing
+    one contributions dict across variants would score every gear order
+    identically and flatten the whole sensitivity table to zero deltas.
+    """
     # Local import avoids circular import with survival_pipeline.
+    from ks.heroes.optimize.combat_formation import contributions_from_assignment
     from ks.heroes.optimize.survival_pipeline import (
         evaluate_vs_foe,
         gear_maps_for_formation,
@@ -85,6 +94,10 @@ def build_sensitivity(
 
     if "F1" not in formation or "F2" not in formation:
         raise ValueError("formation must include F1 and F2")
+
+    family = next(iter((contributions or {}).values()), None)
+    family = family.family if family is not None else CONQUEST
+    heroes_by_name = {h.name: h for h in heroes}
 
     swapped = _swap_front(formation)
     specs: list[tuple[str, str, dict[str, str], tuple[str, ...]]] = [
@@ -128,6 +141,13 @@ def build_sensitivity(
             profile=gear_profile,
             gear_order=order,
         )
+        variant_contributions = contributions_from_assignment(
+            {name: our_gear.get(name, {}) for name in form.values()},
+            catalog=catalog,
+            heroes_by_name=heroes_by_name,
+            power_by_name=power_by_name,
+            family=family,
+        )
         block = evaluate_vs_foe(
             form,
             heroes,
@@ -141,6 +161,7 @@ def build_sensitivity(
             O_scale=O_scale,
             power_by_name=power_by_name,
             gear_profile=gear_profile,
+            contributions=variant_contributions,
         )
         score_eff = float(block["score_eff"])
         s_val = float(block["s"])

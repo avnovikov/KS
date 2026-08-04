@@ -40,8 +40,8 @@ def _roles(heroes: list[HeroRecord]) -> dict:
     }
 
 
-def _base_score(hero, entry, roles, *, effective_power, gear_bonus):
-    return float(effective_power or hero.power or 0) / 1000.0 + gear_bonus
+def _base_score(hero, entry, roles, *, effective_power, contribution):
+    return float(effective_power or 0) / 1000.0
 
 
 def test_build_sensitivity_baseline_delta_zero() -> None:
