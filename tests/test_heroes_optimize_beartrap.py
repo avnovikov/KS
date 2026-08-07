@@ -235,3 +235,86 @@ def test_beartrap_rally_lead_uses_damage_simulator() -> None:
     assert sum(result.troops.values()) == result.effective_capacity
     assert result.expected_personal_points == result.breakdown["bear_damage"]
     assert result.effective_capacity == 18_000 + 300  # escorts
+
+def test_beartrap_skillmod_rises_with_host_lethality_up() -> None:
+    """Host catalog DamageUp must raise rally_lead skillmod and score."""
+    from ks.heroes.optimize.bear_damage import BeartrapBuffs, load_beartrap_buffs
+    from ks.heroes.optimize.troop_stats import load_troop_stats
+
+    root = Path(__file__).resolve().parents[1]
+    event = load_event_profile(root / "config" / "events" / "beartrap.yaml")
+    scenarios = load_scenarios(root / "config" / "point_scenarios_beartrap.yaml")
+    troop_stats = load_troop_stats(root / "config" / "troop_stats.yaml")
+    # No assumed joiners — isolate host SkillMod.
+    buffs = BeartrapBuffs(trap_level=5, research_skillmod=1.0, assumed_joiners=())
+
+    base_heroes = [
+        HeroRecord(name="Amadeus", power=2000, escorts=100, stars=5),
+        HeroRecord(name="Petra", power=1800, escorts=100, stars=5),
+        HeroRecord(name="Marlin", power=1700, escorts=100, stars=5),
+    ]
+    catalog_base = {
+        "Amadeus": CatalogEntry(
+            name="Amadeus",
+            troop="infantry",
+            widget_type="attack",
+            rally_widget_priority=5,
+            effects=(EffectTag("rally_attack", 15.0, "widget"),),
+        ),
+        "Petra": CatalogEntry(
+            name="Petra",
+            troop="cavalry",
+            widget_type="attack",
+            rally_widget_priority=4,
+            effects=(EffectTag("rally_attack", 15.0, "widget"),),
+        ),
+        "Marlin": CatalogEntry(
+            name="Marlin",
+            troop="archer",
+            widget_type="attack",
+            rally_widget_priority=3,
+            effects=(EffectTag("rally_lethality", 15.0, "widget"),),
+        ),
+    }
+    catalog_boosted = {
+        **catalog_base,
+        "Amadeus": CatalogEntry(
+            name="Amadeus",
+            troop="infantry",
+            widget_type="attack",
+            rally_widget_priority=5,
+            effects=(
+                EffectTag("rally_attack", 15.0, "widget"),
+                EffectTag(
+                    "lethality_up",
+                    25.0,
+                    "expedition",
+                    effect_op=101,
+                    first_expedition=True,
+                ),
+            ),
+        ),
+    }
+    troops = TroopsConfig(
+        infantry=30_000,
+        cavalry=30_000,
+        archers=40_000,
+        march_capacity=18_000,
+        infantry_levels=((6, 30_000),),
+        cavalry_levels=((6, 30_000),),
+        archers_levels=((6, 40_000),),
+    )
+    bare = recommend(
+        base_heroes, catalog_base, troops, scenarios,
+        force_mode="rally_lead", event=event, troop_stats=troop_stats,
+        beartrap_buffs=buffs,
+    )
+    boosted = recommend(
+        base_heroes, catalog_boosted, troops, scenarios,
+        force_mode="rally_lead", event=event, troop_stats=troop_stats,
+        beartrap_buffs=buffs,
+    )
+    assert boosted.breakdown["skillmod"] > bare.breakdown["skillmod"]
+    assert boosted.expected_personal_points > bare.expected_personal_points
+    assert boosted.breakdown["host_damage_up"].get("101", 0) >= 25.0
+

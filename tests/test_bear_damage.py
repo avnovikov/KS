@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from ks.heroes.optimize.bear_damage import (
     BeartrapBuffs,
     fill_ratio_march,
@@ -93,5 +95,50 @@ def test_load_beartrap_buffs_defaults() -> None:
     assert isinstance(buffs, BeartrapBuffs)
     assert buffs.trap_level == 5
     assert buffs.trap_attack_bonus == 0.25
-    sm = buffs.effective_skillmod(0.0)
-    assert abs(sm - buffs.base_skillmod * buffs.joiner_skillmod) < 1e-9
+    assert buffs.research_skillmod == pytest.approx(1.0)
+    # Default assumed joiners: 2×101 + 2×102 at 25% → product 2.25
+    assert buffs.joiner_damage_up_product() == pytest.approx(2.25)
+    assert buffs.effective_skillmod() == pytest.approx(1.0 * 2.25)
+
+
+def test_bucket_product_same_op_adds_then_scales() -> None:
+    from ks.heroes.optimize.bear_damage import bucket_product
+
+    # Four Chenkos at 25% (op 101) → 1 + 100/100 = 2.0
+    assert bucket_product({101: 100.0}) == pytest.approx(2.0)
+    # Two Chenko + two Amane → 1.5 * 1.5 = 2.25
+    assert bucket_product({101: 50.0, 102: 50.0}) == pytest.approx(2.25)
+
+
+def test_compute_skillmod_multiplies_research_and_damage_up() -> None:
+    from ks.heroes.optimize.bear_damage import compute_skillmod
+
+    sm = compute_skillmod(
+        research=1.2,
+        damage_up={101: 50.0, 102: 50.0},
+    )
+    assert sm == pytest.approx(1.2 * 2.25)
+
+
+def test_host_damage_up_buckets_from_catalog_lethality() -> None:
+    from ks.heroes.models import HeroRecord
+    from ks.heroes.optimize.bear_damage import host_skillmod_buckets
+    from ks.heroes.optimize.types import CatalogEntry, EffectTag
+
+    hero = HeroRecord(name="Chenko", stars=5, pellets=0)
+    entry = CatalogEntry(
+        name="Chenko",
+        troop="cavalry",
+        effects=(
+            EffectTag(
+                "lethality_up",
+                25.0,
+                "expedition",
+                effect_op=101,
+                first_expedition=True,
+            ),
+        ),
+    )
+    buckets = host_skillmod_buckets([(hero, entry)])
+    assert buckets["damage_up"][101] == pytest.approx(25.0)
+    assert buckets["damage_up"].get(102, 0.0) == 0.0

@@ -56,14 +56,11 @@ model.py                            # beartrap rally_lead path
 cli.py                              # bear-damage + recommend breakdown
 ```
 
-## SkillMod (v1)
+## SkillMod (v1 — superseded)
 
-```
-effective_skillmod = base_skillmod × joiner_skillmod
-                   × (1 + hero_strength_scale × lineup_hero_strength)
-```
-
-Defaults calibrated so a balanced ~80 245 T6-equivalent march at trap L5 hits ~180k when `effective_skillmod ≈ 5.08` (heroes/research/gear folded into knobs until OCR exists).
+Superseded by `docs/superpowers/specs/2026-08-07-beartrap-skillmod-design.md`.
+SkillMod is now an op-bucket product (research × host catalog DamageUp ×
+assumed joiners), not a single calibrated constant.
 
 ## Non-goals (v1)
 

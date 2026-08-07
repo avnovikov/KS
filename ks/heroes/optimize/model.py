@@ -447,13 +447,30 @@ def _extract_bear_damage_solution(
     troop_stats: TroopStatsTable,
     truegold: int,
     beartrap_buffs: BeartrapBuffs | None,
+    heroes: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
 ) -> ModeSolution:
+    from ks.heroes.optimize.bear_damage import host_skillmod_buckets
+
     x = variables.hero_selected
     chosen = tuple(sorted(n for n in x if pulp.value(x[n]) and pulp.value(x[n]) > 0.5))
     eff_cap = troops.march_capacity + sum(features.escorts[n] for n in chosen)
     buffs = beartrap_buffs or BeartrapBuffs()
     lineup_strength = sum(features.strengths[n] for n in chosen)
-    skillmod = buffs.effective_skillmod(lineup_strength)
+    by_name = {h.name: h for h in heroes}
+    host_pairs = [
+        (by_name[n], catalog[n])
+        for n in chosen
+        if n in by_name and n in catalog
+    ]
+    host_buckets = host_skillmod_buckets(host_pairs)
+    skillmod = buffs.effective_skillmod(
+        lineup_strength,
+        host_damage_up=host_buckets["damage_up"],
+        host_defense_up=host_buckets["defense_up"],
+        host_opp_damage_down=host_buckets["opp_damage_down"],
+        host_opp_defense_down=host_buckets["opp_defense_down"],
+    )
     fill_cap = min(eff_cap, troops.infantry + troops.cavalry + troops.archers)
     counts, _filled_levels, dmg = greedy_fill_march(
         _inventory_levels(troops),
@@ -466,6 +483,13 @@ def _extract_bear_damage_solution(
     )
     breakdown = dmg.breakdown()
     breakdown["hero_strength"] = float(lineup_strength)
+    breakdown["research_skillmod"] = float(buffs.research_skillmod)
+    breakdown["host_damage_up"] = {
+        str(k): float(v) for k, v in host_buckets["damage_up"].items()
+    }
+    breakdown["joiner_damage_up"] = {
+        str(k): float(v) for k, v in buffs.joiner_damage_up_buckets().items()
+    }
     return ModeSolution(
         mode=scenario.mode,
         hero_names=chosen,
@@ -475,7 +499,6 @@ def _extract_bear_damage_solution(
         breakdown=breakdown,
         status="Optimal",
     )
-
 
 def solve_mode(
     heroes: list[HeroRecord],
@@ -538,6 +561,8 @@ def solve_mode(
             troop_stats=troop_stats,
             truegold=truegold,
             beartrap_buffs=beartrap_buffs,
+            heroes=usable,
+            catalog=catalog,
         )
 
     return _extract_optimal_solution(variables, features, troops, terms, scenario)

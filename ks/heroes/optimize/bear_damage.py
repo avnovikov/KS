@@ -5,11 +5,15 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 import yaml
 
 from ks.heroes.optimize.troop_stats import TroopStatsTable, TroopUnitStats
+
+if TYPE_CHECKING:
+    from ks.heroes.models import HeroRecord
+    from ks.heroes.optimize.types import CatalogEntry
 
 BEAR_COUNT = 5000
 BEAR_DEFENSE = 83.3333 * 10.0 / 100.0  # 8.33333
@@ -50,13 +54,24 @@ class BearDamageResult:
 
 
 @dataclass(frozen=True)
+class AssumedJoinerSkill:
+    """One assumed joiner first-expedition skill (effect_op + percent)."""
+
+    effect_op: int
+    pct: float
+
+
+@dataclass(frozen=True)
 class BeartrapBuffs:
     trap_level: int = 5
     host_attack_pct: float = 0.0
-    base_skillmod: float = 5.08
+    # Research / city buffs only — hero DamageUp comes from catalog + joiners.
+    research_skillmod: float = 1.0
+    assumed_joiners: tuple[AssumedJoinerSkill, ...] = ()
+    # Legacy aliases kept so old callers/tests that set base_skillmod still load.
+    base_skillmod: float | None = None
     joiner_skillmod: float = 1.0
     hero_strength_scale: float = 0.0
-    # Calibration metadata (documentation only)
     calibration_score: int = 180_000
     calibration_march: int = 80_245
 
@@ -65,26 +80,186 @@ class BeartrapBuffs:
         level = max(0, int(self.trap_level))
         return TRAP_ATTACK_PER_LEVEL * level
 
-    def effective_skillmod(self, lineup_hero_strength: float = 0.0) -> float:
-        hero_factor = 1.0 + float(self.hero_strength_scale) * float(lineup_hero_strength)
-        assert hero_factor > 0, f"hero_factor must be positive; got {hero_factor}"
-        sm = (
-            float(self.base_skillmod)
-            * float(self.joiner_skillmod)
-            * hero_factor
+    def joiner_damage_up_buckets(self) -> dict[int, float]:
+        buckets: dict[int, float] = {}
+        for skill in self.assumed_joiners:
+            op = int(skill.effect_op)
+            buckets[op] = buckets.get(op, 0.0) + float(skill.pct)
+        return buckets
+
+    def joiner_damage_up_product(self) -> float:
+        return bucket_product(self.joiner_damage_up_buckets())
+
+    def effective_skillmod(
+        self,
+        lineup_hero_strength: float = 0.0,
+        *,
+        host_damage_up: Mapping[int, float] | None = None,
+        host_defense_up: Mapping[int, float] | None = None,
+        host_opp_damage_down: Mapping[int, float] | None = None,
+        host_opp_defense_down: Mapping[int, float] | None = None,
+    ) -> float:
+        """SkillMod from research × host × assumed joiners (op-bucket product).
+
+        ``lineup_hero_strength`` is accepted for API compatibility with the
+        old linear scale; when ``hero_strength_scale`` is 0 (default) it is
+        ignored. Prefer passing host DamageUp buckets from the catalog.
+        """
+        research = float(
+            self.research_skillmod
+            if self.base_skillmod is None
+            else self.base_skillmod
         )
+        # Legacy joiner_skillmod multiplies when no assumed_joiners listed.
+        joiner_buckets = self.joiner_damage_up_buckets()
+        damage_up = merge_pct_buckets(host_damage_up, joiner_buckets)
+        sm = compute_skillmod(
+            research=research,
+            damage_up=damage_up,
+            defense_up=host_defense_up,
+            opp_damage_down=host_opp_damage_down,
+            opp_defense_down=host_opp_defense_down,
+        )
+        if not joiner_buckets and self.joiner_skillmod != 1.0:
+            sm *= float(self.joiner_skillmod)
+        if self.hero_strength_scale:
+            sm *= 1.0 + float(self.hero_strength_scale) * float(lineup_hero_strength)
         assert sm > 0, f"skillmod must be positive; got {sm}"
         return sm
+
+
+def bucket_product(pct_by_op: Mapping[int, float] | None) -> float:
+    """∏ (1 + sum_pct[op]/100) over effect_op buckets."""
+    if not pct_by_op:
+        return 1.0
+    prod = 1.0
+    for pct in pct_by_op.values():
+        prod *= 1.0 + float(pct) / 100.0
+    return prod
+
+
+def merge_pct_buckets(
+    *maps: Mapping[int, float] | None,
+) -> dict[int, float]:
+    out: dict[int, float] = {}
+    for mapping in maps:
+        if not mapping:
+            continue
+        for op, pct in mapping.items():
+            key = int(op)
+            out[key] = out.get(key, 0.0) + float(pct)
+    return out
+
+
+def compute_skillmod(
+    *,
+    research: float = 1.0,
+    damage_up: Mapping[int, float] | None = None,
+    opp_defense_down: Mapping[int, float] | None = None,
+    opp_damage_down: Mapping[int, float] | None = None,
+    defense_up: Mapping[int, float] | None = None,
+) -> float:
+    """Community SkillMod = research × DamageUp × OppDefDown / (OppDmgDown × DefUp)."""
+    if research <= 0:
+        raise ValueError(f"research_skillmod must be positive; got {research}")
+    numerator = (
+        float(research)
+        * bucket_product(damage_up)
+        * bucket_product(opp_defense_down)
+    )
+    denominator = bucket_product(opp_damage_down) * bucket_product(defense_up)
+    if denominator <= 0:
+        raise ValueError(f"skillmod denominator must be positive; got {denominator}")
+    return numerator / denominator
+
+
+# Catalog kinds → (SkillMod family, default effect_op when tag.effect_op is None).
+_SKILLMOD_KIND: dict[str, tuple[str, int]] = {
+    "lethality_up": ("damage_up", 101),
+    "rally_lethality": ("damage_up", 101),
+    "attack_up": ("damage_up", 102),
+    "rally_attack": ("damage_up", 102),
+    "defense_up": ("defense_up", 111),
+    "damage_taken_down": ("defense_up", 111),
+    "opp_damage_down": ("opp_damage_down", 201),
+    "opp_defense_down": ("opp_defense_down", 202),
+}
+
+
+def host_skillmod_buckets(
+    heroes_with_entries: list[tuple[Any, Any]],
+) -> dict[str, dict[int, float]]:
+    """Build SkillMod percent buckets from host lineup catalog effects.
+
+    Includes ``expedition`` and ``widget`` applies_to (host skills fire).
+    Values are star-scaled catalog ``max_value`` percent points.
+    """
+    from ks.heroes.optimize.scoring import star_progress_factor
+    from ks.heroes.optimize.types import CatalogEntry, EffectTag
+    from ks.heroes.models import HeroRecord
+
+    out: dict[str, dict[int, float]] = {
+        "damage_up": {},
+        "defense_up": {},
+        "opp_damage_down": {},
+        "opp_defense_down": {},
+    }
+    for hero, entry in heroes_with_entries:
+        if not isinstance(hero, HeroRecord) or not isinstance(entry, CatalogEntry):
+            raise TypeError("heroes_with_entries must be (HeroRecord, CatalogEntry)")
+        scale = star_progress_factor(hero.stars, hero.pellets)
+        for tag in entry.effects:
+            if not isinstance(tag, EffectTag):
+                continue
+            if tag.applies_to not in {"expedition", "widget"}:
+                continue
+            meta = _SKILLMOD_KIND.get(tag.kind)
+            if meta is None:
+                continue
+            family, default_op = meta
+            op = int(tag.effect_op) if tag.effect_op is not None else default_op
+            pct = float(tag.max_value) * float(scale)
+            if pct <= 0:
+                continue
+            bucket = out[family]
+            bucket[op] = bucket.get(op, 0.0) + pct
+    return out
 
 
 def load_beartrap_buffs(path: Path | str) -> BeartrapBuffs:
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     if not isinstance(raw, dict):
         raise ValueError("beartrap_buffs.yaml must be a mapping")
+
+    joiners_raw = raw.get("assumed_joiners") or []
+    joiners: list[AssumedJoinerSkill] = []
+    if isinstance(joiners_raw, list):
+        for row in joiners_raw:
+            if not isinstance(row, dict):
+                raise ValueError("assumed_joiners entries must be mappings")
+            op = row.get("effect_op", row.get("op"))
+            pct = row.get("pct", row.get("value"))
+            if op is None or pct is None:
+                raise ValueError(
+                    "assumed_joiners entries need effect_op (or op) and pct (or value)"
+                )
+            joiners.append(AssumedJoinerSkill(effect_op=int(op), pct=float(pct)))
+
+    research = raw.get("research_skillmod")
+    legacy_base = raw.get("base_skillmod")
+    if research is None and legacy_base is not None:
+        # Old YAML folded everything into base_skillmod — do not treat that
+        # lump as research-only; start research at 1.0 and use joiners.
+        research = 1.0
+    elif research is None:
+        research = 1.0
+
     return BeartrapBuffs(
         trap_level=int(raw.get("trap_level", 5)),
         host_attack_pct=float(raw.get("host_attack_pct", 0.0)),
-        base_skillmod=float(raw.get("base_skillmod", 5.08)),
+        research_skillmod=float(research),
+        assumed_joiners=tuple(joiners),
+        base_skillmod=None,
         joiner_skillmod=float(raw.get("joiner_skillmod", 1.0)),
         hero_strength_scale=float(raw.get("hero_strength_scale", 0.0)),
         calibration_score=int(raw.get("calibration_score", 180_000)),
