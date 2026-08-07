@@ -1,15 +1,21 @@
 # Bear Trap host/joiner buff knobs for damage simulation.
 # Score = ceil(10-round damage) from community formula (kingshotguides).
 #
-# Calibration (single rally observation):
-#   march ≈ 80245 @ ~32/32/32, trap L5 (+25% attack) → ~180000 damage
-#   implies effective skillmod ≈ 5.08 with T6 base attacks.
+# SkillMod v2 (2026-08-07):
+#   skillmod = research × ∏(1 + DamageUp[op]/100) × … / DefenseUp …
+# Host DamageUp comes from the lineup catalog; assumed_joiners model the
+# top-4 joiner first skills (default 2× lethality + 2× attack at 25%).
 
 trap_level: 5                 # +5% attack per level → +25% at L5
 host_attack_pct: 0.0          # extra flat attack from research/gear (fraction)
-base_skillmod: 5.08           # host heroes + research + gear folded in
-joiner_skillmod: 1.0          # multiply for top-4 joiner first skills (set from screenshots)
-hero_strength_scale: 0.0      # optional: skillmod *= 1 + scale * lineup_hero_strength
+research_skillmod: 1.0        # city/research multiplier (tune vs a known rally)
+
+# Top-4 assumed joiner first skills: mix ops so they multiply (2.25×).
+assumed_joiners:
+  - {effect_op: 101, pct: 25}   # Lethality DamageUp (Chenko-class)
+  - {effect_op: 101, pct: 25}
+  - {effect_op: 102, pct: 25}   # Attack DamageUp (Amane-class)
+  - {effect_op: 102, pct: 25}
 
 calibration_score: 180000
 calibration_march: 80245
