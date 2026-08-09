@@ -74,6 +74,26 @@ class EffectTag:
 
 
 @dataclass(frozen=True)
+class CatalogSkill:
+    """Named skill row from hero_catalog (static); live levels live on HeroRecord."""
+
+    slot: int
+    name: str
+    family: str  # conquest | expedition | widget
+    effect_kind: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "slot": self.slot,
+            "name": self.name,
+            "family": self.family,
+        }
+        if self.effect_kind is not None:
+            out["effect_kind"] = self.effect_kind
+        return out
+
+
+@dataclass(frozen=True)
 class CatalogEntry:
     """Static hero semantics — single source of truth from hero_catalog.yaml.
 
@@ -94,6 +114,7 @@ class CatalogEntry:
     garrison_tier: str | None = None
     joiner_tier: str | None = None
     effects: tuple[EffectTag, ...] = ()
+    skills: tuple[CatalogSkill, ...] = ()
     # Arena ILP hints (formerly config/arena_roles.yaml heroes:)
     arena_role: str | None = None
     arena_value: float | None = None
