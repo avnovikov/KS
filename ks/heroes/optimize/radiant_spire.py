@@ -7,6 +7,7 @@ Floor stubs / MC: mystic_trial floors + combat_mc (GitHub #37 / #38).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from ks.heroes.gear_models import GearRecord
