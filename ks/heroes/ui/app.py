@@ -1269,7 +1269,7 @@ def create_app(
         return bundle
 
     @app.get("/api/optimize/radiant-spire")
-    def api_optimize_radiant() -> dict[str, Any]:
+    def api_optimize_radiant(floor: int | None = None) -> dict[str, Any]:
         """Dual-march Radiant Spire proxy from heroes, gear, troops, governor."""
         heroes_path, hero_store_local = _require_heroes()
         from ks.heroes.ui.optimize_run import run_radiant_optimize
@@ -1287,6 +1287,7 @@ def create_app(
                 gear=gear_pieces,
                 troops_path=app.state.troops_path,
                 active_marches=2,
+                floor=floor,
             )
         except (ValueError, OSError, FileNotFoundError, KeyError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

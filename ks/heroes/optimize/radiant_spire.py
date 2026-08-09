@@ -80,19 +80,28 @@ class RadiantResult:
     proxy_banner: str = PROXY_BANNER
     active_marches: int = 2
     schema_marches: int = 3
+    floor: dict[str, Any] | None = None
+    engine: str = "proxy"
+    warnings: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         marches: list[dict[str, Any] | None] = [m.to_dict() for m in self.marches]
         while len(marches) < self.schema_marches:
             marches.append(None)
-        return {
+        out: dict[str, Any] = {
             "marches": marches,
             "lineup_score": self.lineup_score,
             "governor": dict(self.governor),
             "proxy_banner": self.proxy_banner,
             "active_marches": self.active_marches,
             "schema_marches": self.schema_marches,
+            "engine": self.engine,
         }
+        if self.floor is not None:
+            out["floor"] = dict(self.floor)
+        if self.warnings:
+            out["warnings"] = list(self.warnings)
+        return out
 
 
 def _hero_troop(hero: HeroRecord, entry: CatalogEntry | None) -> str | None:
@@ -214,10 +223,36 @@ def optimize_radiant(
     active_marches: int = 2,
     truegold: int | None = None,
     one_per_troop_type: bool = True,
+    floor: int | None = None,
+    floors_path: Path | str | None = None,
 ) -> RadiantResult:
     """Assign exclusive hero marches and search troop ratios via proxy score."""
+    from pathlib import Path as _Path
+
+    from ks.heroes.optimize.mystic_trial.floors import get_floor, load_floors
+
     if active_marches not in (1, 2, 3):
         raise ValueError(f"active_marches must be 1–3; got {active_marches}")
+
+    warnings: list[str] = []
+    floor_payload: dict[str, Any] | None = None
+    if floor is not None:
+        path = (
+            _Path(floors_path)
+            if floors_path is not None
+            else _Path(__file__).resolve().parents[3]
+            / "config"
+            / "mystic_trial"
+            / "radiant_spire_floors.yaml"
+        )
+        stubs = load_floors(path)
+        stub = get_floor(stubs, int(floor))
+        if stub is None:
+            warnings.append(
+                f"unknown Radiant floor {floor}; using proxy without floor stub"
+            )
+        else:
+            floor_payload = stub.to_dict()
 
     tg = troop_stats.default_truegold if truegold is None else int(truegold)
     levels = _inventory_levels(troops)
@@ -318,6 +353,9 @@ def optimize_radiant(
         lineup_score=sum(m.score for m in marches),
         governor=governor.to_dict(),
         active_marches=active_marches,
+        floor=floor_payload,
+        engine="proxy",
+        warnings=tuple(warnings),
     )
 
 
