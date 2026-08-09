@@ -190,19 +190,22 @@ Tracked as GitHub issues so proxy-first v1 does not lose deferred work:
 
 All of the above depend on [#39](https://github.com/avnovikov/KS/issues/39) except as noted. Shared implementation should expose one `governor_troop_bonuses()` helper reused by each optimiser.
 
-## Part C — v1.1 (stories #37 / #38; not in first implementation PR)
+## Part C — v1.1 (stories #37 / #38)
+
+Implemented under the mystic-trial program — see
+[2026-08-09-mystic-trial-coliseum-molten-design.md](2026-08-09-mystic-trial-coliseum-molten-design.md)
+and plan `docs/superpowers/plans/2026-08-09-mystic-trial-coliseum-molten.md`.
 
 1. **Enemy floor stubs** ([#37](https://github.com/avnovikov/KS/issues/37))  
    - `config/mystic_trial/radiant_spire_floors.yaml`  
-   - Floor id, enemy ratio (default 33/33/33; floor 10 = 53/27/20), `enemy_power_scale` or full unit stats.  
+   - Floor id, enemy ratio (default 33/33/33; floor 10 = 53/27/20), `enemy_power_scale`.  
    - Editable; seeded from community notes; grow via user reports / OCR later.
 
-2. **Combat engine swap** ([#38](https://github.com/avnovikov/KS/issues/38))  
-   - Multi-round or Monte Carlo using our stats vs floor stub.  
-   - Optimiser objective → estimated win rate / remaining HP instead of proxy.  
+2. **Combat engine** ([#38](https://github.com/avnovikov/KS/issues/38))  
+   - Deterministic floor combat vs stub (`mystic_trial/combat_mc.py`); ranking by win_rate when `?floor=` set.  
    - Keep proxy as fallback when floor data missing.
 
-3. Optional: paste battle-report enemy numbers to override stub for one run.
+3. Optional later: paste battle-report enemy numbers to override stub for one run.
 
 ---
 

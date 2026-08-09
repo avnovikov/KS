@@ -80,19 +80,20 @@ Same as Arena for skills and governor. Shared `combat_formation` base score must
 | Governor | Already wired |
 | Follow-ups | Floors/MC are #37/#38 — out of this program’s first waves |
 
-### Molten Fort (OG-08 stub, GH #47)
+### Molten Fort (OG-08, GH #47)
 
 | Aspect | Treatment |
 |--------|-----------|
-| Intent | Governor-primary mystic room optimiser (similar vertical slice to Radiant) |
+| Intent | Governor-primary mystic room optimiser (Radiant-like slice) |
+| Implementation | [mystic-trial design](2026-08-09-mystic-trial-coliseum-molten-design.md) · `optimize_molten` + `/optimiser/molten-fort` |
 | Stub done when | This section’s build criteria exist; no UI required yet |
-| Later build | New module + config event; reuse `governor_troop_bonuses()`; choose expedition vs room-specific proxy only after first live Molten research pass |
+| Build | Shared mystic-trial shell; seed 60/15/25; governor Atk%/Def% primary |
 
-**Build criteria (later):**
+**Build criteria:**
 
-1. Event config + optimiser page stub.
-2. Objective uses governor troop bonuses as first-class input.
-3. Heroes/gear from existing stores; exclusive marches if the room requires multiple.
+1. Event config + optimiser page — **done**.
+2. Objective uses governor troop bonuses as first-class input — **done**.
+3. Heroes/gear from existing stores; light hero weight (0.15) — **done**.
 
 ## Governor application rules (Conquest family)
 
