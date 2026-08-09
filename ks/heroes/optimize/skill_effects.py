@@ -57,6 +57,19 @@ _DEFAULT_KIND_FAMILY: dict[str, str] = {
 
 _WIDGET = "widget"
 
+# Economy / QoL expedition tags — never feed combat percents or SkillMod.
+_UTILITY_KINDS = frozenset(
+    {
+        "stamina_cost_down",
+        "wilderness_march_speed",
+        "gathering_speed_up",
+        "construction_speed_up",
+        "research_speed_up",
+        "training_speed_up",
+        "healing_speed_up",
+    }
+)
+
 
 def skill_kind(label: str | None) -> str | None:
     """Canonical effect kind for a skill ``upgrade_preview`` line, or None."""
@@ -95,13 +108,15 @@ def catalog_percents(
     stars: int | None,
     pellets: int | None = None,
 ) -> dict[str, float]:
-    """Star-scaled percent per kind from catalog effects (widget kinds dropped)."""
+    """Star-scaled percent per kind from catalog effects (widget/utility dropped)."""
     if entry is None:
         return {}
     factor = star_progress_factor(stars, pellets)
     out: dict[str, float] = {}
     for tag in entry.effects:
         if tag.applies_to == _WIDGET:
+            continue
+        if tag.kind in _UTILITY_KINDS:
             continue
         out[tag.kind] = out.get(tag.kind, 0.0) + float(tag.max_value) * factor
     return out
@@ -111,12 +126,15 @@ def kind_family(
     kind: str,
     catalog: dict[str, CatalogEntry] | None = None,
 ) -> str | None:
-    """Family a kind contributes to, or None when it is widget-only/unknown.
+    """Family a kind contributes to, or None when it is widget/utility/unknown.
 
     Catalog ``applies_to`` wins: if any catalog entry tags ``kind`` as
     conquest or expedition, that is the family. A kind the catalog only ever
-    tags as ``widget`` returns None. Otherwise fall back to the default map.
+    tags as ``widget`` returns None. Utility economy kinds always return
+    None. Otherwise fall back to the default map.
     """
+    if kind in _UTILITY_KINDS:
+        return None
     if catalog:
         seen: set[str] = set()
         for entry in catalog.values():
@@ -182,6 +200,8 @@ def leveled_catalog_percents(
         if family is not None and cskill.family != family:
             continue
         if not cskill.effect_kind:
+            continue
+        if cskill.effect_kind in _UTILITY_KINDS:
             continue
         level = level_by_slot.get(cskill.slot)
         if level is None:

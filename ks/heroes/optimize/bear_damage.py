@@ -1,4 +1,11 @@
-"""Bear Trap 10-round damage simulator (community formula)."""
+"""Bear Trap 10-round damage simulator (community formula).
+
+SkillMod for the march is ``base_skillmod × joiner_skillmod × hero_factor``.
+``joiner_skillmod`` should reflect community effect_op stacking on **first
+expedition** Attack/Lethality skills only (see ``skillmod.joiner_damage_up_from_entries``).
+Host Attack% / Lethality% still enter via troop stats + ``host_attack_pct``;
+Defense / Health / utility expedition tags do not raise Bear SkillMod.
+"""
 
 from __future__ import annotations
 

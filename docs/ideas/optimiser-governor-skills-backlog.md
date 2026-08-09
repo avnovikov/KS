@@ -41,7 +41,7 @@ OG-09 (validation) after OG-02 (and ideally OG-05)
 | OG-04 | Governor → Swordland | Done | governor store | #43 |
 | OG-05 | Governor → Arena / Conquest | Done | OG-02 | #44/#45 |
 | OG-06 | Governor → Gear XP event utility | Done | OG-03 or OG-04 (any child U) | #46 |
-| OG-07 | Expedition skill hardening (effect_op / joiner gaps) | Planned | skill levels (done) | — |
+| OG-07 | Expedition skill hardening (effect_op / joiner gaps) | Done | skill levels (done) | — |
 | OG-08 | Molten Fort optimiser (design stub → later build) | Stub | governor helper | #47 |
 | OG-09 | Validation checklist vs known clears | Planned | OG-02 | — |
 
@@ -127,9 +127,9 @@ OG-09 (validation) after OG-02 (and ideally OG-05)
 
 **Acceptance:**
 
-- [ ] Catalog kinds for roster combat heroes reviewed; no silent drop of Defense/Health expedition buffs where intended.
-- [ ] Bear host/joiner path documents which skills count (align with existing SkillMod work).
-- [ ] Tests for at least one previously broken kind link.
+- [x] Catalog kinds for roster combat heroes reviewed; no silent drop of Defense/Health expedition buffs where intended.
+- [x] Bear host/joiner path documents which skills count (align with existing SkillMod work).
+- [x] Tests for at least one previously broken kind link.
 
 ---
 
@@ -139,8 +139,8 @@ OG-09 (validation) after OG-02 (and ideally OG-05)
 
 **Acceptance (stub phase):**
 
-- [ ] Problem, inputs, and “done” criteria written under the all-optimisers design (Molten section).
-- [ ] No production UI required in stub phase.
+- [x] Problem, inputs, and “done” criteria written under the all-optimisers design (Molten section).
+- [x] No production UI required in stub phase.
 
 **Acceptance (later build):** deferred to a dedicated implementation plan.
 
@@ -150,9 +150,11 @@ OG-09 (validation) after OG-02 (and ideally OG-05)
 
 **Goal:** Compare optimiser rankings to real clears after OG-02 (and again after OG-05).
 
+**Log:** [conquest-arena-validation-log.md](conquest-arena-validation-log.md)
+
 **Acceptance:**
 
-- [ ] Checklist doc or section listing: stage/Arena result, top-3 optimiser lineups before/after, pass/fail notes.
+- [x] Checklist doc or section listing: stage/Arena result, top-3 optimiser lineups before/after, pass/fail notes.
 - [ ] At least one recorded comparison session filled in (manual).
 - [ ] Open calibration notes for α / AoE factor filed back into the sim-lite spec if needed.
 
