@@ -198,6 +198,29 @@ def test_optimize_radiant_exclusive_heroes_and_governor_shift() -> None:
     assert sum(opp0["counts"].values()) == sum(with_floor.marches[0].counts.values())
     assert "attack_pct" in opp0["bonuses"]["infantry"]
 
+    overridden = optimize_radiant(
+        heroes,
+        catalog,
+        gear_pieces=[],
+        governor=_gov(),
+        troops=troops,
+        troop_stats=_table(),
+        active_marches=2,
+        floor=10,
+        enemy_ratio={"infantry": 0.70, "cavalry": 0.20, "archers": 0.10},
+        enemy_bonuses={
+            "infantry": {
+                "attack_pct": 111,
+                "defense_pct": 0,
+                "lethality_pct": 0,
+                "health_pct": 0,
+            }
+        },
+    )
+    assert abs(overridden.opponent["marches"][0]["ratio"]["infantry"] - 0.70) < 1e-9
+    assert overridden.opponent["marches"][0]["bonuses"]["infantry"]["attack_pct"] == 111.0
+    assert overridden.floor.get("overrides_applied") is True
+
 
 def test_optimize_radiant_schema_allows_three_marches() -> None:
     catalog = load_catalog(None, ROOT / "config" / "hero_catalog.yaml")

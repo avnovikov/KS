@@ -325,6 +325,8 @@ def run_radiant_optimize(
     troops_path: Path | None = None,
     active_marches: int = 2,
     floor: int | None = None,
+    enemy_ratio: dict[str, float] | None = None,
+    enemy_bonuses: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, Any]:
     """Dual-march Radiant Spire proxy from current inventory + governor gear."""
     from ks.heroes.optimize.radiant_spire import optimize_radiant
@@ -351,6 +353,8 @@ def run_radiant_optimize(
         truegold=truegold,
         floor=floor,
         floors_path=root / "config" / "mystic_trial" / "radiant_spire_floors.yaml",
+        enemy_ratio=enemy_ratio,
+        enemy_bonuses=enemy_bonuses,
     )
     return result.to_dict()
 

@@ -14,9 +14,10 @@ When a Radiant floor is selected, show an **Opponent** section with two marches 
 |-------|--------|
 | Heroes | Layout-only `AI` placeholders (not roster heroes) |
 | Bonuses | Per troop type: `attack_pct`, `defense_pct`, `lethality_pct`, `health_pct` |
-| Source | Editable YAML seeded/updated from battle report; not scraped from web |
-| Scoring | **Display only** in this slice; MC still uses `enemy_power_scale` |
+| Source | YAML defaults + **editable UI** (Apply → query overrides); optional YAML paste |
+| Scoring | Ratio overrides affect MC mix; bonuses still **display only** |
 | Proxy-only | Hide opponent panel when no floor stub |
+| Layout | Opponent **above** your lineup |
 
 ## Data
 
@@ -39,7 +40,8 @@ Missing `enemy_bonuses` → zeros (UI shows 0.0%; fill later from reports).
 
 - `RadiantResult.opponent`: `{ marches: [...], bonuses: {...} }` when floor stub present.
 - Each opponent march: `hero_names: ["AI","AI","AI"]`, `ratio`, `counts` (enemy ratio × player march filled size), `bonuses`.
-- UI: opponent cards under player marches with I/C/A counts and bonus chips.
+- UI: **Opponent section on top** with editable I%/C%/A% and Atk/Def/Leth/HP% inputs + Apply.
+- Query overrides: `enemy_infantry` / `enemy_cavalry` / `enemy_archers` (percents or fractions), `enemy_bonuses` (JSON).
 
 ## Out of scope
 

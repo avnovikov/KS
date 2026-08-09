@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ks.heroes.optimize.mystic_trial.floors import load_floors
+from ks.heroes.optimize.mystic_trial.floors import load_floors, ratio_from_parts
 
 ROOT = Path(__file__).resolve().parents[1]
 FLOORS = ROOT / "config" / "mystic_trial" / "radiant_spire_floors.yaml"
@@ -46,3 +46,30 @@ floors:
     assert floors[2].enemy_bonuses["infantry"]["attack_pct"] == 120.5
     assert floors[2].enemy_bonuses["cavalry"]["defense_pct"] == 0.0
     assert "enemy_bonuses" in floors[2].to_dict()
+
+
+def test_ratio_from_parts_accepts_percents_or_fractions() -> None:
+    pct = ratio_from_parts(53, 27, 20)
+    assert pct is not None
+    assert abs(pct["infantry"] - 0.53) < 1e-9
+    frac = ratio_from_parts(0.5, 0.2, 0.3)
+    assert frac is not None
+    assert abs(frac["infantry"] - 0.5) < 1e-9
+    assert ratio_from_parts(None, None, None) is None
+
+
+def test_floor_stub_with_overrides() -> None:
+    floors = load_floors(FLOORS)
+    stub = floors[10].with_overrides(
+        enemy_ratio={"infantry": 0.60, "cavalry": 0.20, "archers": 0.20},
+        enemy_bonuses={
+            "infantry": {
+                "attack_pct": 99,
+                "defense_pct": 1,
+                "lethality_pct": 2,
+                "health_pct": 3,
+            }
+        },
+    )
+    assert abs(stub.enemy_ratio["infantry"] - 0.60) < 1e-9
+    assert stub.enemy_bonuses["infantry"]["attack_pct"] == 99.0

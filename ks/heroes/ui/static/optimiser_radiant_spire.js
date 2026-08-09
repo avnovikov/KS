@@ -12,9 +12,27 @@
   var opponentEl = document.getElementById("radiant-opponent");
   var opponentNoteEl = document.getElementById("opponent-note");
   var opponentMarchesEl = document.getElementById("opponent-marches");
+  var bonusEditEl = document.getElementById("opponent-bonus-edit");
   var bannerEl = document.getElementById("proxy-banner");
   var regenBtn = document.getElementById("radiant-regen");
   var floorEl = document.getElementById("radiant-floor");
+  var applyBtn = document.getElementById("opponent-apply");
+  var ratioI = document.getElementById("opp-ratio-i");
+  var ratioC = document.getElementById("opp-ratio-c");
+  var ratioA = document.getElementById("opp-ratio-a");
+
+  var TROOPS = ["infantry", "cavalry", "archers"];
+  var BONUS_KEYS = [
+    { key: "attack_pct", label: "Atk" },
+    { key: "defense_pct", label: "Def" },
+    { key: "lethality_pct", label: "Leth" },
+    { key: "health_pct", label: "HP" },
+  ];
+
+  /** Last applied overrides (null = use YAML stub). Cleared on floor change. */
+  var overrideRatioPct = null;
+  var overrideBonuses = null;
+  var fillingEditors = false;
 
   function fmtPct(n) {
     return Number(n || 0).toFixed(1) + "%";
@@ -50,26 +68,84 @@
     errorEl.textContent = "";
   }
 
-  function appendBonusChips(parent, bonuses) {
-    var row = document.createElement("div");
-    row.className = "chip-row";
-    ["infantry", "cavalry", "archers"].forEach(function (troop) {
-      var b = (bonuses && bonuses[troop]) || {};
-      var chip = document.createElement("span");
-      chip.className = "chip";
-      chip.textContent =
-        troop.slice(0, 3) +
-        " Atk " +
-        fmtPct(b.attack_pct) +
-        " · Def " +
-        fmtPct(b.defense_pct) +
-        " · Leth " +
-        fmtPct(b.lethality_pct) +
-        " · HP " +
-        fmtPct(b.health_pct);
-      row.appendChild(chip);
+  function ensureBonusEditors() {
+    if (!bonusEditEl || bonusEditEl.childNodes.length) return;
+    TROOPS.forEach(function (troop) {
+      var box = document.createElement("div");
+      box.className = "bonus-troop";
+      var title = document.createElement("strong");
+      title.textContent = troop;
+      box.appendChild(title);
+      BONUS_KEYS.forEach(function (spec) {
+        var lab = document.createElement("label");
+        lab.appendChild(document.createTextNode(spec.label));
+        var inp = document.createElement("input");
+        inp.type = "number";
+        inp.step = "0.1";
+        inp.min = "0";
+        inp.dataset.troop = troop;
+        inp.dataset.bonus = spec.key;
+        lab.appendChild(inp);
+        box.appendChild(lab);
+      });
+      bonusEditEl.appendChild(box);
     });
-    parent.appendChild(row);
+  }
+
+  function readRatioPct() {
+    return {
+      infantry: Number(ratioI && ratioI.value),
+      cavalry: Number(ratioC && ratioC.value),
+      archers: Number(ratioA && ratioA.value),
+    };
+  }
+
+  function readBonuses() {
+    ensureBonusEditors();
+    var out = {};
+    TROOPS.forEach(function (troop) {
+      out[troop] = {};
+      BONUS_KEYS.forEach(function (spec) {
+        var inp = bonusEditEl.querySelector(
+          'input[data-troop="' + troop + '"][data-bonus="' + spec.key + '"]'
+        );
+        out[troop][spec.key] = Number(inp && inp.value) || 0;
+      });
+    });
+    return out;
+  }
+
+  function fillEditorsFromOpponent(opp, floorMeta) {
+    fillingEditors = true;
+    ensureBonusEditors();
+    var ratio =
+      (overrideRatioPct && {
+        infantry: overrideRatioPct.infantry / 100,
+        cavalry: overrideRatioPct.cavalry / 100,
+        archers: overrideRatioPct.archers / 100,
+      }) ||
+      (opp && opp.marches && opp.marches[0] && opp.marches[0].ratio) ||
+      (floorMeta && floorMeta.enemy_ratio) ||
+      {};
+    if (ratioI) ratioI.value = String(Math.round((ratio.infantry || 0) * 100));
+    if (ratioC) ratioC.value = String(Math.round((ratio.cavalry || 0) * 100));
+    if (ratioA) ratioA.value = String(Math.round((ratio.archers || 0) * 100));
+
+    var bonuses =
+      overrideBonuses ||
+      (opp && opp.bonuses) ||
+      (floorMeta && floorMeta.enemy_bonuses) ||
+      {};
+    TROOPS.forEach(function (troop) {
+      var row = bonuses[troop] || {};
+      BONUS_KEYS.forEach(function (spec) {
+        var inp = bonusEditEl.querySelector(
+          'input[data-troop="' + troop + '"][data-bonus="' + spec.key + '"]'
+        );
+        if (inp) inp.value = String(Number(row[spec.key] || 0));
+      });
+    });
+    fillingEditors = false;
   }
 
   function renderOpponent(data) {
@@ -84,8 +160,9 @@
     if (opponentNoteEl) {
       opponentNoteEl.textContent =
         opp.note ||
-        "Troop mix from floor stub; bonuses from battle report YAML (display only).";
+        "Edit ratio / bonuses from the battle report, then Apply.";
     }
+    fillEditorsFromOpponent(opp, data.floor);
     opponentMarchesEl.innerHTML = "";
     opp.marches.forEach(function (march, idx) {
       if (!march) return;
@@ -118,7 +195,26 @@
         " · A " +
         ((march.counts && march.counts.archers) || 0);
       card.appendChild(counts);
-      appendBonusChips(card, march.bonuses || opp.bonuses);
+      var chipRow = document.createElement("div");
+      chipRow.className = "chip-row";
+      var bonuses = march.bonuses || opp.bonuses || {};
+      TROOPS.forEach(function (troop) {
+        var b = bonuses[troop] || {};
+        var chip = document.createElement("span");
+        chip.className = "chip";
+        chip.textContent =
+          troop.slice(0, 3) +
+          " Atk " +
+          fmtPct(b.attack_pct) +
+          " · Def " +
+          fmtPct(b.defense_pct) +
+          " · Leth " +
+          fmtPct(b.lethality_pct) +
+          " · HP " +
+          fmtPct(b.health_pct);
+        chipRow.appendChild(chip);
+      });
+      card.appendChild(chipRow);
       opponentMarchesEl.appendChild(card);
     });
   }
@@ -144,6 +240,7 @@
         bits.push(
           "enemy scale ×" + Number(data.floor.enemy_power_scale || 0).toFixed(2)
         );
+        if (data.floor.overrides_applied) bits.push("overrides on");
       }
       if (data.warnings && data.warnings.length) {
         bits.push(data.warnings.join("; "));
@@ -164,7 +261,7 @@
       " · Atk +" +
       fmtPct(gov.set_attack_pct);
     chipsEl.appendChild(setChip);
-    ["infantry", "cavalry", "archers"].forEach(function (troop) {
+    TROOPS.forEach(function (troop) {
       var chip = document.createElement("span");
       chip.className = "chip";
       var atk = (gov.attack_pct || {})[troop] || 0;
@@ -233,20 +330,38 @@
       engine;
   }
 
+  function buildUrl() {
+    var floor = selectedFloor();
+    var url = "/api/optimize/radiant-spire";
+    var params = [];
+    if (floor != null) {
+      params.push("floor=" + encodeURIComponent(String(floor)));
+    }
+    if (floor != null && overrideRatioPct) {
+      params.push("enemy_infantry=" + encodeURIComponent(String(overrideRatioPct.infantry)));
+      params.push("enemy_cavalry=" + encodeURIComponent(String(overrideRatioPct.cavalry)));
+      params.push("enemy_archers=" + encodeURIComponent(String(overrideRatioPct.archers)));
+    }
+    if (floor != null && overrideBonuses) {
+      params.push(
+        "enemy_bonuses=" + encodeURIComponent(JSON.stringify(overrideBonuses))
+      );
+    }
+    if (params.length) url += "?" + params.join("&");
+    return url;
+  }
+
   async function load() {
     statusEl.textContent = "Solving marches…";
     summaryEl.hidden = true;
     marchesEl.innerHTML = "";
-    if (opponentEl) opponentEl.hidden = true;
-    if (opponentMarchesEl) opponentMarchesEl.innerHTML = "";
+    if (opponentEl && !selectedFloor()) {
+      opponentEl.hidden = true;
+      if (opponentMarchesEl) opponentMarchesEl.innerHTML = "";
+    }
     clearError();
     try {
-      var floor = selectedFloor();
-      var url = "/api/optimize/radiant-spire";
-      if (floor != null) {
-        url += "?floor=" + encodeURIComponent(String(floor));
-      }
-      var res = await fetch(url, { cache: "no-store" });
+      var res = await fetch(buildUrl(), { cache: "no-store" });
       var body = await res.json().catch(function () {
         return {};
       });
@@ -260,6 +375,30 @@
     }
   }
 
+  function applyOpponentEdits() {
+    if (fillingEditors) return;
+    if (selectedFloor() == null) {
+      showError("Select a floor before editing the opponent.");
+      return;
+    }
+    var pct = readRatioPct();
+    if (
+      !Number.isFinite(pct.infantry) ||
+      !Number.isFinite(pct.cavalry) ||
+      !Number.isFinite(pct.archers)
+    ) {
+      showError("Opponent ratio I/C/A must be numbers.");
+      return;
+    }
+    if (pct.infantry + pct.cavalry + pct.archers <= 0) {
+      showError("Opponent ratio must sum to a positive value.");
+      return;
+    }
+    overrideRatioPct = pct;
+    overrideBonuses = readBonuses();
+    load();
+  }
+
   if (regenBtn) {
     regenBtn.addEventListener("click", function () {
       load();
@@ -267,8 +406,13 @@
   }
   if (floorEl) {
     floorEl.addEventListener("change", function () {
+      overrideRatioPct = null;
+      overrideBonuses = null;
       load();
     });
+  }
+  if (applyBtn) {
+    applyBtn.addEventListener("click", applyOpponentEdits);
   }
   load();
 })();

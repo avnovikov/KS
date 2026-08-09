@@ -1295,11 +1295,27 @@ def create_app(
         return bundle
 
     @app.get("/api/optimize/radiant-spire")
-    def api_optimize_radiant(floor: int | None = None) -> dict[str, Any]:
-        """Dual-march Radiant Spire proxy from heroes, gear, troops, governor."""
-        heroes_path, hero_store_local = _require_heroes()
+    def api_optimize_radiant(
+        floor: int | None = None,
+        enemy_infantry: float | None = None,
+        enemy_cavalry: float | None = None,
+        enemy_archers: float | None = None,
+        enemy_bonuses: str | None = None,
+    ) -> dict[str, Any]:
+        """Dual-march Radiant Spire proxy from heroes, gear, troops, governor.
+
+        Optional enemy_* query parts override the floor stub (percents or fractions).
+        enemy_bonuses is a JSON object of per-troop Attack%/Defense%/Lethality%/Health%.
+        """
+        import json
+
+        from ks.heroes.optimize.mystic_trial.floors import (
+            parse_enemy_bonuses,
+            ratio_from_parts,
+        )
         from ks.heroes.ui.optimize_run import run_radiant_optimize
 
+        heroes_path, hero_store_local = _require_heroes()
         hero_store_local.reload()
         heroes = hero_store_local.all_heroes()
         gear_pieces: list[GearRecord] = []
@@ -1307,6 +1323,13 @@ def create_app(
             gear_store.reload()
             gear_pieces = gear_store.all_pieces()
         try:
+            ratio_override = ratio_from_parts(
+                enemy_infantry, enemy_cavalry, enemy_archers
+            )
+            bonuses_override = None
+            if enemy_bonuses is not None and str(enemy_bonuses).strip():
+                raw = json.loads(enemy_bonuses)
+                bonuses_override = parse_enemy_bonuses(raw)
             payload = run_radiant_optimize(
                 heroes,
                 governor_bonuses=governor_store.bonuses(),
@@ -1314,8 +1337,10 @@ def create_app(
                 troops_path=app.state.troops_path,
                 active_marches=2,
                 floor=floor,
+                enemy_ratio=ratio_override,
+                enemy_bonuses=bonuses_override,
             )
-        except (ValueError, OSError, FileNotFoundError, KeyError) as exc:
+        except (ValueError, OSError, FileNotFoundError, KeyError, json.JSONDecodeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         payload["heroes_dir"] = str(heroes_path)
         payload["governor_dir"] = str(resolved_governor)

@@ -11,7 +11,7 @@ HTML = ROOT / "ks" / "heroes" / "ui" / "templates" / "optimiser_radiant_spire.ht
 
 def test_radiant_js_passes_floor_query() -> None:
     text = JS.read_text(encoding="utf-8")
-    assert "?floor=" in text
+    assert "floor=" in text
     assert "selectedFloor" in text
 
 
@@ -26,3 +26,6 @@ def test_radiant_js_renders_opponent_bonuses() -> None:
     text = JS.read_text(encoding="utf-8")
     assert "renderOpponent" in text
     assert "lethality_pct" in text
+    assert "enemy_infantry=" in text
+    assert "opponent-apply" in HTML.read_text(encoding="utf-8") or "opponent-apply" in text
+

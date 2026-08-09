@@ -261,6 +261,8 @@ def optimize_radiant(
     one_per_troop_type: bool = True,
     floor: int | None = None,
     floors_path: Path | str | None = None,
+    enemy_ratio: Mapping[str, float] | None = None,
+    enemy_bonuses: Mapping[str, Mapping[str, float]] | None = None,
 ) -> RadiantResult:
     """Assign exclusive hero marches and search troop ratios via proxy score."""
     from pathlib import Path as _Path
@@ -269,6 +271,8 @@ def optimize_radiant(
 
     if active_marches not in (1, 2, 3):
         raise ValueError(f"active_marches must be 1–3; got {active_marches}")
+    if (enemy_ratio is not None or enemy_bonuses is not None) and floor is None:
+        raise ValueError("enemy_ratio / enemy_bonuses overrides require floor=")
 
     warnings: list[str] = []
     floor_payload: dict[str, Any] | None = None
@@ -289,7 +293,14 @@ def optimize_radiant(
                 f"unknown Radiant floor {floor}; using proxy without floor stub"
             )
         else:
+            if enemy_ratio is not None or enemy_bonuses is not None:
+                floor_stub = floor_stub.with_overrides(
+                    enemy_ratio=enemy_ratio,
+                    enemy_bonuses=enemy_bonuses,
+                )
             floor_payload = floor_stub.to_dict()
+            if enemy_ratio is not None or enemy_bonuses is not None:
+                floor_payload["overrides_applied"] = True
 
     tg = troop_stats.default_truegold if truegold is None else int(truegold)
     levels = _inventory_levels(troops)

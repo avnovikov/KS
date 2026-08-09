@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 
@@ -60,6 +60,55 @@ class FloorStub:
                 t: dict(self.enemy_bonuses.get(t, _ZERO_TROOP_BONUS)) for t in TROOP_TYPES
             },
         }
+
+    def with_overrides(
+        self,
+        *,
+        enemy_ratio: Mapping[str, float] | None = None,
+        enemy_bonuses: Mapping[str, Mapping[str, float]] | None = None,
+    ) -> FloorStub:
+        """Return a copy with optional UI / battle-report overrides applied."""
+        ratio = (
+            normalize_ratio(enemy_ratio) if enemy_ratio is not None else self.enemy_ratio
+        )
+        bonuses = (
+            parse_enemy_bonuses(enemy_bonuses)
+            if enemy_bonuses is not None
+            else self.enemy_bonuses
+        )
+        return replace(self, enemy_ratio=ratio, enemy_bonuses=bonuses)
+
+
+def ratio_from_parts(
+    infantry: float | None,
+    cavalry: float | None,
+    archers: float | None,
+) -> dict[str, float] | None:
+    """Build a normalized ratio from query parts.
+
+    Values may be fractions (sum ≈ 1) or percents (sum ≈ 100). All three
+    required when any is set.
+    """
+    parts = (infantry, cavalry, archers)
+    if all(p is None for p in parts):
+        return None
+    if any(p is None for p in parts):
+        raise ValueError(
+            "enemy_infantry, enemy_cavalry, and enemy_archers must all be set together"
+        )
+    vals = {
+        "infantry": float(infantry),
+        "cavalry": float(cavalry),
+        "archers": float(archers),
+    }
+    if any(v < 0 for v in vals.values()):
+        raise ValueError(f"enemy ratio parts must be non-negative; got {vals}")
+    total = sum(vals.values())
+    if total <= 0:
+        raise ValueError("enemy ratio parts must sum to a positive value")
+    if total > 1.5:
+        vals = {k: v / 100.0 for k, v in vals.items()}
+    return normalize_ratio(vals)
 
 
 def load_floors(path: Path | str) -> dict[int, FloorStub]:
