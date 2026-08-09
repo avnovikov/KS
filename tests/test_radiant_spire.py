@@ -211,7 +211,8 @@ def test_optimize_radiant_includes_research_pct() -> None:
             "infantry": TroopResearchRow(attack_pct=30.0, lethality_pct=5.0),
             "cavalry": TroopResearchRow(),
             "archers": TroopResearchRow(),
-        }
+        },
+        squad=TroopResearchRow(attack_pct=10.0),
     )
     base = optimize_radiant(
         heroes,
@@ -234,10 +235,14 @@ def test_optimize_radiant_includes_research_pct() -> None:
     )
     assert boosted.lineup_score > base.lineup_score
     assert boosted.marches[0].breakdown["atk_pct"]["infantry"] == pytest.approx(
-        base.marches[0].breakdown["atk_pct"]["infantry"] + 30.0
+        base.marches[0].breakdown["atk_pct"]["infantry"] + 40.0
+    )
+    assert boosted.marches[0].breakdown["atk_pct"]["cavalry"] == pytest.approx(
+        base.marches[0].breakdown["atk_pct"]["cavalry"] + 10.0
     )
     assert boosted.research is not None
     assert boosted.research["troops"]["infantry"]["attack_pct"] == pytest.approx(30.0)
+    assert boosted.research["squad"]["attack_pct"] == pytest.approx(10.0)
 
 
 def test_optimize_radiant_schema_allows_three_marches() -> None:

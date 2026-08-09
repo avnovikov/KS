@@ -57,6 +57,16 @@ class ResearchStore:
         base = self._bonuses.to_dict()
         if "note" in raw:
             base["note"] = str(raw.get("note") or "")
+        if "squad" in raw:
+            if raw["squad"] is not None and not isinstance(raw["squad"], Mapping):
+                raise TypeError(
+                    f"squad must be a mapping; got {type(raw['squad']).__name__}"
+                )
+            cur = dict(base["squad"])
+            for key in ("attack_pct", "defense_pct", "lethality_pct", "health_pct"):
+                if isinstance(raw["squad"], Mapping) and key in raw["squad"]:
+                    cur[key] = float(raw["squad"][key])
+            base["squad"] = cur
         incoming_troops = raw.get("troops")
         if isinstance(incoming_troops, Mapping):
             for troop, row in incoming_troops.items():
