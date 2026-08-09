@@ -24,3 +24,25 @@ def test_default_floor_uses_even_split() -> None:
     stub = floors[1]
     assert abs(stub.enemy_ratio["infantry"] - 1 / 3) < 1e-6
     assert abs(sum(stub.enemy_ratio.values()) - 1.0) < 1e-9
+
+
+def test_floor_bonuses_default_to_zero_and_override(tmp_path: Path) -> None:
+    path = tmp_path / "floors.yaml"
+    path.write_text(
+        """
+defaults:
+  enemy_ratio: {infantry: 0.34, cavalry: 0.33, archers: 0.33}
+  enemy_power_scale: 1.0
+floors:
+  1: {}
+  2:
+    enemy_bonuses:
+      infantry: { attack_pct: 120.5, defense_pct: 80, lethality_pct: 40, health_pct: 55 }
+""",
+        encoding="utf-8",
+    )
+    floors = load_floors(path)
+    assert floors[1].enemy_bonuses["infantry"]["attack_pct"] == 0.0
+    assert floors[2].enemy_bonuses["infantry"]["attack_pct"] == 120.5
+    assert floors[2].enemy_bonuses["cavalry"]["defense_pct"] == 0.0
+    assert "enemy_bonuses" in floors[2].to_dict()

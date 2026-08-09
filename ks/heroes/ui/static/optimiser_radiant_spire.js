@@ -9,6 +9,9 @@
   var engineEl = document.getElementById("radiant-engine");
   var chipsEl = document.getElementById("governor-chips");
   var marchesEl = document.getElementById("radiant-marches");
+  var opponentEl = document.getElementById("radiant-opponent");
+  var opponentNoteEl = document.getElementById("opponent-note");
+  var opponentMarchesEl = document.getElementById("opponent-marches");
   var bannerEl = document.getElementById("proxy-banner");
   var regenBtn = document.getElementById("radiant-regen");
   var floorEl = document.getElementById("radiant-floor");
@@ -45,6 +48,79 @@
   function clearError() {
     errorEl.hidden = true;
     errorEl.textContent = "";
+  }
+
+  function appendBonusChips(parent, bonuses) {
+    var row = document.createElement("div");
+    row.className = "chip-row";
+    ["infantry", "cavalry", "archers"].forEach(function (troop) {
+      var b = (bonuses && bonuses[troop]) || {};
+      var chip = document.createElement("span");
+      chip.className = "chip";
+      chip.textContent =
+        troop.slice(0, 3) +
+        " Atk " +
+        fmtPct(b.attack_pct) +
+        " · Def " +
+        fmtPct(b.defense_pct) +
+        " · Leth " +
+        fmtPct(b.lethality_pct) +
+        " · HP " +
+        fmtPct(b.health_pct);
+      row.appendChild(chip);
+    });
+    parent.appendChild(row);
+  }
+
+  function renderOpponent(data) {
+    if (!opponentEl || !opponentMarchesEl) return;
+    var opp = data.opponent;
+    if (!opp || !opp.marches || !opp.marches.length) {
+      opponentEl.hidden = true;
+      opponentMarchesEl.innerHTML = "";
+      return;
+    }
+    opponentEl.hidden = false;
+    if (opponentNoteEl) {
+      opponentNoteEl.textContent =
+        opp.note ||
+        "Troop mix from floor stub; bonuses from battle report YAML (display only).";
+    }
+    opponentMarchesEl.innerHTML = "";
+    opp.marches.forEach(function (march, idx) {
+      if (!march) return;
+      var card = document.createElement("article");
+      card.className = "gov-card opponent";
+      var h = document.createElement("h2");
+      h.textContent = "Opponent march " + (idx + 1);
+      card.appendChild(h);
+      var heroes = document.createElement("p");
+      heroes.textContent = (march.hero_names || ["AI", "AI", "AI"]).join(" · ");
+      card.appendChild(heroes);
+      var ratio = document.createElement("p");
+      ratio.className = "muted";
+      ratio.textContent =
+        "Ratio " +
+        fmtRatio(march.ratio) +
+        " · filled " +
+        ((march.counts &&
+          (march.counts.infantry || 0) +
+            (march.counts.cavalry || 0) +
+            (march.counts.archers || 0)) ||
+          0);
+      card.appendChild(ratio);
+      var counts = document.createElement("p");
+      counts.textContent =
+        "I " +
+        ((march.counts && march.counts.infantry) || 0) +
+        " · C " +
+        ((march.counts && march.counts.cavalry) || 0) +
+        " · A " +
+        ((march.counts && march.counts.archers) || 0);
+      card.appendChild(counts);
+      appendBonusChips(card, march.bonuses || opp.bonuses);
+      opponentMarchesEl.appendChild(card);
+    });
   }
 
   function render(data) {
@@ -148,6 +224,8 @@
       marchesEl.appendChild(card);
     });
 
+    renderOpponent(data);
+
     statusEl.textContent =
       "Ready · " +
       (data.active_marches || marches.filter(Boolean).length) +
@@ -159,6 +237,8 @@
     statusEl.textContent = "Solving marches…";
     summaryEl.hidden = true;
     marchesEl.innerHTML = "";
+    if (opponentEl) opponentEl.hidden = true;
+    if (opponentMarchesEl) opponentMarchesEl.innerHTML = "";
     clearError();
     try {
       var floor = selectedFloor();

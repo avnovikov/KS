@@ -178,6 +178,25 @@ def test_optimize_radiant_exclusive_heroes_and_governor_shift() -> None:
         active_marches=2,
     )
     assert boosted.lineup_score > base.lineup_score
+    assert base.opponent is None
+
+    with_floor = optimize_radiant(
+        heroes,
+        catalog,
+        gear_pieces=[],
+        governor=_gov(),
+        troops=troops,
+        troop_stats=_table(),
+        active_marches=2,
+        floor=10,
+    )
+    assert with_floor.opponent is not None
+    assert len(with_floor.opponent["marches"]) == 2
+    opp0 = with_floor.opponent["marches"][0]
+    assert opp0["hero_names"] == ["AI", "AI", "AI"]
+    assert abs(opp0["ratio"]["infantry"] - 0.53) < 1e-9
+    assert sum(opp0["counts"].values()) == sum(with_floor.marches[0].counts.values())
+    assert "attack_pct" in opp0["bonuses"]["infantry"]
 
 
 def test_optimize_radiant_schema_allows_three_marches() -> None:

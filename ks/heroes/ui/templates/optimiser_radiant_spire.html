@@ -30,11 +30,20 @@
 </section>
 
 <div id="radiant-marches" class="gov-grid"></div>
+
+<section id="radiant-opponent" hidden>
+  <h2 class="section-title">Opponent</h2>
+  <p id="opponent-note" class="hint"></p>
+  <div id="opponent-marches" class="gov-grid"></div>
+</section>
+
 <style>
   .gov-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; margin-top: 1rem; }
   .gov-card { border: 1px solid var(--border, #444); padding: 1rem; border-radius: 8px; }
+  .gov-card.opponent { border-style: dashed; }
   .chip-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0; }
   .chip { border: 1px solid var(--border, #555); padding: 0.25rem 0.6rem; border-radius: 999px; font-size: 0.85rem; }
+  #radiant-opponent { margin-top: 1.5rem; }
   @media (max-width: 800px) { .gov-grid { grid-template-columns: 1fr; } }
 </style>
 {% endblock %}

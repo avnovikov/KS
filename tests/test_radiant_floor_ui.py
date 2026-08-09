@@ -19,3 +19,10 @@ def test_radiant_html_has_floor_select() -> None:
     text = HTML.read_text(encoding="utf-8")
     assert 'id="radiant-floor"' in text
     assert "Proxy only" in text
+    assert 'id="radiant-opponent"' in text
+
+
+def test_radiant_js_renders_opponent_bonuses() -> None:
+    text = JS.read_text(encoding="utf-8")
+    assert "renderOpponent" in text
+    assert "lethality_pct" in text

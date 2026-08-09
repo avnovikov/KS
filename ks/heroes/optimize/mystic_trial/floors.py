@@ -8,7 +8,40 @@ from typing import Any
 
 import yaml
 
-from ks.heroes.optimize.mystic_trial.ratios import normalize_ratio
+from ks.heroes.optimize.mystic_trial.ratios import TROOP_TYPES, normalize_ratio
+
+BONUS_KEYS: tuple[str, ...] = (
+    "attack_pct",
+    "defense_pct",
+    "lethality_pct",
+    "health_pct",
+)
+
+_ZERO_TROOP_BONUS: dict[str, float] = {k: 0.0 for k in BONUS_KEYS}
+
+
+def empty_enemy_bonuses() -> dict[str, dict[str, float]]:
+    return {t: dict(_ZERO_TROOP_BONUS) for t in TROOP_TYPES}
+
+
+def parse_enemy_bonuses(raw: Any) -> dict[str, dict[str, float]]:
+    """Parse battle-report style % bonuses; missing keys default to 0."""
+    out = empty_enemy_bonuses()
+    if raw is None:
+        return out
+    if not isinstance(raw, dict):
+        raise ValueError(f"enemy_bonuses must be a mapping; got {type(raw).__name__}")
+    for troop in TROOP_TYPES:
+        row = raw.get(troop)
+        if row is None:
+            continue
+        if not isinstance(row, dict):
+            raise ValueError(f"enemy_bonuses.{troop} must be a mapping")
+        for key in BONUS_KEYS:
+            if key not in row:
+                continue
+            out[troop][key] = float(row[key])
+    return out
 
 
 @dataclass(frozen=True)
@@ -16,12 +49,16 @@ class FloorStub:
     floor: int
     enemy_ratio: dict[str, float]
     enemy_power_scale: float
+    enemy_bonuses: dict[str, dict[str, float]]
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "floor": self.floor,
             "enemy_ratio": dict(self.enemy_ratio),
             "enemy_power_scale": self.enemy_power_scale,
+            "enemy_bonuses": {
+                t: dict(self.enemy_bonuses.get(t, _ZERO_TROOP_BONUS)) for t in TROOP_TYPES
+            },
         }
 
 
@@ -40,6 +77,7 @@ def load_floors(path: Path | str) -> dict[int, FloorStub]:
     default_scale = float(defaults.get("enemy_power_scale", 1.0))
     if default_scale <= 0:
         raise ValueError(f"enemy_power_scale must be positive; got {default_scale}")
+    default_bonuses = parse_enemy_bonuses(defaults.get("enemy_bonuses"))
 
     floors_raw = raw.get("floors") or {}
     if not isinstance(floors_raw, dict) or not floors_raw:
@@ -53,7 +91,16 @@ def load_floors(path: Path | str) -> dict[int, FloorStub]:
         scale = float(row.get("enemy_power_scale", default_scale))
         if scale <= 0:
             raise ValueError(f"floor {floor}: enemy_power_scale must be positive; got {scale}")
-        out[floor] = FloorStub(floor=floor, enemy_ratio=ratio, enemy_power_scale=scale)
+        if "enemy_bonuses" in row:
+            bonuses = parse_enemy_bonuses(row["enemy_bonuses"])
+        else:
+            bonuses = {t: dict(default_bonuses[t]) for t in TROOP_TYPES}
+        out[floor] = FloorStub(
+            floor=floor,
+            enemy_ratio=ratio,
+            enemy_power_scale=scale,
+            enemy_bonuses=bonuses,
+        )
     return out
 
 

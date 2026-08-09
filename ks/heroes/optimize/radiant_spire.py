@@ -14,6 +14,7 @@ from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.bear_damage import blend_unit_stats
 from ks.heroes.optimize.gear_assign import assign_exclusive_sets
+from ks.heroes.optimize.mystic_trial.floors import FloorStub
 from ks.heroes.optimize.mystic_trial.proxy import (
     PROXY_BANNER,
     MarchScore,
@@ -81,6 +82,7 @@ class RadiantResult:
     active_marches: int = 2
     schema_marches: int = 3
     floor: dict[str, Any] | None = None
+    opponent: dict[str, Any] | None = None
     engine: str = "proxy"
     warnings: tuple[str, ...] = ()
 
@@ -99,9 +101,43 @@ class RadiantResult:
         }
         if self.floor is not None:
             out["floor"] = dict(self.floor)
+        if self.opponent is not None:
+            out["opponent"] = dict(self.opponent)
         if self.warnings:
             out["warnings"] = list(self.warnings)
         return out
+
+
+def build_opponent_panel(
+    player_marches: Sequence[MarchResult],
+    stub: FloorStub,
+) -> dict[str, Any]:
+    """Two AI marches with stub ratio/counts and battle-report bonuses (display)."""
+    bonuses = {t: dict(stub.enemy_bonuses.get(t, {})) for t in TROOP_TYPES}
+    opp_marches: list[dict[str, Any]] = []
+    for march in player_marches:
+        filled = sum(int(march.counts.get(t, 0)) for t in TROOP_TYPES)
+        # Unlimited owned so ratio fills exactly to the mirrored march size.
+        owned = {t: filled for t in TROOP_TYPES}
+        counts = (
+            counts_for_ratio(stub.enemy_ratio, filled, owned)
+            if filled > 0
+            else {t: 0 for t in TROOP_TYPES}
+        )
+        opp_marches.append(
+            {
+                "hero_names": ["AI", "AI", "AI"],
+                "ratio": dict(stub.enemy_ratio),
+                "counts": dict(counts),
+                "capacity": int(march.capacity),
+                "bonuses": {t: dict(bonuses[t]) for t in TROOP_TYPES},
+            }
+        )
+    return {
+        "marches": opp_marches,
+        "bonuses": bonuses,
+        "note": "Bonuses from battle report / opponent screen (YAML); display only.",
+    }
 
 
 def _hero_troop(hero: HeroRecord, entry: CatalogEntry | None) -> str | None:
@@ -360,12 +396,16 @@ def optimize_radiant(
         marches.append(best)
 
     engine = "mc" if floor_stub is not None else "proxy"
+    opponent = (
+        build_opponent_panel(marches, floor_stub) if floor_stub is not None else None
+    )
     return RadiantResult(
         marches=tuple(marches),
         lineup_score=sum(m.score for m in marches),
         governor=governor.to_dict(),
         active_marches=active_marches,
         floor=floor_payload,
+        opponent=opponent,
         engine=engine,
         warnings=tuple(warnings),
     )
@@ -379,6 +419,7 @@ __all__ = [
     "MarchResult",
     "MarchScore",
     "RadiantResult",
+    "build_opponent_panel",
     "counts_for_ratio",
     "optimize_radiant",
     "ratio_candidates",
