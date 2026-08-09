@@ -236,6 +236,7 @@ def optimize_radiant(
 
     warnings: list[str] = []
     floor_payload: dict[str, Any] | None = None
+    floor_stub = None
     if floor is not None:
         path = (
             _Path(floors_path)
@@ -246,13 +247,13 @@ def optimize_radiant(
             / "radiant_spire_floors.yaml"
         )
         stubs = load_floors(path)
-        stub = get_floor(stubs, int(floor))
-        if stub is None:
+        floor_stub = get_floor(stubs, int(floor))
+        if floor_stub is None:
             warnings.append(
                 f"unknown Radiant floor {floor}; using proxy without floor stub"
             )
         else:
-            floor_payload = stub.to_dict()
+            floor_payload = floor_stub.to_dict()
 
     tg = troop_stats.default_truegold if truegold is None else int(truegold)
     levels = _inventory_levels(troops)
@@ -312,6 +313,7 @@ def optimize_radiant(
         fill_cap = min(capacity, sum(remaining_owned.values()))
 
         best: MarchResult | None = None
+        best_key: float | None = None
         for ratio in ratio_candidates(published=PUBLISHED_RATIOS):
             counts = counts_for_ratio(ratio, fill_cap, remaining_owned)
             scored = score_march(
@@ -322,39 +324,49 @@ def optimize_radiant(
                 leth_pct=hero_leth,
                 hp_pct=hero_hp,
             )
+            breakdown: dict[str, Any] = {
+                "proxy": scored.to_dict(),
+                "atk_pct": dict(atk_pct),
+                "def_pct": dict(def_pct),
+                "leth_pct": dict(hero_leth),
+                "hp_pct": dict(hero_hp),
+                "hero_shares": hero_shares,
+                "governor_attack_pct": dict(governor.attack_pct),
+                "governor_defense_pct": dict(governor.defense_pct),
+                "set_attack_pct": governor.set_attack_pct,
+                "set_defense_pct": governor.set_defense_pct,
+            }
+            rank_key = scored.score
+            if floor_stub is not None:
+                from ks.heroes.optimize.mystic_trial.combat_mc import simulate_floor
+
+                mc = simulate_floor(scored, floor_stub)
+                breakdown["mc"] = mc.to_dict()
+                rank_key = mc.win_rate
             candidate = MarchResult(
                 hero_names=tuple(h.name for h in pick),
                 ratio=dict(ratio),
                 counts=dict(counts),
                 capacity=capacity,
-                score=scored.score,
-                breakdown={
-                    "proxy": scored.to_dict(),
-                    "atk_pct": dict(atk_pct),
-                    "def_pct": dict(def_pct),
-                    "leth_pct": dict(hero_leth),
-                    "hp_pct": dict(hero_hp),
-                    "hero_shares": hero_shares,
-                    "governor_attack_pct": dict(governor.attack_pct),
-                    "governor_defense_pct": dict(governor.defense_pct),
-                    "set_attack_pct": governor.set_attack_pct,
-                    "set_defense_pct": governor.set_defense_pct,
-                },
+                score=scored.score if floor_stub is None else rank_key,
+                breakdown=breakdown,
             )
-            if best is None or candidate.score > best.score:
+            if best is None or best_key is None or rank_key > best_key:
                 best = candidate
+                best_key = rank_key
         assert best is not None
         for t in TROOP_TYPES:
             remaining_owned[t] = max(0, remaining_owned[t] - best.counts[t])
         marches.append(best)
 
+    engine = "mc" if floor_stub is not None else "proxy"
     return RadiantResult(
         marches=tuple(marches),
         lineup_score=sum(m.score for m in marches),
         governor=governor.to_dict(),
         active_marches=active_marches,
         floor=floor_payload,
-        engine="proxy",
+        engine=engine,
         warnings=tuple(warnings),
     )
 
