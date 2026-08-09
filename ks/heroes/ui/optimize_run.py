@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 
 from ks.heroes.gear_models import GearRecord
+from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.arena import load_arena_roles, optimize_arena
 from ks.heroes.optimize.catalog import load_catalog
@@ -306,3 +307,39 @@ def attach_gear_icon_urls(
     conquest = bundle.get("conquest")
     if isinstance(conquest, dict):
         _patch_assignment(conquest.get("gear_assignment"))
+
+
+def run_radiant_optimize(
+    heroes: list[HeroRecord],
+    *,
+    governor_bonuses: GovernorTroopBonuses,
+    gear: list[GearRecord] | None = None,
+    config_root: Path | None = None,
+    troops_path: Path | None = None,
+    active_marches: int = 2,
+) -> dict[str, Any]:
+    """Dual-march Radiant Spire proxy from current inventory + governor gear."""
+    from ks.heroes.optimize.radiant_spire import optimize_radiant
+
+    root = (config_root or REPO_ROOT).expanduser().resolve()
+    catalog = load_catalog(None, root / "config" / "hero_catalog.yaml")
+    resolved_troops = (
+        Path(troops_path).expanduser().resolve()
+        if troops_path is not None
+        else root / "config" / "troops.yaml"
+    )
+    troops = load_troops_config(resolved_troops)
+    troop_stats = load_troop_stats(root / "config" / "troop_stats.yaml")
+    raw_troops = yaml.safe_load(resolved_troops.read_text(encoding="utf-8")) or {}
+    truegold = int(raw_troops.get("truegold", troop_stats.default_truegold))
+    result = optimize_radiant(
+        heroes,
+        catalog,
+        gear_pieces=list(gear or ()),
+        governor=governor_bonuses,
+        troops=troops,
+        troop_stats=troop_stats,
+        active_marches=active_marches,
+        truegold=truegold,
+    )
+    return result.to_dict()

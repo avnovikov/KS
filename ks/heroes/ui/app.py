@@ -80,9 +80,11 @@ def startup_paths(*, gear: bool, heroes: bool) -> list[tuple[str, str]]:
     # Troops is editable whichever inventory is configured — the optimisers
     # read it either way.
     rows.append(("Inventory · Troops", "/inventory/troops"))
+    rows.append(("Inventory · Governor", "/inventory/governor-gear"))
     if heroes:
         rows.append(("Optimiser · Event lineups", "/optimiser/events"))
         rows.append(("Optimiser · Gear XP", "/optimiser/gear-xp"))
+        rows.append(("Optimiser · Radiant Spire", "/optimiser/radiant-spire"))
     return rows
 
 
@@ -438,11 +440,63 @@ def update_hero_stars(
     return updated
 
 
+def update_hero_skills(
+    store: HeroStore,
+    name: str,
+    skills_raw: list[dict[str, Any]],
+) -> HeroRecord:
+    """Replace hero skills; levels must be 1..5. Overwrites OCR skill rows."""
+    from ks.heroes.models import SkillRecord
+
+    heroes = {h.name: h for h in store.all_heroes()}
+    hero = heroes.get(name)
+    if hero is None:
+        raise KeyError(name)
+    if not isinstance(skills_raw, list) or not skills_raw:
+        raise ValueError("skills must be a non-empty list")
+    skills: list[SkillRecord] = []
+    seen_slots: set[int] = set()
+    for item in skills_raw:
+        if not isinstance(item, dict):
+            raise ValueError("each skill must be a mapping")
+        slot = int(item["slot"])
+        if slot in seen_slots:
+            raise ValueError(f"duplicate skill slot {slot}")
+        seen_slots.add(slot)
+        level = item.get("level")
+        if level is None:
+            raise ValueError(f"skill slot {slot} requires level 1..5")
+        level_i = int(level)
+        if level_i < 1 or level_i > 5:
+            raise ValueError(f"skill level must be 1..5; got {level_i} for slot {slot}")
+        name_s = str(item.get("name") or "").strip() or None
+        skills.append(
+            SkillRecord(
+                slot=slot,
+                name=name_s,
+                level=level_i,
+                description=item.get("description"),
+                upgrade_preview=item.get("upgrade_preview"),
+                current_bonus=(
+                    float(item["current_bonus"])
+                    if item.get("current_bonus") is not None
+                    else None
+                ),
+                raw_text=item.get("raw_text"),
+            )
+        )
+    skills.sort(key=lambda s: s.slot)
+    updated = replace(hero, skills=tuple(skills))
+    store.upsert(updated, overwrite=frozenset({"skills"}))
+    return updated
+
+
 def create_app(
     gear_dir: Path | None = None,
     *,
     heroes_dir: Path | None = None,
     troops_path: Path | None = None,
+    governor_dir: Path | None = None,
     gear_config: Path | None = None,
     heroes_config: Path | None = None,
     serial: str | None = None,
@@ -479,6 +533,17 @@ def create_app(
         seed_from=REPO_ROOT / "config" / "troops.yaml",
     )
     troop_store.ensure_exists()
+    from ks.heroes.governor_store import GovernorGearStore
+
+    if governor_dir is not None:
+        resolved_governor = governor_dir.expanduser().resolve()
+    elif resolved_heroes is not None and resolved_heroes.parent.name == "heroes":
+        resolved_governor = (
+            resolved_heroes.parent.parent / "governor" / "full-run"
+        ).resolve()
+    else:
+        resolved_governor = (REPO_ROOT / "data" / "governor" / "full-run").resolve()
+    governor_store = GovernorGearStore(resolved_governor)
     gear_config_path = (gear_config or DEFAULT_GEAR_CONFIG).expanduser().resolve()
     heroes_config_path = (
         (heroes_config or DEFAULT_HEROES_CONFIG).expanduser().resolve()
@@ -491,8 +556,10 @@ def create_app(
     app = FastAPI(title="KS Heroes UI", version="0.2.0")
     app.state.gear_dir = resolved_gear
     app.state.heroes_dir = resolved_heroes
+    app.state.governor_dir = resolved_governor
     app.state.store = gear_store
     app.state.hero_store = hero_store
+    app.state.governor_store = governor_store
     app.state.gear_config = gear_config_path
     app.state.heroes_config = heroes_config_path
     app.state.serial = serial
@@ -685,6 +752,54 @@ def create_app(
             load_error=load_error,
         )
 
+    @app.get("/inventory/governor-gear", response_class=HTMLResponse)
+    def inventory_governor_gear_page(request: Request) -> HTMLResponse:
+        summary = governor_store.summary()
+        return _shell_page(
+            request,
+            "inventory_governor_gear.html",
+            primary="inventory",
+            subtab="governor",
+            summary=summary,
+            governor_dir=str(resolved_governor),
+        )
+
+    @app.get("/api/governor-gear")
+    def api_governor_gear() -> dict[str, Any]:
+        return governor_store.summary()
+
+    @app.post("/api/governor-gear/{slot_id}/upgrade")
+    def api_governor_upgrade(slot_id: str) -> dict[str, Any]:
+        try:
+            governor_store.upgrade(slot_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return governor_store.summary()
+
+    @app.patch("/api/governor-gear/{slot_id}")
+    def api_governor_patch(slot_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        from ks.heroes.governor_models import GovernorPiece
+
+        if slot_id not in governor_store.cfg.slots:
+            raise HTTPException(status_code=404, detail=f"unknown slot {slot_id}")
+        tier = body.get("tier")
+        stars = body.get("stars")
+        prev = governor_store.get(slot_id)
+        assert prev is not None
+        try:
+            governor_store.upsert(
+                GovernorPiece(
+                    slot_id=slot_id,
+                    tier=str(tier if tier is not None else prev.tier),
+                    stars=int(stars if stars is not None else prev.stars),
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return governor_store.summary()
+
     @app.get("/optimiser/events", response_class=HTMLResponse)
     def optimiser_events_page(request: Request) -> HTMLResponse:
         heroes_path, _ = _require_heroes()
@@ -694,6 +809,18 @@ def create_app(
             primary="optimiser",
             subtab="events",
             heroes_dir=str(heroes_path),
+        )
+
+    @app.get("/optimiser/radiant-spire", response_class=HTMLResponse)
+    def optimiser_radiant_page(request: Request) -> HTMLResponse:
+        heroes_path, _ = _require_heroes()
+        return _shell_page(
+            request,
+            "optimiser_radiant_spire.html",
+            primary="optimiser",
+            subtab="radiant",
+            heroes_dir=str(heroes_path),
+            governor_dir=str(resolved_governor),
         )
 
     @app.get("/optimiser/gear-xp", response_class=HTMLResponse)
@@ -921,7 +1048,51 @@ def create_app(
         icon_url = with_cache_bust(
             ensure_all_hero_icons([hero], heroes_path).get(name), bust
         )
-        return {"hero": {**hero.to_dict(), "icon_url": icon_url}}
+        from ks.heroes.optimize.catalog import load_catalog
+
+        catalog = load_catalog(None, REPO_ROOT / "config" / "hero_catalog.yaml")
+        entry = catalog.get(name)
+        catalog_skills = (
+            [s.to_dict() for s in entry.skills] if entry is not None else []
+        )
+        return {
+            "hero": {**hero.to_dict(), "icon_url": icon_url},
+            "catalog_skills": catalog_skills,
+        }
+
+    @app.patch("/api/heroes/{name}/skills")
+    async def api_patch_hero_skills(name: str, request: Request) -> dict[str, Any]:
+        heroes_path, store = _require_heroes()
+        try:
+            raw = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="JSON body required") from exc
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="JSON object required")
+        skills_raw = raw.get("skills")
+        if not isinstance(skills_raw, list):
+            raise HTTPException(status_code=400, detail="skills must be a list")
+        try:
+            updated = update_hero_skills(store, name, skills_raw)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=404, detail=f"unknown hero: {name}"
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        icon_url = ensure_all_hero_icons([updated], heroes_path).get(name)
+        from ks.heroes.optimize.catalog import load_catalog
+
+        catalog = load_catalog(None, REPO_ROOT / "config" / "hero_catalog.yaml")
+        entry = catalog.get(name)
+        catalog_skills = (
+            [s.to_dict() for s in entry.skills] if entry is not None else []
+        )
+        return {
+            "ok": True,
+            "hero": {**updated.to_dict(), "icon_url": icon_url},
+            "catalog_skills": catalog_skills,
+        }
 
     @app.patch("/api/heroes/{name}")
     async def api_patch_hero(name: str, request: Request) -> dict[str, Any]:
@@ -1094,6 +1265,32 @@ def create_app(
         bundle["heroes_dir"] = str(heroes_path)
         return bundle
 
+    @app.get("/api/optimize/radiant-spire")
+    def api_optimize_radiant() -> dict[str, Any]:
+        """Dual-march Radiant Spire proxy from heroes, gear, troops, governor."""
+        heroes_path, hero_store_local = _require_heroes()
+        from ks.heroes.ui.optimize_run import run_radiant_optimize
+
+        hero_store_local.reload()
+        heroes = hero_store_local.all_heroes()
+        gear_pieces: list[GearRecord] = []
+        if gear_store is not None:
+            gear_store.reload()
+            gear_pieces = gear_store.all_pieces()
+        try:
+            payload = run_radiant_optimize(
+                heroes,
+                governor_bonuses=governor_store.bonuses(),
+                gear=gear_pieces,
+                troops_path=app.state.troops_path,
+                active_marches=2,
+            )
+        except (ValueError, OSError, FileNotFoundError, KeyError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        payload["heroes_dir"] = str(heroes_path)
+        payload["governor_dir"] = str(resolved_governor)
+        return payload
+
     def _prepare_gear_xp_search(body: dict[str, Any]) -> tuple[str, Any, list[GearRecord], Any]:
         """Shared request parsing for the blocking and streaming gear-XP
         endpoints: validates fodder counts, resolves the roster/gear/troops
@@ -1202,6 +1399,7 @@ def run_ui(
     *,
     heroes_dir: Path | None = None,
     troops_path: Path | None = None,
+    governor_dir: Path | None = None,
     host: str = "127.0.0.1",
     port: int = 8765,
     gear_config: Path | None = None,
@@ -1220,6 +1418,7 @@ def run_ui(
         gear_dir,
         heroes_dir=heroes_dir,
         troops_path=troops_path,
+        governor_dir=governor_dir,
         gear_config=gear_config,
         heroes_config=heroes_config,
         serial=serial,
@@ -1233,4 +1432,5 @@ def run_ui(
     if gear_dir is not None:
         print(f"Gear: {Path(gear_dir).expanduser().resolve()}")
     print(f"Troops: {app.state.troops_path}")
+    print(f"Governor: {app.state.governor_dir}")
     uvicorn.run(app, host=host, port=port, log_level="info")

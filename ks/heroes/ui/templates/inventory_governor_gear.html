@@ -1,0 +1,69 @@
+{% extends "_layout.html" %}
+{% block title %}Governor gear · KS{% endblock %}
+
+{% block content %}
+<section class="panel">
+  <h1 class="page-title">Governor gear</h1>
+  <p class="hint">Manual 6-slot inventory. Upgrade advances the ladder in <code>config/governor_gear.yaml</code>.</p>
+  <p class="page-meta">{{ governor_dir }}</p>
+  <div class="chip-row" id="gov-bonuses">
+    {% set b = summary.bonuses %}
+    <span class="chip">Set {{ b.set_tier or "—" }} · Def +{{ '%.1f'|format(b.set_defense_pct) }}% · Atk +{{ '%.1f'|format(b.set_attack_pct) }}%</span>
+    {% for troop, pct in b.attack_pct.items() %}
+    <span class="chip">{{ troop }} Atk {{ '%.1f'|format(pct) }}% / Def {{ '%.1f'|format(b.defense_pct[troop]) }}%</span>
+    {% endfor %}
+  </div>
+  <div class="gov-grid" id="gov-grid">
+    {% for p in summary.pieces %}
+    <article class="gov-card" data-slot="{{ p.slot_id }}">
+      <h2>{{ p.display_name }}</h2>
+      <p class="muted">{{ p.troop }} · {{ p.tier }} ★{{ p.stars }}</p>
+      <p>Atk +{{ '%.2f'|format(p.attack_pct) }}% · Def +{{ '%.2f'|format(p.defense_pct) }}%</p>
+      <p class="muted">Power {{ p.power }}</p>
+      <button type="button" class="btn" data-upgrade="{{ p.slot_id }}">Upgrade</button>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+<style>
+  /* In-game profile: 2 columns × 3 rows (pair per row: cav / inf / archers). */
+  .gov-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(3, auto);
+    gap: 1rem;
+    margin-top: 1rem;
+    max-width: 40rem;
+  }
+  .gov-card { border: 1px solid var(--border, #444); padding: 1rem; border-radius: 8px; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0; }
+  .chip { border: 1px solid var(--border, #555); padding: 0.25rem 0.6rem; border-radius: 999px; font-size: 0.85rem; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  document.querySelectorAll("[data-upgrade]").forEach(function (btn) {
+    btn.addEventListener("click", async function () {
+      btn.disabled = true;
+      try {
+        var res = await fetch("/api/governor-gear/" + encodeURIComponent(btn.dataset.upgrade) + "/upgrade", {
+          method: "POST",
+        });
+        var body = await res.json().catch(function () { return {}; });
+        if (!res.ok) {
+          alert(body.detail || ("Upgrade failed: " + res.status));
+          btn.disabled = false;
+          return;
+        }
+        location.reload();
+      } catch (err) {
+        alert(String(err));
+        btn.disabled = false;
+      }
+    });
+  });
+})();
+</script>
+{% endblock %}

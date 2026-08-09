@@ -35,8 +35,10 @@ SHELL_PAGES = (
     "/inventory/gear",
     "/inventory/heroes",
     "/inventory/troops",
+    "/inventory/governor-gear",
     "/optimiser/events",
     "/optimiser/gear-xp",
+    "/optimiser/radiant-spire",
     "/optimiser/hero-levels",
 )
 
@@ -3211,6 +3213,7 @@ def test_the_console_advertises_the_new_ia_and_only_real_pages(
     assert [p for _, p in startup_paths(gear=True, heroes=False)] == [
         "/inventory/gear",
         "/inventory/troops",
+        "/inventory/governor-gear",
     ]
     assert "/inventory/gear" not in [
         p for _, p in startup_paths(gear=False, heroes=True)
