@@ -1,0 +1,35 @@
+{% extends "_layout.html" %}
+{% block title %}Coliseum · Optimiser · KS{% endblock %}
+
+{% block actions %}
+<button type="button" id="coliseum-regen"
+        title="Recompute single march from current inventory">Regenerate</button>
+{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Coliseum</h1>
+<p class="page-meta">{{ heroes_dir }} · governor {{ governor_dir }}</p>
+<p class="banner-warn" id="proxy-banner" role="status">
+  Proxy score — not in-game clear prediction. Heroes + gear primary; governor weight 0.
+</p>
+<p class="status-line" id="coliseum-status" role="status">Solving march…</p>
+<p class="banner-err" id="coliseum-error" role="alert" hidden></p>
+
+<section class="panel" id="coliseum-summary" hidden>
+  <h2 class="section-title">Lineup</h2>
+  <p id="coliseum-score" class="hint"></p>
+  <div class="chip-row" id="governor-chips"></div>
+</section>
+
+<div id="coliseum-marches" class="gov-grid"></div>
+<style>
+  .gov-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; margin-top: 1rem; max-width: 36rem; }
+  .gov-card { border: 1px solid var(--border, #444); padding: 1rem; border-radius: 8px; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0; }
+  .chip { border: 1px solid var(--border, #555); padding: 0.25rem 0.6rem; border-radius: 999px; font-size: 0.85rem; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/optimiser_coliseum.js"></script>
+{% endblock %}

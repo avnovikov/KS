@@ -85,6 +85,7 @@ def startup_paths(*, gear: bool, heroes: bool) -> list[tuple[str, str]]:
         rows.append(("Optimiser · Event lineups", "/optimiser/events"))
         rows.append(("Optimiser · Gear XP", "/optimiser/gear-xp"))
         rows.append(("Optimiser · Radiant Spire", "/optimiser/radiant-spire"))
+        rows.append(("Optimiser · Coliseum", "/optimiser/coliseum"))
     return rows
 
 
@@ -823,6 +824,18 @@ def create_app(
             governor_dir=str(resolved_governor),
         )
 
+    @app.get("/optimiser/coliseum", response_class=HTMLResponse)
+    def optimiser_coliseum_page(request: Request) -> HTMLResponse:
+        heroes_path, _ = _require_heroes()
+        return _shell_page(
+            request,
+            "optimiser_coliseum.html",
+            primary="optimiser",
+            subtab="coliseum",
+            heroes_dir=str(heroes_path),
+            governor_dir=str(resolved_governor),
+        )
+
     @app.get("/optimiser/gear-xp", response_class=HTMLResponse)
     def optimiser_gear_xp_page(request: Request) -> HTMLResponse:
         heroes_path, _ = _require_heroes()
@@ -1288,6 +1301,31 @@ def create_app(
                 troops_path=app.state.troops_path,
                 active_marches=2,
                 floor=floor,
+            )
+        except (ValueError, OSError, FileNotFoundError, KeyError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        payload["heroes_dir"] = str(heroes_path)
+        payload["governor_dir"] = str(resolved_governor)
+        return payload
+
+    @app.get("/api/optimize/coliseum")
+    def api_optimize_coliseum() -> dict[str, Any]:
+        """Single-march Coliseum proxy — heroes + gear; governor weight 0."""
+        heroes_path, hero_store_local = _require_heroes()
+        from ks.heroes.ui.optimize_run import run_coliseum_optimize
+
+        hero_store_local.reload()
+        heroes = hero_store_local.all_heroes()
+        gear_pieces: list[GearRecord] = []
+        if gear_store is not None:
+            gear_store.reload()
+            gear_pieces = gear_store.all_pieces()
+        try:
+            payload = run_coliseum_optimize(
+                heroes,
+                governor_bonuses=governor_store.bonuses(),
+                gear=gear_pieces,
+                troops_path=app.state.troops_path,
             )
         except (ValueError, OSError, FileNotFoundError, KeyError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
