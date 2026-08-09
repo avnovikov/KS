@@ -94,6 +94,7 @@ def test_radiant_page_and_api(tmp_path: Path) -> None:
     assert "Radiant Spire" in page.text
     assert "Mystic Trial" in page.text
     assert "optimiser_radiant_spire.js" in page.text
+    assert "optimiser_board.js" in page.text
     assert 'aria-label="Mystic Trial room"' in page.text
 
     legacy = client.get("/optimiser/radiant-spire", follow_redirects=False)

@@ -1,6 +1,9 @@
-/* Radiant Spire dual-march proxy board for /optimiser/radiant-spire. */
+/* Radiant Spire dual-march board — Event-lineups board chrome via OptimiserBoard. */
 (function () {
   "use strict";
+
+  var B = window.OptimiserBoard;
+  if (!B) return;
 
   var statusEl = document.getElementById("radiant-status");
   var errorEl = document.getElementById("radiant-error");
@@ -29,25 +32,9 @@
     { key: "health_pct", label: "HP" },
   ];
 
-  /** Last applied overrides (null = use YAML stub). Cleared on floor change. */
   var overrideRatioPct = null;
   var overrideBonuses = null;
   var fillingEditors = false;
-
-  function fmtPct(n) {
-    return Number(n || 0).toFixed(1) + "%";
-  }
-
-  function fmtRatio(ratio) {
-    if (!ratio) return "—";
-    return (
-      Math.round((ratio.infantry || 0) * 100) +
-      "/" +
-      Math.round((ratio.cavalry || 0) * 100) +
-      "/" +
-      Math.round((ratio.archers || 0) * 100)
-    );
-  }
 
   function selectedFloor() {
     if (!floorEl) return null;
@@ -148,6 +135,43 @@
     fillingEditors = false;
   }
 
+  function marchMeta(march, scoreLine) {
+    var bits = [
+      "Ratio " + B.fmtRatio(march.ratio),
+      "cap " + (march.capacity || 0),
+      "filled " +
+        ((march.counts &&
+          (march.counts.infantry || 0) +
+            (march.counts.cavalry || 0) +
+            (march.counts.archers || 0)) ||
+          0),
+      B.fmtCounts(march.counts),
+    ];
+    if (scoreLine) bits.push(scoreLine);
+    return bits.join(" · ");
+  }
+
+  function appendBonusChipRow(board, bonuses) {
+    var row = document.createElement("div");
+    row.className = "chip-row";
+    TROOPS.forEach(function (troop) {
+      var b = (bonuses && bonuses[troop]) || {};
+      B.appendChip(
+        row,
+        troop.slice(0, 3) +
+          " Atk " +
+          B.fmtPct(b.attack_pct) +
+          " · Def " +
+          B.fmtPct(b.defense_pct) +
+          " · Leth " +
+          B.fmtPct(b.lethality_pct) +
+          " · HP " +
+          B.fmtPct(b.health_pct)
+      );
+    });
+    board.appendChild(row);
+  }
+
   function renderOpponent(data) {
     if (!opponentEl || !opponentMarchesEl) return;
     var opp = data.opponent;
@@ -166,56 +190,15 @@
     opponentMarchesEl.innerHTML = "";
     opp.marches.forEach(function (march, idx) {
       if (!march) return;
-      var card = document.createElement("article");
-      card.className = "gov-card opponent";
-      var h = document.createElement("h2");
-      h.textContent = "Opponent march " + (idx + 1);
-      card.appendChild(h);
-      var heroes = document.createElement("p");
-      heroes.textContent = (march.hero_names || ["AI", "AI", "AI"]).join(" · ");
-      card.appendChild(heroes);
-      var ratio = document.createElement("p");
-      ratio.className = "muted";
-      ratio.textContent =
-        "Ratio " +
-        fmtRatio(march.ratio) +
-        " · filled " +
-        ((march.counts &&
-          (march.counts.infantry || 0) +
-            (march.counts.cavalry || 0) +
-            (march.counts.archers || 0)) ||
-          0);
-      card.appendChild(ratio);
-      var counts = document.createElement("p");
-      counts.textContent =
-        "I " +
-        ((march.counts && march.counts.infantry) || 0) +
-        " · C " +
-        ((march.counts && march.counts.cavalry) || 0) +
-        " · A " +
-        ((march.counts && march.counts.archers) || 0);
-      card.appendChild(counts);
-      var chipRow = document.createElement("div");
-      chipRow.className = "chip-row";
-      var bonuses = march.bonuses || opp.bonuses || {};
-      TROOPS.forEach(function (troop) {
-        var b = bonuses[troop] || {};
-        var chip = document.createElement("span");
-        chip.className = "chip";
-        chip.textContent =
-          troop.slice(0, 3) +
-          " Atk " +
-          fmtPct(b.attack_pct) +
-          " · Def " +
-          fmtPct(b.defense_pct) +
-          " · Leth " +
-          fmtPct(b.lethality_pct) +
-          " · HP " +
-          fmtPct(b.health_pct);
-        chipRow.appendChild(chip);
+      B.appendMarchBoard(opponentMarchesEl, {
+        title: "Opponent march " + (idx + 1),
+        meta: marchMeta(march, null),
+        heroes: march.hero_names || ["AI", "AI", "AI"],
+        opponent: true,
+        after: function (board) {
+          appendBonusChipRow(board, march.bonuses || opp.bonuses);
+        },
       });
-      card.appendChild(chipRow);
-      opponentMarchesEl.appendChild(card);
     });
   }
 
@@ -251,74 +234,41 @@
 
     var gov = data.governor || {};
     chipsEl.innerHTML = "";
-    var setChip = document.createElement("span");
-    setChip.className = "chip";
-    setChip.textContent =
+    B.appendChip(
+      chipsEl,
       "Set " +
-      (gov.set_tier || "—") +
-      " · Def +" +
-      fmtPct(gov.set_defense_pct) +
-      " · Atk +" +
-      fmtPct(gov.set_attack_pct);
-    chipsEl.appendChild(setChip);
+        (gov.set_tier || "—") +
+        " · Def +" +
+        B.fmtPct(gov.set_defense_pct) +
+        " · Atk +" +
+        B.fmtPct(gov.set_attack_pct)
+    );
     TROOPS.forEach(function (troop) {
-      var chip = document.createElement("span");
-      chip.className = "chip";
       var atk = (gov.attack_pct || {})[troop] || 0;
       var defn = (gov.defense_pct || {})[troop] || 0;
-      chip.textContent = troop + " gov Atk " + fmtPct(atk) + " / Def " + fmtPct(defn);
-      chipsEl.appendChild(chip);
+      B.appendChip(
+        chipsEl,
+        troop + " gov Atk " + B.fmtPct(atk) + " / Def " + B.fmtPct(defn)
+      );
     });
 
     marchesEl.innerHTML = "";
     var marches = data.marches || [];
     marches.forEach(function (march, idx) {
       if (!march) return;
-      var card = document.createElement("article");
-      card.className = "gov-card";
-      var h = document.createElement("h2");
-      h.textContent = "March " + (idx + 1);
-      card.appendChild(h);
-      var heroes = document.createElement("p");
-      heroes.textContent = (march.hero_names || []).join(" · ");
-      card.appendChild(heroes);
-      var ratio = document.createElement("p");
-      ratio.className = "muted";
-      ratio.textContent =
-        "Ratio " +
-        fmtRatio(march.ratio) +
-        " · cap " +
-        (march.capacity || 0) +
-        " · filled " +
-        ((march.counts &&
-          (march.counts.infantry || 0) +
-            (march.counts.cavalry || 0) +
-            (march.counts.archers || 0)) ||
-          0);
-      card.appendChild(ratio);
-      var counts = document.createElement("p");
-      counts.textContent =
-        "I " +
-        ((march.counts && march.counts.infantry) || 0) +
-        " · C " +
-        ((march.counts && march.counts.cavalry) || 0) +
-        " · A " +
-        ((march.counts && march.counts.archers) || 0);
-      card.appendChild(counts);
-      var score = document.createElement("p");
       var mc =
         march.breakdown && march.breakdown.mc ? march.breakdown.mc : null;
-      if (mc) {
-        score.textContent =
-          "Win rate " +
+      var scoreLine = mc
+        ? "Win rate " +
           Number(mc.win_rate || 0).toFixed(3) +
           " · proxy " +
-          Number((march.breakdown.proxy && march.breakdown.proxy.score) || 0).toFixed(0);
-      } else {
-        score.textContent = "Proxy " + Number(march.score || 0).toFixed(0);
-      }
-      card.appendChild(score);
-      marchesEl.appendChild(card);
+          Number((march.breakdown.proxy && march.breakdown.proxy.score) || 0).toFixed(0)
+        : "Proxy " + Number(march.score || 0).toFixed(0);
+      B.appendMarchBoard(marchesEl, {
+        title: "March " + (idx + 1),
+        meta: marchMeta(march, scoreLine),
+        heroes: march.hero_names || [],
+      });
     });
 
     renderOpponent(data);

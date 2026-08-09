@@ -27,5 +27,8 @@ def test_radiant_js_renders_opponent_bonuses() -> None:
     assert "renderOpponent" in text
     assert "lethality_pct" in text
     assert "enemy_infantry=" in text
-    assert "opponent-apply" in HTML.read_text(encoding="utf-8") or "opponent-apply" in text
+    assert "OptimiserBoard" in text
+    html = HTML.read_text(encoding="utf-8")
+    assert "opponent-apply" in html
+    assert "optimiser_board.js" in html
 

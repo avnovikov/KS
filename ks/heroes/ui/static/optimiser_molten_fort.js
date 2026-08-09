@@ -1,6 +1,9 @@
-/* Molten Fort single-march proxy board for /optimiser/molten-fort. */
+/* Molten Fort single-march board — Event-lineups board chrome via OptimiserBoard. */
 (function () {
   "use strict";
+
+  var B = window.OptimiserBoard;
+  if (!B) return;
 
   var statusEl = document.getElementById("molten-status");
   var errorEl = document.getElementById("molten-error");
@@ -10,21 +13,6 @@
   var marchesEl = document.getElementById("molten-marches");
   var bannerEl = document.getElementById("proxy-banner");
   var regenBtn = document.getElementById("molten-regen");
-
-  function fmtPct(n) {
-    return Number(n || 0).toFixed(1) + "%";
-  }
-
-  function fmtRatio(ratio) {
-    if (!ratio) return "—";
-    return (
-      Math.round((ratio.infantry || 0) * 100) +
-      "/" +
-      Math.round((ratio.cavalry || 0) * 100) +
-      "/" +
-      Math.round((ratio.archers || 0) * 100)
-    );
-  }
 
   function showError(msg) {
     errorEl.hidden = false;
@@ -48,72 +36,46 @@
 
     var gov = data.governor || {};
     chipsEl.innerHTML = "";
-    var setChip = document.createElement("span");
-    setChip.className = "chip";
-    setChip.textContent =
+    B.appendChip(chipsEl, "Governor-primary · heroes ×0.15");
+    B.appendChip(
+      chipsEl,
       "Set " +
-      (gov.set_tier || "—") +
-      " · Def +" +
-      fmtPct(gov.set_defense_pct) +
-      " · Atk +" +
-      fmtPct(gov.set_attack_pct) +
-      " (in maps)";
-    chipsEl.appendChild(setChip);
+        (gov.set_tier || "—") +
+        " · Def +" +
+        B.fmtPct(gov.set_defense_pct) +
+        " · Atk +" +
+        B.fmtPct(gov.set_attack_pct)
+    );
     ["infantry", "cavalry", "archers"].forEach(function (troop) {
-      var chip = document.createElement("span");
-      chip.className = "chip";
       var atk = (gov.attack_pct || {})[troop] || 0;
       var defn = (gov.defense_pct || {})[troop] || 0;
-      chip.textContent = troop + " gov Atk " + fmtPct(atk) + " / Def " + fmtPct(defn);
-      chipsEl.appendChild(chip);
+      B.appendChip(
+        chipsEl,
+        troop + " gov Atk " + B.fmtPct(atk) + " / Def " + B.fmtPct(defn)
+      );
     });
 
     marchesEl.innerHTML = "";
     var marches = data.marches || [];
     marches.forEach(function (march, idx) {
       if (!march) return;
-      var card = document.createElement("article");
-      card.className = "gov-card";
-      var h = document.createElement("h2");
-      h.textContent = "March " + (idx + 1);
-      card.appendChild(h);
-      var heroes = document.createElement("p");
-      heroes.textContent =
-        (march.hero_names || []).join(" · ") || "Governor-primary (no hero trio)";
-      card.appendChild(heroes);
-      var ratio = document.createElement("p");
-      ratio.className = "muted";
-      ratio.textContent =
-        "Ratio " +
-        fmtRatio(march.ratio) +
-        " · cap " +
-        (march.capacity || 0) +
-        " · filled " +
-        ((march.counts &&
-          (march.counts.infantry || 0) +
-            (march.counts.cavalry || 0) +
-            (march.counts.archers || 0)) ||
-          0);
-      card.appendChild(ratio);
-      var counts = document.createElement("p");
-      counts.textContent =
-        "I " +
-        ((march.counts && march.counts.infantry) || 0) +
-        " · C " +
-        ((march.counts && march.counts.cavalry) || 0) +
-        " · A " +
-        ((march.counts && march.counts.archers) || 0);
-      card.appendChild(counts);
-      var score = document.createElement("p");
-      score.textContent = "Proxy " + Number(march.score || 0).toFixed(0);
-      card.appendChild(score);
-      marchesEl.appendChild(card);
+      B.appendMarchBoard(marchesEl, {
+        title: "March " + (idx + 1),
+        meta:
+          "Ratio " +
+          B.fmtRatio(march.ratio) +
+          " · cap " +
+          (march.capacity || 0) +
+          " · " +
+          B.fmtCounts(march.counts) +
+          " · Proxy " +
+          Number(march.score || 0).toFixed(0),
+        heroes: march.hero_names || [],
+      });
     });
 
     statusEl.textContent =
-      "Ready · " +
-      (data.active_marches || marches.filter(Boolean).length) +
-      " active march";
+      "Ready · " + marches.filter(Boolean).length + " march(es)";
   }
 
   async function load() {
@@ -137,9 +99,7 @@
   }
 
   if (regenBtn) {
-    regenBtn.addEventListener("click", function () {
-      load();
-    });
+    regenBtn.addEventListener("click", load);
   }
   load();
 })();
