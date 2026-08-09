@@ -1,0 +1,19 @@
+# Radiant Spire enemy floor stubs (community baselines; editable).
+# Default enemy ratio ~33/33/33; floor 10 uses ~53/27/20.
+# enemy_power_scale is a relative difficulty multiplier vs player march power.
+defaults:
+  enemy_ratio: {infantry: 0.333333, cavalry: 0.333333, archers: 0.333334}
+  enemy_power_scale: 1.0
+floors:
+  1: {}
+  2: {enemy_power_scale: 1.05}
+  3: {enemy_power_scale: 1.10}
+  4: {enemy_power_scale: 1.15}
+  5: {enemy_power_scale: 1.25}
+  6: {enemy_power_scale: 1.35}
+  7: {enemy_power_scale: 1.45}
+  8: {enemy_power_scale: 1.55}
+  9: {enemy_power_scale: 1.70}
+  10:
+    enemy_ratio: {infantry: 0.53, cavalry: 0.27, archers: 0.20}
+    enemy_power_scale: 2.0

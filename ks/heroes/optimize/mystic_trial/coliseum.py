@@ -1,12 +1,13 @@
-"""Radiant Spire dual-march proxy optimiser (foundational score).
+"""Coliseum single-march mystic-trial optimiser (heroes + gear primary).
 
-Proxy is tunable, not game-authoritative — see design spec.
-Floor stubs / MC: mystic_trial floors + combat_mc (GitHub #37 / #38).
+Governor Atk%/Def% weight is 0 by default — do not stack governor percents into
+the proxy. Proxy is tunable, not game-authoritative.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from ks.heroes.gear_models import GearRecord
@@ -14,42 +15,21 @@ from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.bear_damage import blend_unit_stats
 from ks.heroes.optimize.gear_assign import assign_exclusive_sets
-from ks.heroes.optimize.mystic_trial.proxy import (
-    PROXY_BANNER,
-    MarchScore,
-    score_march,
-)
+from ks.heroes.optimize.mystic_trial.proxy import PROXY_BANNER, score_march
 from ks.heroes.optimize.mystic_trial.ratios import (
     TROOP_TYPES,
     counts_for_ratio,
-    normalize_ratio,
     ratio_candidates,
 )
+from ks.heroes.optimize.mystic_trial.rooms import load_room
 from ks.heroes.optimize.scoring import normalize_troop
-from ks.heroes.optimize.stat_contributions import (
-    EXPEDITION,
-    hero_contribution,
-)
+from ks.heroes.optimize.stat_contributions import EXPEDITION, hero_contribution
 from ks.heroes.optimize.troop_stats import TroopStatsTable, TroopUnitStats
 from ks.heroes.optimize.types import CatalogEntry, TroopsConfig
 
-# Radiant seed kept for callers / tests that import SEED_RATIO.
-SEED_RATIO: dict[str, float] = {
-    "infantry": 0.50,
-    "cavalry": 0.15,
-    "archers": 0.35,
-}
-PUBLISHED_RATIOS: tuple[dict[str, float], ...] = (
-    SEED_RATIO,
-    {"infantry": 0.55, "cavalry": 0.10, "archers": 0.35},
-    {"infantry": 0.60, "cavalry": 0.10, "archers": 0.30},
-    {"infantry": 0.50, "cavalry": 0.10, "archers": 0.40},
-    {"infantry": 0.50, "cavalry": 0.20, "archers": 0.30},
-    {"infantry": 1 / 3, "cavalry": 1 / 3, "archers": 1 / 3},
+_DEFAULT_ROOM = (
+    Path(__file__).resolve().parents[4] / "config" / "mystic_trial" / "coliseum.yaml"
 )
-
-# Back-compat alias used by older imports.
-_normalize_ratio = normalize_ratio
 
 
 @dataclass(frozen=True)
@@ -73,35 +53,30 @@ class MarchResult:
 
 
 @dataclass(frozen=True)
-class RadiantResult:
+class ColiseumResult:
     marches: tuple[MarchResult, ...]
     lineup_score: float
     governor: dict[str, Any]
+    room: str = "coliseum"
     proxy_banner: str = PROXY_BANNER
-    active_marches: int = 2
-    schema_marches: int = 3
-    floor: dict[str, Any] | None = None
+    active_marches: int = 1
+    schema_marches: int = 1
     engine: str = "proxy"
-    warnings: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         marches: list[dict[str, Any] | None] = [m.to_dict() for m in self.marches]
         while len(marches) < self.schema_marches:
             marches.append(None)
-        out: dict[str, Any] = {
+        return {
             "marches": marches,
             "lineup_score": self.lineup_score,
             "governor": dict(self.governor),
+            "room": self.room,
             "proxy_banner": self.proxy_banner,
             "active_marches": self.active_marches,
             "schema_marches": self.schema_marches,
             "engine": self.engine,
         }
-        if self.floor is not None:
-            out["floor"] = dict(self.floor)
-        if self.warnings:
-            out["warnings"] = list(self.warnings)
-        return out
 
 
 def _hero_troop(hero: HeroRecord, entry: CatalogEntry | None) -> str | None:
@@ -124,8 +99,8 @@ def _stat_points(contrib_stats: Mapping[str, Any], troop: str, suffix: str) -> f
     return float(share.total)
 
 
-def _radiant_rank(contrib: Any, troop: str) -> float:
-    """Attack+Lethality primary, Defense+Health secondary."""
+def _coliseum_rank(contrib: Any, troop: str) -> float:
+    """Attack+Lethality primary, Defense+Health secondary (mirrors Radiant)."""
     atk = _stat_points(contrib.stats, troop, "Attack")
     leth = _stat_points(contrib.stats, troop, "Lethality")
     defense = _stat_points(contrib.stats, troop, "Defense")
@@ -163,7 +138,6 @@ def _pick_march_heroes(
     *,
     one_per_troop_type: bool = True,
 ) -> list[HeroRecord]:
-    """Greedy: take best remaining hero per troop type (or top 3)."""
     if not one_per_troop_type:
         return [h for h, _t, _r in sorted(pool, key=lambda row: row[2], reverse=True)[:3]]
     chosen: list[HeroRecord] = []
@@ -207,12 +181,12 @@ def _lineup_troop_percents(
             "defense": _stat_points(contrib.stats, troop, "Defense"),
             "lethality": _stat_points(contrib.stats, troop, "Lethality"),
             "health": _stat_points(contrib.stats, troop, "Health"),
-            "rank": _radiant_rank(contrib, troop),
+            "rank": _coliseum_rank(contrib, troop),
         }
     return atk, defense, leth, hp, shares
 
 
-def optimize_radiant(
+def optimize_coliseum(
     heroes: Sequence[HeroRecord],
     catalog: Mapping[str, CatalogEntry],
     *,
@@ -220,41 +194,16 @@ def optimize_radiant(
     governor: GovernorTroopBonuses,
     troops: TroopsConfig,
     troop_stats: TroopStatsTable,
-    active_marches: int = 2,
     truegold: int | None = None,
     one_per_troop_type: bool = True,
-    floor: int | None = None,
-    floors_path: Path | str | None = None,
-) -> RadiantResult:
-    """Assign exclusive hero marches and search troop ratios via proxy score."""
-    from pathlib import Path as _Path
+    governor_weight: float = 0.0,
+    room_path: Path | str | None = None,
+) -> ColiseumResult:
+    """Single-march Coliseum: hero expedition + gear; governor off by default."""
+    if governor_weight < 0:
+        raise ValueError(f"governor_weight must be >= 0; got {governor_weight}")
 
-    from ks.heroes.optimize.mystic_trial.floors import get_floor, load_floors
-
-    if active_marches not in (1, 2, 3):
-        raise ValueError(f"active_marches must be 1–3; got {active_marches}")
-
-    warnings: list[str] = []
-    floor_payload: dict[str, Any] | None = None
-    floor_stub = None
-    if floor is not None:
-        path = (
-            _Path(floors_path)
-            if floors_path is not None
-            else _Path(__file__).resolve().parents[3]
-            / "config"
-            / "mystic_trial"
-            / "radiant_spire_floors.yaml"
-        )
-        stubs = load_floors(path)
-        floor_stub = get_floor(stubs, int(floor))
-        if floor_stub is None:
-            warnings.append(
-                f"unknown Radiant floor {floor}; using proxy without floor stub"
-            )
-        else:
-            floor_payload = floor_stub.to_dict()
-
+    room = load_room(room_path or _DEFAULT_ROOM)
     tg = troop_stats.default_truegold if truegold is None else int(truegold)
     levels = _inventory_levels(troops)
     units = _blend_units(levels, troop_stats, truegold=tg)
@@ -268,22 +217,14 @@ def optimize_radiant(
         troop = _hero_troop(hero, entry)
         if troop is None:
             continue
-        # Provisional rank without exclusive gear (gear assigned after lineup pick).
         contrib = hero_contribution(hero, entry, family=EXPEDITION, gear_pieces=None)
-        ranked.append((hero, troop, _radiant_rank(contrib, troop)))
+        ranked.append((hero, troop, _coliseum_rank(contrib, troop)))
     ranked.sort(key=lambda row: row[2], reverse=True)
 
-    remaining = list(ranked)
+    pick = _pick_march_heroes(ranked, one_per_troop_type=one_per_troop_type)
     marches: list[MarchResult] = []
-    remaining_owned = dict(owned)
-
-    for _ in range(active_marches):
-        pick = _pick_march_heroes(remaining, one_per_troop_type=one_per_troop_type)
-        if len(pick) < 3:
-            break
+    if len(pick) >= 3:
         pick_names = [h.name for h in pick]
-        remaining = [(h, t, r) for h, t, r in remaining if h.name not in pick_names]
-
         gear_by_hero = assign_exclusive_sets(
             list(heroes),
             dict(catalog),
@@ -295,27 +236,25 @@ def optimize_radiant(
         hero_atk, hero_def, hero_leth, hero_hp, hero_shares = _lineup_troop_percents(
             pick, catalog, gear_by_hero
         )
+        # Governor weight 0 by default — heroes/gear only.
         atk_pct = {
             t: hero_atk[t]
-            + float(governor.attack_pct.get(t, 0.0))
-            + float(governor.set_attack_pct)
+            + governor_weight * float(governor.attack_pct.get(t, 0.0))
             for t in TROOP_TYPES
         }
         def_pct = {
             t: hero_def[t]
-            + float(governor.defense_pct.get(t, 0.0))
-            + float(governor.set_defense_pct)
+            + governor_weight * float(governor.defense_pct.get(t, 0.0))
             for t in TROOP_TYPES
         }
 
         escorts = sum(int(h.escorts or 0) for h in pick)
         capacity = troops.march_capacity + escorts
-        fill_cap = min(capacity, sum(remaining_owned.values()))
+        fill_cap = min(capacity, sum(owned.values()))
 
         best: MarchResult | None = None
-        best_key: float | None = None
-        for ratio in ratio_candidates(published=PUBLISHED_RATIOS):
-            counts = counts_for_ratio(ratio, fill_cap, remaining_owned)
+        for ratio in ratio_candidates(published=room.published_ratios):
+            counts = counts_for_ratio(ratio, fill_cap, owned)
             scored = score_march(
                 counts,
                 units,
@@ -331,56 +270,36 @@ def optimize_radiant(
                 "leth_pct": dict(hero_leth),
                 "hp_pct": dict(hero_hp),
                 "hero_shares": hero_shares,
+                "governor_weight": governor_weight,
                 "governor_attack_pct": dict(governor.attack_pct),
                 "governor_defense_pct": dict(governor.defense_pct),
-                "set_attack_pct": governor.set_attack_pct,
-                "set_defense_pct": governor.set_defense_pct,
             }
-            rank_key = scored.score
-            if floor_stub is not None:
-                from ks.heroes.optimize.mystic_trial.combat_mc import simulate_floor
-
-                mc = simulate_floor(scored, floor_stub)
-                breakdown["mc"] = mc.to_dict()
-                rank_key = mc.win_rate
             candidate = MarchResult(
                 hero_names=tuple(h.name for h in pick),
                 ratio=dict(ratio),
                 counts=dict(counts),
                 capacity=capacity,
-                score=scored.score if floor_stub is None else rank_key,
+                score=scored.score,
                 breakdown=breakdown,
             )
-            if best is None or best_key is None or rank_key > best_key:
+            if best is None or candidate.score > best.score:
                 best = candidate
-                best_key = rank_key
         assert best is not None
-        for t in TROOP_TYPES:
-            remaining_owned[t] = max(0, remaining_owned[t] - best.counts[t])
         marches.append(best)
 
-    engine = "mc" if floor_stub is not None else "proxy"
-    return RadiantResult(
+    return ColiseumResult(
         marches=tuple(marches),
         lineup_score=sum(m.score for m in marches),
         governor=governor.to_dict(),
-        active_marches=active_marches,
-        floor=floor_payload,
-        engine=engine,
-        warnings=tuple(warnings),
+        room=room.id,
+        active_marches=room.active_marches,
+        schema_marches=room.schema_marches,
+        engine="proxy",
     )
 
 
 __all__ = [
-    "PROXY_BANNER",
-    "PUBLISHED_RATIOS",
-    "SEED_RATIO",
-    "TROOP_TYPES",
+    "ColiseumResult",
     "MarchResult",
-    "MarchScore",
-    "RadiantResult",
-    "counts_for_ratio",
-    "optimize_radiant",
-    "ratio_candidates",
-    "score_march",
+    "optimize_coliseum",
 ]
