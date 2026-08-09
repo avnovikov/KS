@@ -388,3 +388,38 @@ def run_coliseum_optimize(
         room_path=root / "config" / "mystic_trial" / "coliseum.yaml",
     )
     return result.to_dict()
+
+
+def run_molten_optimize(
+    heroes: list[HeroRecord],
+    *,
+    governor_bonuses: GovernorTroopBonuses,
+    gear: list[GearRecord] | None = None,
+    config_root: Path | None = None,
+    troops_path: Path | None = None,
+) -> dict[str, Any]:
+    """Single-march Molten Fort proxy — governor-primary, light hero weight."""
+    from ks.heroes.optimize.mystic_trial.molten import optimize_molten
+
+    root = (config_root or REPO_ROOT).expanduser().resolve()
+    catalog = load_catalog(None, root / "config" / "hero_catalog.yaml")
+    resolved_troops = (
+        Path(troops_path).expanduser().resolve()
+        if troops_path is not None
+        else root / "config" / "troops.yaml"
+    )
+    troops = load_troops_config(resolved_troops)
+    troop_stats = load_troop_stats(root / "config" / "troop_stats.yaml")
+    raw_troops = yaml.safe_load(resolved_troops.read_text(encoding="utf-8")) or {}
+    truegold = int(raw_troops.get("truegold", troop_stats.default_truegold))
+    result = optimize_molten(
+        heroes,
+        catalog,
+        gear_pieces=list(gear or ()),
+        governor=governor_bonuses,
+        troops=troops,
+        troop_stats=troop_stats,
+        truegold=truegold,
+        room_path=root / "config" / "mystic_trial" / "molten_fort.yaml",
+    )
+    return result.to_dict()

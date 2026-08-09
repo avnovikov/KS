@@ -86,6 +86,7 @@ def startup_paths(*, gear: bool, heroes: bool) -> list[tuple[str, str]]:
         rows.append(("Optimiser · Gear XP", "/optimiser/gear-xp"))
         rows.append(("Optimiser · Radiant Spire", "/optimiser/radiant-spire"))
         rows.append(("Optimiser · Coliseum", "/optimiser/coliseum"))
+        rows.append(("Optimiser · Molten Fort", "/optimiser/molten-fort"))
     return rows
 
 
@@ -836,6 +837,18 @@ def create_app(
             governor_dir=str(resolved_governor),
         )
 
+    @app.get("/optimiser/molten-fort", response_class=HTMLResponse)
+    def optimiser_molten_page(request: Request) -> HTMLResponse:
+        heroes_path, _ = _require_heroes()
+        return _shell_page(
+            request,
+            "optimiser_molten_fort.html",
+            primary="optimiser",
+            subtab="molten",
+            heroes_dir=str(heroes_path),
+            governor_dir=str(resolved_governor),
+        )
+
     @app.get("/optimiser/gear-xp", response_class=HTMLResponse)
     def optimiser_gear_xp_page(request: Request) -> HTMLResponse:
         heroes_path, _ = _require_heroes()
@@ -1322,6 +1335,31 @@ def create_app(
             gear_pieces = gear_store.all_pieces()
         try:
             payload = run_coliseum_optimize(
+                heroes,
+                governor_bonuses=governor_store.bonuses(),
+                gear=gear_pieces,
+                troops_path=app.state.troops_path,
+            )
+        except (ValueError, OSError, FileNotFoundError, KeyError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        payload["heroes_dir"] = str(heroes_path)
+        payload["governor_dir"] = str(resolved_governor)
+        return payload
+
+    @app.get("/api/optimize/molten-fort")
+    def api_optimize_molten() -> dict[str, Any]:
+        """Single-march Molten Fort proxy — governor-primary scoring."""
+        heroes_path, hero_store_local = _require_heroes()
+        from ks.heroes.ui.optimize_run import run_molten_optimize
+
+        hero_store_local.reload()
+        heroes = hero_store_local.all_heroes()
+        gear_pieces: list[GearRecord] = []
+        if gear_store is not None:
+            gear_store.reload()
+            gear_pieces = gear_store.all_pieces()
+        try:
+            payload = run_molten_optimize(
                 heroes,
                 governor_bonuses=governor_store.bonuses(),
                 gear=gear_pieces,
