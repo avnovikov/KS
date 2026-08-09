@@ -138,6 +138,11 @@ def parse_gear_detail(text: str, *, page: int, index: int) -> GearRecord:
     if slot is None and name is not None:
         slot = _parse_slot(name)
 
+    # Troop+slot+rarity table wins over OCR titles (boots text on gloves, etc.).
+    from ks.heroes.gear_names import apply_canonical_name
+
+    name = apply_canonical_name(name=name, troop=troop, slot=slot, rarity=rarity)
+
     return GearRecord(
         piece_id=make_piece_id(page, index),
         name=name,
