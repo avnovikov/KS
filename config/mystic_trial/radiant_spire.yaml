@@ -1,0 +1,16 @@
+id: radiant_spire
+label: Radiant Spire
+focus: all
+active_marches: 2
+schema_marches: 3
+seed_ratio:
+  infantry: 0.50
+  cavalry: 0.15
+  archers: 0.35
+published_ratios:
+  - {infantry: 0.50, cavalry: 0.15, archers: 0.35}
+  - {infantry: 0.55, cavalry: 0.10, archers: 0.35}
+  - {infantry: 0.60, cavalry: 0.10, archers: 0.30}
+  - {infantry: 0.50, cavalry: 0.10, archers: 0.40}
+  - {infantry: 0.50, cavalry: 0.20, archers: 0.30}
+  - {infantry: 0.333333, cavalry: 0.333333, archers: 0.333334}
