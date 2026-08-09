@@ -12,3 +12,4 @@ artifacts/
 .env
 .env.*
 assets/reference/bear-trap/stitching-debug/
+data/
