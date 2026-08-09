@@ -16,13 +16,10 @@
 <p class="status-line" id="molten-status" role="status">Solving march…</p>
 <p class="banner-err" id="molten-error" role="alert" hidden></p>
 
-<section class="panel" id="molten-summary" hidden>
-  <h2 class="section-title">Lineup</h2>
-  <p id="molten-score" class="hint"></p>
-  <div class="chip-row" id="governor-chips"></div>
-</section>
-
-<div id="molten-marches"></div>
+<p id="molten-score" class="hint" hidden></p>
+<div class="chip-row" id="governor-chips"></div>
+<div class="mode-chips" id="mode-chips" role="group" aria-label="Marches"></div>
+<section class="panel board" id="board"></section>
 {% endblock %}
 
 {% block scripts %}

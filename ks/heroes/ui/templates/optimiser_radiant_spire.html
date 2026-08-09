@@ -23,8 +23,8 @@
 <p class="status-line" id="radiant-status" role="status">Solving marches…</p>
 <p class="banner-err" id="radiant-error" role="alert" hidden></p>
 
-<section id="radiant-opponent" hidden>
-  <h2 class="section-title">Opponent</h2>
+<section id="radiant-opponent-edit" hidden>
+  <h2 class="section-title">Opponent overrides</h2>
   <p id="opponent-note" class="hint">
     Edit troop mix and battle-report bonuses, then Apply.
   </p>
@@ -37,17 +37,15 @@
     </div>
     <div class="bonus-edit" id="opponent-bonus-edit"></div>
   </div>
-  <div id="opponent-marches"></div>
 </section>
 
-<section class="panel" id="radiant-summary" hidden>
-  <h2 class="section-title">Your lineup</h2>
-  <p id="radiant-score" class="hint"></p>
-  <p id="radiant-engine" class="hint" hidden></p>
-  <div class="chip-row" id="governor-chips"></div>
-</section>
+<p id="radiant-score" class="hint" hidden></p>
+<p id="radiant-engine" class="hint" hidden></p>
+<div class="chip-row" id="governor-chips"></div>
 
-<div id="radiant-marches"></div>
+{# Same reporting chrome as Event lineups: chips pick a march, one board shows it. #}
+<div class="mode-chips" id="mode-chips" role="group" aria-label="Marches"></div>
+<section class="panel board" id="board"></section>
 {% endblock %}
 
 {% block scripts %}

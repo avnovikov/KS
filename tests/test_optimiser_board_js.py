@@ -11,6 +11,9 @@ BOARD = ROOT / "ks" / "heroes" / "ui" / "static" / "optimiser_board.js"
 def test_optimiser_board_exports_march_helpers() -> None:
     text = BOARD.read_text(encoding="utf-8")
     assert "appendMarchBoard" in text
+    assert "renderMarchReport" in text
+    assert "renderModeChips" in text
+    assert "troopsLine" in text
     assert "heroSlotEl" in text
     assert "OptimiserBoard" in text
     assert "global.OptimiserBoard" in text or "OptimiserBoard =" in text

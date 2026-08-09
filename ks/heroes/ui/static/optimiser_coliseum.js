@@ -1,4 +1,4 @@
-/* Coliseum single-march board — Event-lineups board chrome via OptimiserBoard. */
+/* Coliseum — report the march like Event lineups (chip → one board). */
 (function () {
   "use strict";
 
@@ -7,10 +7,10 @@
 
   var statusEl = document.getElementById("coliseum-status");
   var errorEl = document.getElementById("coliseum-error");
-  var summaryEl = document.getElementById("coliseum-summary");
   var scoreEl = document.getElementById("coliseum-score");
   var chipsEl = document.getElementById("governor-chips");
-  var marchesEl = document.getElementById("coliseum-marches");
+  var modeChipsEl = document.getElementById("mode-chips");
+  var boardEl = document.getElementById("board");
   var bannerEl = document.getElementById("proxy-banner");
   var regenBtn = document.getElementById("coliseum-regen");
 
@@ -30,9 +30,11 @@
     if (data.proxy_banner) {
       bannerEl.textContent = data.proxy_banner;
     }
-    summaryEl.hidden = false;
-    scoreEl.textContent =
-      "Lineup proxy score: " + Number(data.lineup_score || 0).toFixed(0);
+    if (scoreEl) {
+      scoreEl.hidden = false;
+      scoreEl.textContent =
+        "Lineup proxy score: " + Number(data.lineup_score || 0).toFixed(0);
+    }
 
     var gov = data.governor || {};
     chipsEl.innerHTML = "";
@@ -46,33 +48,43 @@
       );
     });
 
-    marchesEl.innerHTML = "";
-    var marches = data.marches || [];
-    marches.forEach(function (march, idx) {
-      if (!march) return;
-      B.appendMarchBoard(marchesEl, {
-        title: "March " + (idx + 1),
-        meta:
-          "Ratio " +
-          B.fmtRatio(march.ratio) +
-          " · cap " +
-          (march.capacity || 0) +
-          " · " +
-          B.fmtCounts(march.counts) +
-          " · Proxy " +
-          Number(march.score || 0).toFixed(0),
+    var march = (data.marches || []).filter(Boolean)[0] || null;
+    var entries = march
+      ? [
+          {
+            key: "march-0",
+            label: "March 1",
+            scoreText: "score " + Number(march.score || 0).toFixed(0),
+          },
+        ]
+      : [];
+    B.renderModeChips(modeChipsEl, entries, "march-0", function () {});
+
+    if (!march) {
+      boardEl.innerHTML = "";
+      var empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent = "No feasible lineup for this roster.";
+      boardEl.appendChild(empty);
+    } else {
+      B.renderMarchReport(boardEl, {
+        title: "Coliseum · March",
+        meta: B.marchReportMeta(
+          march,
+          "proxy " + Number(march.score || 0).toFixed(0)
+        ),
         heroes: march.hero_names || [],
       });
-    });
+    }
 
-    statusEl.textContent =
-      "Ready · " + marches.filter(Boolean).length + " march(es)";
+    statusEl.textContent = "Ready · " + (march ? 1 : 0) + " march(es)";
   }
 
   async function load() {
     statusEl.textContent = "Solving march…";
-    summaryEl.hidden = true;
-    marchesEl.innerHTML = "";
+    if (scoreEl) scoreEl.hidden = true;
+    modeChipsEl.innerHTML = "";
+    boardEl.innerHTML = "";
     clearError();
     try {
       var res = await fetch("/api/optimize/coliseum", { cache: "no-store" });
@@ -89,8 +101,6 @@
     }
   }
 
-  if (regenBtn) {
-    regenBtn.addEventListener("click", load);
-  }
+  if (regenBtn) regenBtn.addEventListener("click", load);
   load();
 })();

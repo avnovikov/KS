@@ -1,15 +1,22 @@
 /* Shared Event-lineups board primitives for Mystic Trial (and others).
  *
  * Mirrors the formation board in optimiser_events.js: hero slots with
- * portraits/initials, board rows, and common formatters — so Radiant /
- * Coliseum / Molten look like Swordland/Bear marches instead of ad-hoc cards.
+ * portraits/initials, board rows, mode-chips, and march reporting — so Radiant /
+ * Coliseum / Molten report marches the same way Swordland/Bear do.
  *
- * Depends on app.js (window.safeUrl). Loaded after app.js on each page.
+ * Depends on app.js (window.safeUrl, window.escapeHtml). Loaded after app.js.
  */
 (function (global) {
   "use strict";
 
   var safeUrl = global.safeUrl;
+  var esc = global.escapeHtml || function (s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  };
 
   function heroName(hero) {
     if (hero == null) return "";
@@ -53,27 +60,41 @@
     );
   }
 
-  function fmtCounts(counts) {
-    counts = counts || {};
+  function fmtPoints(n) {
+    if (n == null || !Number.isFinite(Number(n))) return "—";
+    return Math.round(Number(n)).toLocaleString("en-US");
+  }
+
+  /** Same shape as Events `troopsLine` for a mystic march payload. */
+  function troopsLine(march) {
+    var t = (march && march.counts) || {};
+    function n(v) {
+      return v == null ? "—" : fmtPoints(v);
+    }
     return (
       "I " +
-      (counts.infantry || 0) +
+      n(t.infantry) +
       " · C " +
-      (counts.cavalry || 0) +
+      n(t.cavalry) +
       " · A " +
-      (counts.archers || 0)
+      n(t.archers) +
+      " · cap " +
+      n(march && march.capacity)
     );
   }
 
-  /**
-   * @param {string} slotLabel
-   * @param {string|object} hero
-   * @param {{ onClick?: function, interactive?: boolean }} [opts]
-   */
+  function fmtCounts(counts) {
+    return troopsLine({ counts: counts || {}, capacity: null }).replace(
+      / · cap —$/,
+      ""
+    );
+  }
+
   function heroSlotEl(slotLabel, hero, opts) {
     opts = opts || {};
     var name = heroName(hero);
-    var interactive = opts.interactive !== false && name && typeof opts.onClick === "function";
+    var interactive =
+      opts.interactive !== false && name && typeof opts.onClick === "function";
     var el = document.createElement(interactive ? "button" : "div");
     if (interactive) el.type = "button";
     el.className = "hero-slot" + (name ? "" : " is-empty");
@@ -124,52 +145,10 @@
     var row = document.createElement("div");
     row.className = "hero-row";
     (heroes || []).forEach(function (hero, i) {
-      row.appendChild(
-        heroSlotEl(slotLabels ? slotLabels[i] : "", hero, opts)
-      );
+      row.appendChild(heroSlotEl(slotLabels ? slotLabels[i] : "", hero, opts));
     });
     wrap.appendChild(row);
     return wrap;
-  }
-
-  /**
-   * Append one Event-style march board (title + meta + hero row + optional extras).
-   * @returns {HTMLElement} the board section
-   */
-  function appendMarchBoard(parent, spec) {
-    spec = spec || {};
-    var board = document.createElement("section");
-    board.className = "panel board" + (spec.opponent ? " board-opponent" : "");
-
-    if (spec.title) {
-      var title = document.createElement("h2");
-      title.className = "board-title";
-      title.textContent = spec.title;
-      board.appendChild(title);
-    }
-    if (spec.meta) {
-      var meta = document.createElement("p");
-      meta.className = "board-meta";
-      meta.textContent = spec.meta;
-      board.appendChild(meta);
-    }
-
-    var heroes = spec.heroes || [];
-    if (heroes.length) {
-      board.appendChild(
-        boardRowEl(spec.rowLabel || "March", spec.slotLabels || null, heroes, {
-          onClick: spec.onHeroClick,
-          interactive: !!spec.onHeroClick,
-        })
-      );
-    }
-
-    if (typeof spec.after === "function") {
-      spec.after(board);
-    }
-
-    parent.appendChild(board);
-    return board;
   }
 
   function appendChip(parent, text) {
@@ -180,6 +159,94 @@
     return chip;
   }
 
+  /**
+   * Events-style mode chips: pick one entry, show name + score line.
+   * @param {HTMLElement} chipsEl
+   * @param {Array<{key, label, scoreText, isError?}>} entries
+   * @param {string} chosenKey
+   * @param {function(string)} onChoose
+   */
+  function renderModeChips(chipsEl, entries, chosenKey, onChoose) {
+    chipsEl.innerHTML = "";
+    entries.forEach(function (entry) {
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className =
+        "mode-chip" +
+        (entry.key === chosenKey ? " on" : "") +
+        (entry.isError ? " is-error" : "");
+      chip.setAttribute("aria-pressed", entry.key === chosenKey ? "true" : "false");
+      chip.innerHTML =
+        '<span class="mode-name">' +
+        esc(entry.label) +
+        '</span><span class="mode-score">' +
+        esc(entry.scoreText || "") +
+        "</span>";
+      chip.addEventListener("click", function () {
+        onChoose(entry.key);
+      });
+      chipsEl.appendChild(chip);
+    });
+  }
+
+  /**
+   * Report one march exactly like Events Sword/Bear: title, meta, March row.
+   * Clears `boardEl` then fills it.
+   */
+  function renderMarchReport(boardEl, spec) {
+    boardEl.innerHTML = "";
+    boardEl.classList.toggle("board-opponent", !!spec.opponent);
+
+    var title = document.createElement("h2");
+    title.className = "board-title";
+    title.textContent = spec.title || "March";
+    boardEl.appendChild(title);
+
+    if (spec.meta) {
+      var meta = document.createElement("p");
+      meta.className = "board-meta";
+      meta.textContent = spec.meta;
+      boardEl.appendChild(meta);
+    }
+
+    var heroes = spec.heroes || [];
+    if (!heroes.length) {
+      var empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent = "No heroes in this result.";
+      boardEl.appendChild(empty);
+      return;
+    }
+
+    boardEl.appendChild(
+      boardRowEl(spec.rowLabel || "March", spec.slotLabels || null, heroes, {
+        onClick: spec.onHeroClick,
+        interactive: !!spec.onHeroClick,
+      })
+    );
+
+    if (typeof spec.after === "function") {
+      spec.after(boardEl);
+    }
+  }
+
+  /** Build Events-like meta: score · ratio · troopsLine. */
+  function marchReportMeta(march, scoreText) {
+    var bits = [];
+    if (scoreText) bits.push(scoreText);
+    if (march && march.ratio) bits.push("ratio " + fmtRatio(march.ratio));
+    bits.push(troopsLine(march || {}));
+    return bits.join(" · ");
+  }
+
+  function appendMarchBoard(parent, spec) {
+    var board = document.createElement("section");
+    board.className = "panel board" + (spec.opponent ? " board-opponent" : "");
+    parent.appendChild(board);
+    renderMarchReport(board, spec);
+    return board;
+  }
+
   global.OptimiserBoard = {
     heroName: heroName,
     heroSlug: heroSlug,
@@ -187,10 +254,15 @@
     initials: initials,
     fmtPct: fmtPct,
     fmtRatio: fmtRatio,
+    fmtPoints: fmtPoints,
     fmtCounts: fmtCounts,
+    troopsLine: troopsLine,
+    marchReportMeta: marchReportMeta,
     heroSlotEl: heroSlotEl,
     boardRowEl: boardRowEl,
-    appendMarchBoard: appendMarchBoard,
     appendChip: appendChip,
+    renderModeChips: renderModeChips,
+    renderMarchReport: renderMarchReport,
+    appendMarchBoard: appendMarchBoard,
   };
 })(typeof window !== "undefined" ? window : this);

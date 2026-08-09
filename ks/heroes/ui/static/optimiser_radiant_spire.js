@@ -1,4 +1,4 @@
-/* Radiant Spire dual-march board — Event-lineups board chrome via OptimiserBoard. */
+/* Radiant Spire — report marches like Event lineups (chips → one board). */
 (function () {
   "use strict";
 
@@ -7,14 +7,13 @@
 
   var statusEl = document.getElementById("radiant-status");
   var errorEl = document.getElementById("radiant-error");
-  var summaryEl = document.getElementById("radiant-summary");
   var scoreEl = document.getElementById("radiant-score");
   var engineEl = document.getElementById("radiant-engine");
   var chipsEl = document.getElementById("governor-chips");
-  var marchesEl = document.getElementById("radiant-marches");
-  var opponentEl = document.getElementById("radiant-opponent");
+  var modeChipsEl = document.getElementById("mode-chips");
+  var boardEl = document.getElementById("board");
+  var opponentEditEl = document.getElementById("radiant-opponent-edit");
   var opponentNoteEl = document.getElementById("opponent-note");
-  var opponentMarchesEl = document.getElementById("opponent-marches");
   var bonusEditEl = document.getElementById("opponent-bonus-edit");
   var bannerEl = document.getElementById("proxy-banner");
   var regenBtn = document.getElementById("radiant-regen");
@@ -35,6 +34,7 @@
   var overrideRatioPct = null;
   var overrideBonuses = null;
   var fillingEditors = false;
+  var chosenKey = "you-0";
 
   function selectedFloor() {
     if (!floorEl) return null;
@@ -135,20 +135,42 @@
     fillingEditors = false;
   }
 
-  function marchMeta(march, scoreLine) {
-    var bits = [
-      "Ratio " + B.fmtRatio(march.ratio),
-      "cap " + (march.capacity || 0),
-      "filled " +
-        ((march.counts &&
-          (march.counts.infantry || 0) +
-            (march.counts.cavalry || 0) +
-            (march.counts.archers || 0)) ||
-          0),
-      B.fmtCounts(march.counts),
-    ];
-    if (scoreLine) bits.push(scoreLine);
-    return bits.join(" · ");
+  function marchScoreText(march, opponent) {
+    if (opponent) return "opponent";
+    var mc = march.breakdown && march.breakdown.mc ? march.breakdown.mc : null;
+    if (mc) return "win " + Number(mc.win_rate || 0).toFixed(3);
+    return "score " + Number(march.score || 0).toFixed(0);
+  }
+
+  function buildEntries(data) {
+    var entries = [];
+    (data.marches || []).forEach(function (march, idx) {
+      if (!march) return;
+      entries.push({
+        key: "you-" + idx,
+        label: "March " + (idx + 1),
+        scoreText: marchScoreText(march, false),
+        march: march,
+        opponent: false,
+        title: "Radiant Spire · March " + (idx + 1),
+      });
+    });
+    var opp = data.opponent;
+    if (opp && opp.marches) {
+      opp.marches.forEach(function (march, idx) {
+        if (!march) return;
+        entries.push({
+          key: "opp-" + idx,
+          label: "Opponent " + (idx + 1),
+          scoreText: marchScoreText(march, true),
+          march: march,
+          opponent: true,
+          bonuses: march.bonuses || opp.bonuses,
+          title: "Radiant Spire · Opponent " + (idx + 1),
+        });
+      });
+    }
+    return entries;
   }
 
   function appendBonusChipRow(board, bonuses) {
@@ -172,49 +194,66 @@
     board.appendChild(row);
   }
 
-  function renderOpponent(data) {
-    if (!opponentEl || !opponentMarchesEl) return;
-    var opp = data.opponent;
-    if (!opp || !opp.marches || !opp.marches.length) {
-      opponentEl.hidden = true;
-      opponentMarchesEl.innerHTML = "";
+  function renderSelectedBoard(entries) {
+    var entry = null;
+    entries.forEach(function (e) {
+      if (e.key === chosenKey) entry = e;
+    });
+    if (!entry) entry = entries[0] || null;
+    if (!entry) {
+      boardEl.innerHTML = "";
+      var empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent = "No feasible lineup for this roster.";
+      boardEl.appendChild(empty);
       return;
     }
-    opponentEl.hidden = false;
-    if (opponentNoteEl) {
-      opponentNoteEl.textContent =
-        opp.note ||
-        "Edit ratio / bonuses from the battle report, then Apply.";
+    chosenKey = entry.key;
+    var scoreLine = entry.opponent
+      ? null
+      : marchScoreText(entry.march, false).replace(/^score /, "proxy ");
+    if (!entry.opponent && entry.march.breakdown && entry.march.breakdown.mc) {
+      scoreLine =
+        "win rate " +
+        Number(entry.march.breakdown.mc.win_rate || 0).toFixed(3) +
+        " · proxy " +
+        Number(
+          (entry.march.breakdown.proxy && entry.march.breakdown.proxy.score) || 0
+        ).toFixed(0);
+    } else if (!entry.opponent) {
+      scoreLine = "proxy " + Number(entry.march.score || 0).toFixed(0);
     }
-    fillEditorsFromOpponent(opp, data.floor);
-    opponentMarchesEl.innerHTML = "";
-    opp.marches.forEach(function (march, idx) {
-      if (!march) return;
-      B.appendMarchBoard(opponentMarchesEl, {
-        title: "Opponent march " + (idx + 1),
-        meta: marchMeta(march, null),
-        heroes: march.hero_names || ["AI", "AI", "AI"],
-        opponent: true,
-        after: function (board) {
-          appendBonusChipRow(board, march.bonuses || opp.bonuses);
-        },
-      });
+
+    B.renderMarchReport(boardEl, {
+      title: entry.title,
+      meta: B.marchReportMeta(entry.march, scoreLine),
+      heroes: entry.march.hero_names || [],
+      opponent: entry.opponent,
+      after: entry.opponent
+        ? function (board) {
+            appendBonusChipRow(board, entry.bonuses);
+          }
+        : null,
     });
   }
 
   function render(data) {
     clearError();
+    lastPayload = data;
     if (data.proxy_banner) {
       bannerEl.textContent = data.proxy_banner;
     }
-    summaryEl.hidden = false;
+
     var engine = data.engine || "proxy";
-    if (engine === "mc") {
-      scoreEl.textContent =
-        "Lineup win-rate score: " + Number(data.lineup_score || 0).toFixed(3);
-    } else {
-      scoreEl.textContent =
-        "Lineup proxy score: " + Number(data.lineup_score || 0).toFixed(0);
+    if (scoreEl) {
+      scoreEl.hidden = false;
+      if (engine === "mc") {
+        scoreEl.textContent =
+          "Lineup win-rate score: " + Number(data.lineup_score || 0).toFixed(3);
+      } else {
+        scoreEl.textContent =
+          "Lineup proxy score: " + Number(data.lineup_score || 0).toFixed(0);
+      }
     }
     if (engineEl) {
       var bits = ["Engine: " + engine];
@@ -252,30 +291,37 @@
       );
     });
 
-    marchesEl.innerHTML = "";
-    var marches = data.marches || [];
-    marches.forEach(function (march, idx) {
-      if (!march) return;
-      var mc =
-        march.breakdown && march.breakdown.mc ? march.breakdown.mc : null;
-      var scoreLine = mc
-        ? "Win rate " +
-          Number(mc.win_rate || 0).toFixed(3) +
-          " · proxy " +
-          Number((march.breakdown.proxy && march.breakdown.proxy.score) || 0).toFixed(0)
-        : "Proxy " + Number(march.score || 0).toFixed(0);
-      B.appendMarchBoard(marchesEl, {
-        title: "March " + (idx + 1),
-        meta: marchMeta(march, scoreLine),
-        heroes: march.hero_names || [],
-      });
-    });
+    var hasOpp = !!(data.opponent && data.opponent.marches && data.opponent.marches.length);
+    if (opponentEditEl) {
+      opponentEditEl.hidden = !hasOpp;
+      if (hasOpp) {
+        if (opponentNoteEl) {
+          opponentNoteEl.textContent =
+            data.opponent.note ||
+            "Edit ratio / bonuses from the battle report, then Apply.";
+        }
+        fillEditorsFromOpponent(data.opponent, data.floor);
+      }
+    }
 
-    renderOpponent(data);
+    var entries = buildEntries(data);
+    var keys = entries.map(function (e) {
+      return e.key;
+    });
+    if (keys.indexOf(chosenKey) === -1) chosenKey = keys[0] || "you-0";
+
+    function chooseMarch(key) {
+      chosenKey = key;
+      B.renderModeChips(modeChipsEl, entries, chosenKey, chooseMarch);
+      renderSelectedBoard(entries);
+    }
+
+    B.renderModeChips(modeChipsEl, entries, chosenKey, chooseMarch);
+    renderSelectedBoard(entries);
 
     statusEl.textContent =
       "Ready · " +
-      (data.active_marches || marches.filter(Boolean).length) +
+      (data.active_marches || (data.marches || []).filter(Boolean).length) +
       " active marches · " +
       engine;
   }
@@ -303,12 +349,11 @@
 
   async function load() {
     statusEl.textContent = "Solving marches…";
-    summaryEl.hidden = true;
-    marchesEl.innerHTML = "";
-    if (opponentEl && !selectedFloor()) {
-      opponentEl.hidden = true;
-      if (opponentMarchesEl) opponentMarchesEl.innerHTML = "";
-    }
+    if (scoreEl) scoreEl.hidden = true;
+    if (engineEl) engineEl.hidden = true;
+    modeChipsEl.innerHTML = "";
+    boardEl.innerHTML = "";
+    if (opponentEditEl && !selectedFloor()) opponentEditEl.hidden = true;
     clearError();
     try {
       var res = await fetch(buildUrl(), { cache: "no-store" });
@@ -349,20 +394,15 @@
     load();
   }
 
-  if (regenBtn) {
-    regenBtn.addEventListener("click", function () {
-      load();
-    });
-  }
+  if (regenBtn) regenBtn.addEventListener("click", load);
   if (floorEl) {
     floorEl.addEventListener("change", function () {
       overrideRatioPct = null;
       overrideBonuses = null;
+      chosenKey = "you-0";
       load();
     });
   }
-  if (applyBtn) {
-    applyBtn.addEventListener("click", applyOpponentEdits);
-  }
+  if (applyBtn) applyBtn.addEventListener("click", applyOpponentEdits);
   load();
 })();
