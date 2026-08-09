@@ -66,6 +66,12 @@ heroes:
     - kind: rally_lethality
       max_value: 15.0
       applies_to: widget
+    - kind: damage_taken_down
+      max_value: 40.0
+      applies_to: expedition
+    - kind: damage_up
+      max_value: 30.0
+      applies_to: expedition
     arena_role: front_fighter
     arena_value: 90
     arena_tags:
@@ -90,6 +96,7 @@ heroes:
     - slot: 3
       name: Oath of Guardian
       family: expedition
+      effect_kind: damage_taken_down
     - slot: 4
       name: Echoes of Valhalla
       family: expedition
@@ -101,6 +108,7 @@ heroes:
     - slot: 6
       name: Valiant Fury
       family: expedition
+      effect_kind: damage_up
     - slot: 7
       name: Zeal
       family: expedition
@@ -204,6 +212,15 @@ heroes:
     - kind: lethality_up
       max_value: 15.0
       applies_to: widget
+    - kind: attack_speed_up
+      max_value: 60.0
+      applies_to: conquest
+    - kind: damage_taken_down
+      max_value: 40.0
+      applies_to: expedition
+    - kind: damage_up
+      max_value: 30.0
+      applies_to: expedition
     arena_role: back_cc
     arena_value: 92
     arena_tags:
@@ -223,9 +240,11 @@ heroes:
     - slot: 2
       name: Persistence
       family: conquest
+      effect_kind: attack_speed_up
     - slot: 3
       name: Rally Flag
       family: expedition
+      effect_kind: damage_taken_down
     - slot: 4
       name: Hero's Domain
       family: expedition
@@ -237,6 +256,7 @@ heroes:
     - slot: 6
       name: Crimson Spirit
       family: expedition
+      effect_kind: damage_up
     - slot: 7
       name: Divine Strength
       family: expedition
@@ -256,6 +276,9 @@ heroes:
       max_value: 25.0
       applies_to: expedition
       effect_op: 113
+    - kind: attack_speed_up
+      max_value: 30.0
+      applies_to: conquest
     arena_role: back_cc
     arena_value: 80
     arena_tags:
@@ -275,7 +298,7 @@ heroes:
     - slot: 2
       name: Superior Techniques
       family: conquest
-      effect_kind: attack_up
+      effect_kind: attack_speed_up
     - slot: 3
       name: Taskforce Training
       family: expedition
@@ -459,6 +482,9 @@ heroes:
       applies_to: expedition
       effect_op: 102
       first_expedition: true
+    - kind: attack_speed_up
+      max_value: 5.0
+      applies_to: conquest
     arena_role: back_dps
     arena_value: 62
     arena_tags:
@@ -476,6 +502,7 @@ heroes:
     - slot: 2
       name: Divine Melody
       family: conquest
+      effect_kind: attack_speed_up
     - slot: 3
       name: Tri-Phalanx
       family: expedition
@@ -492,6 +519,9 @@ heroes:
       applies_to: expedition
       effect_op: 111
       first_expedition: true
+    - kind: opp_damage_down
+      max_value: 20.0
+      applies_to: expedition
     arena_role: front_tank
     arena_value: 85
     arena_tags:
@@ -518,6 +548,7 @@ heroes:
     - slot: 4
       name: Weaken
       family: expedition
+      effect_kind: opp_damage_down
   Quinn:
     widget_type: none
     troop: archer
@@ -527,6 +558,9 @@ heroes:
       applies_to: expedition
       effect_op: 111
       first_expedition: true
+    - kind: attack_speed_up
+      max_value: 30.0
+      applies_to: conquest
     arena_role: back_dps
     arena_value: 72
     arena_tags:
@@ -540,6 +574,7 @@ heroes:
     - slot: 1
       name: Quick Shot
       family: conquest
+      effect_kind: attack_speed_up
     - slot: 2
       name: Natural Selection
       family: conquest
@@ -596,6 +631,9 @@ heroes:
       applies_to: expedition
       effect_op: 201
       first_expedition: true
+    - kind: attack_speed_up
+      max_value: 30.0
+      applies_to: conquest
     arena_role: back_dps
     arena_value: 45
     arena_tags:
@@ -612,9 +650,11 @@ heroes:
     - slot: 2
       name: Dune General
       family: conquest
+      effect_kind: attack_speed_up
     - slot: 3
       name: Desert Eclipse
       family: expedition
+      effect_kind: opp_damage_down
     - slot: 4
       name: Pathfinder
       family: expedition
@@ -712,13 +752,15 @@ heroes:
     - slot: 0
       name: Incendiary Arrows
       family: conquest
-      effect_kind: damage_up
+      effect_kind: aoe_damage_up
     - slot: 1
       name: Sharpshooter
       family: conquest
+      effect_kind: attack_speed_up
     - slot: 2
       name: Deadly Strike
       family: conquest
+      effect_kind: crit_rate_up
     - slot: 3
       name: Iron Constitution
       family: expedition

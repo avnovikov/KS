@@ -60,3 +60,20 @@ def test_repo_catalog_loads_after_seed() -> None:
     """Smoke: catalog file remains loadable (skills optional until seeded)."""
     catalog = load_catalog(None, ROOT / "config" / "hero_catalog.yaml")
     assert "Chenko" in catalog
+
+
+def test_diana_combat_skills_have_effect_kinds() -> None:
+    """Diana's conquest combat skills must map so leveled_catalog_percents works."""
+    catalog = load_catalog(None, ROOT / "config" / "hero_catalog.yaml")
+    by_slot = {s.slot: s for s in catalog["Diana"].skills}
+    assert by_slot[0].effect_kind == "aoe_damage_up"
+    assert by_slot[1].effect_kind == "attack_speed_up"
+    assert by_slot[2].effect_kind == "crit_rate_up"
+    assert by_slot[3].effect_kind is None  # stamina economy
+    assert by_slot[4].effect_kind is None  # wilderness march
+
+
+def test_saul_superior_techniques_is_attack_speed() -> None:
+    catalog = load_catalog(None, ROOT / "config" / "hero_catalog.yaml")
+    skill = next(s for s in catalog["Saul"].skills if s.name == "Superior Techniques")
+    assert skill.effect_kind == "attack_speed_up"
