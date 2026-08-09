@@ -323,6 +323,7 @@ def run_radiant_optimize(
     gear: list[GearRecord] | None = None,
     config_root: Path | None = None,
     troops_path: Path | None = None,
+    research_bonuses: Any | None = None,
     active_marches: int = 2,
     floor: int | None = None,
     enemy_ratio: dict[str, float] | None = None,
@@ -330,6 +331,7 @@ def run_radiant_optimize(
 ) -> dict[str, Any]:
     """Dual-march Radiant Spire proxy from current inventory + governor gear."""
     from ks.heroes.optimize.radiant_spire import optimize_radiant
+    from ks.heroes.research_models import ResearchBonuses
 
     root = (config_root or REPO_ROOT).expanduser().resolve()
     catalog = load_catalog(None, root / "config" / "hero_catalog.yaml")
@@ -342,6 +344,11 @@ def run_radiant_optimize(
     troop_stats = load_troop_stats(root / "config" / "troop_stats.yaml")
     raw_troops = yaml.safe_load(resolved_troops.read_text(encoding="utf-8")) or {}
     truegold = int(raw_troops.get("truegold", troop_stats.default_truegold))
+    research = (
+        research_bonuses
+        if isinstance(research_bonuses, ResearchBonuses)
+        else ResearchBonuses.empty()
+    )
     result = optimize_radiant(
         heroes,
         catalog,
@@ -349,6 +356,7 @@ def run_radiant_optimize(
         governor=governor_bonuses,
         troops=troops,
         troop_stats=troop_stats,
+        research=research,
         active_marches=active_marches,
         truegold=truegold,
         floor=floor,

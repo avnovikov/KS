@@ -222,6 +222,66 @@ def test_optimize_radiant_exclusive_heroes_and_governor_shift() -> None:
     assert overridden.floor.get("overrides_applied") is True
 
 
+def test_optimize_radiant_includes_research_pct() -> None:
+    catalog = load_catalog(None, ROOT / "config" / "hero_catalog.yaml")
+    names = [
+        ("Helga", "infantry"),
+        ("Jabel", "cavalry"),
+        ("Diana", "archers"),
+        ("Howard", "infantry"),
+        ("Chenko", "cavalry"),
+        ("Quinn", "archers"),
+    ]
+    missing = [n for n, _ in names if n not in catalog]
+    if missing:
+        pytest.skip(f"catalog missing fixtures: {missing}")
+
+    from ks.heroes.research_models import ResearchBonuses, TroopResearchRow
+
+    heroes = [_hero(n, t, power=3_000_000 - i * 10_000) for i, (n, t) in enumerate(names)]
+    troops = TroopsConfig(
+        infantry=90_000,
+        cavalry=90_000,
+        archers=90_000,
+        march_capacity=80_000,
+        infantry_levels=((6, 90_000),),
+        cavalry_levels=((6, 90_000),),
+        archers_levels=((6, 90_000),),
+    )
+    research = ResearchBonuses(
+        troops={
+            "infantry": TroopResearchRow(attack_pct=30.0, lethality_pct=5.0),
+            "cavalry": TroopResearchRow(),
+            "archers": TroopResearchRow(),
+        }
+    )
+    base = optimize_radiant(
+        heroes,
+        catalog,
+        gear_pieces=[],
+        governor=_gov(),
+        troops=troops,
+        troop_stats=_table(),
+        active_marches=1,
+    )
+    boosted = optimize_radiant(
+        heroes,
+        catalog,
+        gear_pieces=[],
+        governor=_gov(),
+        troops=troops,
+        troop_stats=_table(),
+        research=research,
+        active_marches=1,
+    )
+    assert boosted.lineup_score > base.lineup_score
+    assert boosted.marches[0].breakdown["atk_pct"]["infantry"] == pytest.approx(
+        base.marches[0].breakdown["atk_pct"]["infantry"] + 30.0
+    )
+    assert boosted.research is not None
+    assert boosted.research["troops"]["infantry"]["attack_pct"] == pytest.approx(30.0)
+
+
 def test_optimize_radiant_schema_allows_three_marches() -> None:
     catalog = load_catalog(None, ROOT / "config" / "hero_catalog.yaml")
     names = [

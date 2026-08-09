@@ -7,6 +7,7 @@ Floor stubs / MC: mystic_trial floors + combat_mc (GitHub #37 / #38).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from ks.heroes.gear_models import GearRecord
@@ -33,6 +34,7 @@ from ks.heroes.optimize.stat_contributions import (
 )
 from ks.heroes.optimize.troop_stats import TroopStatsTable, TroopUnitStats
 from ks.heroes.optimize.types import CatalogEntry, TroopsConfig
+from ks.heroes.research_models import ResearchBonuses
 
 # Radiant seed kept for callers / tests that import SEED_RATIO.
 SEED_RATIO: dict[str, float] = {
@@ -78,6 +80,7 @@ class RadiantResult:
     marches: tuple[MarchResult, ...]
     lineup_score: float
     governor: dict[str, Any]
+    research: dict[str, Any] | None = None
     proxy_banner: str = PROXY_BANNER
     active_marches: int = 2
     schema_marches: int = 3
@@ -99,6 +102,8 @@ class RadiantResult:
             "schema_marches": self.schema_marches,
             "engine": self.engine,
         }
+        if self.research is not None:
+            out["research"] = dict(self.research)
         if self.floor is not None:
             out["floor"] = dict(self.floor)
         if self.opponent is not None:
@@ -256,6 +261,7 @@ def optimize_radiant(
     governor: GovernorTroopBonuses,
     troops: TroopsConfig,
     troop_stats: TroopStatsTable,
+    research: ResearchBonuses | None = None,
     active_marches: int = 2,
     truegold: int | None = None,
     one_per_troop_type: bool = True,
@@ -273,6 +279,12 @@ def optimize_radiant(
         raise ValueError(f"active_marches must be 1–3; got {active_marches}")
     if (enemy_ratio is not None or enemy_bonuses is not None) and floor is None:
         raise ValueError("enemy_ratio / enemy_bonuses overrides require floor=")
+
+    research_bonuses = research if research is not None else ResearchBonuses.empty()
+    research_atk = research_bonuses.attack_pct()
+    research_def = research_bonuses.defense_pct()
+    research_leth = research_bonuses.lethality_pct()
+    research_hp = research_bonuses.health_pct()
 
     warnings: list[str] = []
     floor_payload: dict[str, Any] | None = None
@@ -342,16 +354,22 @@ def optimize_radiant(
         hero_atk, hero_def, hero_leth, hero_hp, hero_shares = _lineup_troop_percents(
             pick, catalog, gear_by_hero
         )
+        leth_pct = {
+            t: hero_leth[t] + float(research_leth.get(t, 0.0)) for t in TROOP_TYPES
+        }
+        hp_pct = {t: hero_hp[t] + float(research_hp.get(t, 0.0)) for t in TROOP_TYPES}
         atk_pct = {
             t: hero_atk[t]
             + float(governor.attack_pct.get(t, 0.0))
             + float(governor.set_attack_pct)
+            + float(research_atk.get(t, 0.0))
             for t in TROOP_TYPES
         }
         def_pct = {
             t: hero_def[t]
             + float(governor.defense_pct.get(t, 0.0))
             + float(governor.set_defense_pct)
+            + float(research_def.get(t, 0.0))
             for t in TROOP_TYPES
         }
 
@@ -368,20 +386,21 @@ def optimize_radiant(
                 units,
                 atk_pct=atk_pct,
                 def_pct=def_pct,
-                leth_pct=hero_leth,
-                hp_pct=hero_hp,
+                leth_pct=leth_pct,
+                hp_pct=hp_pct,
             )
             breakdown: dict[str, Any] = {
                 "proxy": scored.to_dict(),
                 "atk_pct": dict(atk_pct),
                 "def_pct": dict(def_pct),
-                "leth_pct": dict(hero_leth),
-                "hp_pct": dict(hero_hp),
+                "leth_pct": dict(leth_pct),
+                "hp_pct": dict(hp_pct),
                 "hero_shares": hero_shares,
                 "governor_attack_pct": dict(governor.attack_pct),
                 "governor_defense_pct": dict(governor.defense_pct),
                 "set_attack_pct": governor.set_attack_pct,
                 "set_defense_pct": governor.set_defense_pct,
+                "research": research_bonuses.to_dict(),
             }
             rank_key = scored.score
             if floor_stub is not None:
@@ -414,6 +433,7 @@ def optimize_radiant(
         marches=tuple(marches),
         lineup_score=sum(m.score for m in marches),
         governor=governor.to_dict(),
+        research=research_bonuses.to_dict(),
         active_marches=active_marches,
         floor=floor_payload,
         opponent=opponent,
