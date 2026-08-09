@@ -48,20 +48,7 @@
 
 <section class="panel board" id="board"></section>
 
-{# Bottom sheet on a phone, centred modal on a wide screen — `.sheet` opts
-   into the narrow-width rules in app.css. #}
-<div class="modal-backdrop sheet" id="gear-detail-modal" hidden>
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="gear-modal-title">
-    <div class="modal-header">
-      <div>
-        <h2 id="gear-modal-title">Hero</h2>
-        <div class="modal-sub" id="gear-modal-sub"></div>
-      </div>
-      <button type="button" class="modal-close" id="gear-modal-close">Close</button>
-    </div>
-    <div class="modal-body" id="gear-modal-body"></div>
-  </div>
-</div>
+{% include "_gear_detail_modal.html" %}
 {% endblock %}
 
 {% block scripts %}

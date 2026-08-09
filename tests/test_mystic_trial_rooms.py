@@ -26,3 +26,10 @@ def test_load_coliseum_heroes_gear_focus() -> None:
     assert abs(room.seed_ratio["infantry"] - 0.50) < 1e-9
     assert abs(room.seed_ratio["cavalry"] - 0.10) < 1e-9
     assert abs(room.seed_ratio["archers"] - 0.40) < 1e-9
+
+
+def test_load_radiant_event_march_capacity() -> None:
+    room = load_room(CFG / "radiant_spire.yaml")
+    assert room.id == "radiant_spire"
+    assert room.event_march_capacity == 150_000
+    assert room.active_marches == 2

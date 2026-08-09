@@ -159,6 +159,7 @@ def test_optimize_radiant_exclusive_heroes_and_governor_shift() -> None:
         troops=troops,
         troop_stats=_table(),
         active_marches=2,
+        event_march_capacity=None,
     )
     assert len(base.marches) == 2
     used = [h for m in base.marches for h in m.hero_names]
@@ -176,6 +177,7 @@ def test_optimize_radiant_exclusive_heroes_and_governor_shift() -> None:
         troops=troops,
         troop_stats=_table(),
         active_marches=2,
+        event_march_capacity=None,
     )
     assert boosted.lineup_score > base.lineup_score
     assert base.opponent is None
@@ -189,6 +191,7 @@ def test_optimize_radiant_exclusive_heroes_and_governor_shift() -> None:
         troop_stats=_table(),
         active_marches=2,
         floor=10,
+        event_march_capacity=None,
     )
     assert with_floor.opponent is not None
     assert len(with_floor.opponent["marches"]) == 2
@@ -207,6 +210,7 @@ def test_optimize_radiant_exclusive_heroes_and_governor_shift() -> None:
         troop_stats=_table(),
         active_marches=2,
         floor=10,
+        event_march_capacity=None,
         enemy_ratio={"infantry": 0.70, "cavalry": 0.20, "archers": 0.10},
         enemy_bonuses={
             "infantry": {
@@ -282,6 +286,46 @@ def test_optimize_radiant_includes_research_pct() -> None:
     assert boosted.research["troops"]["infantry"]["attack_pct"] == pytest.approx(30.0)
 
 
+def test_optimize_radiant_uses_event_march_capacity_not_inventory() -> None:
+    catalog = load_catalog(None, ROOT / "config" / "hero_catalog.yaml")
+    names = [
+        ("Helga", "infantry"),
+        ("Jabel", "cavalry"),
+        ("Diana", "archers"),
+        ("Howard", "infantry"),
+        ("Chenko", "cavalry"),
+        ("Quinn", "archers"),
+    ]
+    missing = [n for n, _ in names if n not in catalog]
+    if missing:
+        pytest.skip(f"catalog missing fixtures: {missing}")
+    heroes = [_hero(n, t, power=2_000_000 - i * 50_000) for i, (n, t) in enumerate(names)]
+    # Inventory capacity deliberately small — event fill must ignore it.
+    troops = TroopsConfig(
+        infantry=10_000,
+        cavalry=10_000,
+        archers=10_000,
+        march_capacity=20_000,
+        infantry_levels=((6, 10_000),),
+        cavalry_levels=((6, 10_000),),
+        archers_levels=((6, 10_000),),
+    )
+    result = optimize_radiant(
+        heroes,
+        catalog,
+        gear_pieces=[],
+        governor=_gov(),
+        troops=troops,
+        troop_stats=_table(),
+        active_marches=2,
+        event_march_capacity=150_000,
+    )
+    assert len(result.marches) == 2
+    for march in result.marches:
+        assert march.capacity == 150_000
+        assert sum(march.counts.values()) == 150_000
+
+
 def test_optimize_radiant_schema_allows_three_marches() -> None:
     catalog = load_catalog(None, ROOT / "config" / "hero_catalog.yaml")
     names = [
@@ -317,6 +361,127 @@ def test_optimize_radiant_schema_allows_three_marches() -> None:
         troops=troops,
         troop_stats=_table(),
         active_marches=3,
+        event_march_capacity=None,
     )
     assert len(result.marches) == 3
     assert len({h for m in result.marches for h in m.hero_names}) == 9
+
+
+def test_optimize_radiant_saved_opponents_use_enemy_proxy() -> None:
+    catalog = load_catalog(None, ROOT / "config" / "hero_catalog.yaml")
+    names = [
+        ("Helga", "infantry"),
+        ("Howard", "infantry"),
+        ("Jabel", "cavalry"),
+        ("Chenko", "cavalry"),
+        ("Diana", "archers"),
+        ("Quinn", "archers"),
+    ]
+    missing = [n for n, _ in names if n not in catalog]
+    if missing:
+        pytest.skip(f"catalog missing fixtures: {missing}")
+    heroes = [_hero(n, t, power=3_000_000 - i * 10_000) for i, (n, t) in enumerate(names)]
+    troops = TroopsConfig(
+        infantry=90_000,
+        cavalry=90_000,
+        archers=90_000,
+        march_capacity=80_000,
+        infantry_levels=((6, 90_000),),
+        cavalry_levels=((6, 90_000),),
+        archers_levels=((6, 90_000),),
+    )
+    saved = [
+        {
+            "hero_names": ["Helga", "Jabel", "Diana"],
+            "hero_level": 80,
+            "gear_enhancement": 20,
+            "levels": {"infantry": 6, "cavalry": 6, "archers": 6},
+            "counts": {"infantry": 40000, "cavalry": 40000, "archers": 40000},
+            "bonuses": {
+                t: {
+                    "attack_pct": 0.0,
+                    "defense_pct": 0.0,
+                    "lethality_pct": 0.0,
+                    "health_pct": 0.0,
+                }
+                for t in ("infantry", "cavalry", "archers")
+            },
+        }
+    ]
+    stubbed = optimize_radiant(
+        heroes,
+        catalog,
+        gear_pieces=[],
+        governor=_gov(),
+        troops=troops,
+        troop_stats=_table(),
+        active_marches=1,
+        floor=10,
+        event_march_capacity=150_000,
+    )
+    proxied = optimize_radiant(
+        heroes,
+        catalog,
+        gear_pieces=[],
+        governor=_gov(),
+        troops=troops,
+        troop_stats=_table(),
+        active_marches=1,
+        floor=10,
+        event_march_capacity=150_000,
+        saved_opponents=saved,
+    )
+    assert proxied.floor is not None
+    assert proxied.floor.get("enemy_proxy") is True
+    mc_stub = stubbed.marches[0].breakdown["mc"]
+    mc_proxy = proxied.marches[0].breakdown["mc"]
+    assert mc_proxy["enemy_score"] != pytest.approx(mc_stub["enemy_score"])
+
+
+def test_optimize_radiant_keeps_cavalry_troops_with_cav_hero() -> None:
+    catalog = load_catalog(None, ROOT / "config" / "hero_catalog.yaml")
+    names = [
+        ("Helga", "infantry"),
+        ("Howard", "infantry"),
+        ("Jabel", "cavalry"),
+        ("Chenko", "cavalry"),
+        ("Diana", "archers"),
+        ("Quinn", "archers"),
+    ]
+    missing = [n for n, _ in names if n not in catalog]
+    if missing:
+        pytest.skip(f"catalog missing fixtures: {missing}")
+    heroes = [_hero(n, t, power=3_000_000 - i * 10_000) for i, (n, t) in enumerate(names)]
+    troops = TroopsConfig(
+        infantry=90_000,
+        cavalry=90_000,
+        archers=90_000,
+        march_capacity=80_000,
+        infantry_levels=((6, 90_000),),
+        cavalry_levels=((6, 90_000),),
+        archers_levels=((6, 90_000),),
+    )
+    result = optimize_radiant(
+        heroes,
+        catalog,
+        gear_pieces=[],
+        governor=_gov(),
+        troops=troops,
+        troop_stats=_table(),
+        active_marches=2,
+        floor=9,
+        event_march_capacity=150_000,
+    )
+    assert result.engine == "mc"
+    for march in result.marches:
+        troops_in_lineup = {
+            (march.breakdown.get("hero_shares") or {})
+            .get("heroes", {})
+            .get(name, {})
+            .get("troop")
+            for name in march.hero_names
+        }
+        if "cavalry" in troops_in_lineup:
+            assert march.counts["cavalry"] > 0
+            assert march.ratio["cavalry"] >= 0.05 - 1e-9
+        assert march.breakdown.get("mc", {}).get("trials") == 32

@@ -17,7 +17,7 @@ from ks.heroes.gear_models import GearRecord
 from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.bear_damage import blend_unit_stats
-from ks.heroes.optimize.gear_assign import assign_exclusive_sets
+from ks.heroes.optimize.gear_assign import assign_exclusive_sets, assignment_to_dict
 from ks.heroes.optimize.mystic_trial.proxy import PROXY_BANNER, score_march
 from ks.heroes.optimize.mystic_trial.ratios import (
     TROOP_TYPES,
@@ -46,9 +46,10 @@ class MarchResult:
     capacity: int
     score: float
     breakdown: dict[str, Any]
+    gear_assignment: dict[str, list[dict[str, Any]]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "hero_names": list(self.hero_names),
             "ratio": dict(self.ratio),
             "counts": dict(self.counts),
@@ -56,6 +57,12 @@ class MarchResult:
             "score": self.score,
             "breakdown": dict(self.breakdown),
         }
+        if self.gear_assignment is not None:
+            out["gear_assignment"] = {
+                name: [dict(p) for p in pieces]
+                for name, pieces in self.gear_assignment.items()
+            }
+        return out
 
 
 @dataclass(frozen=True)
@@ -236,6 +243,7 @@ def optimize_molten(
     hero_shares: dict[str, Any] = {"heroes": {}, "hero_weight": hero_weight}
     hero_names: tuple[str, ...] = ()
     escorts = 0
+    gear_assignment: dict[str, list[dict[str, Any]]] | None = None
 
     if len(pick) >= 3 and hero_weight > 0:
         pick_names = [h.name for h in pick]
@@ -247,6 +255,7 @@ def optimize_molten(
             priority=pick_names,
             profile="early_game_growth",
         )
+        gear_assignment = assignment_to_dict(gear_by_hero)
         hero_atk, hero_def, hero_leth, hero_hp, hero_shares = _lineup_troop_percents(
             pick, catalog, gear_by_hero, hero_weight=hero_weight
         )
@@ -300,6 +309,7 @@ def optimize_molten(
             capacity=capacity,
             score=scored.score,
             breakdown=breakdown,
+            gear_assignment=gear_assignment,
         )
         if best is None or candidate.score > best.score:
             best = candidate

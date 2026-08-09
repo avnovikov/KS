@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from ks.heroes.optimize.mystic_trial.combat_mc import simulate_floor
 from ks.heroes.optimize.mystic_trial.floors import FloorStub, empty_enemy_bonuses
 from ks.heroes.optimize.mystic_trial.proxy import MarchScore
@@ -45,3 +47,12 @@ def test_harder_floor_lowers_win_rate() -> None:
     hard = _stub(10, {"infantry": 0.53, "cavalry": 0.27, "archers": 0.20}, 2.0)
     player = _score(1000.0)
     assert simulate_floor(player, hard).win_rate < simulate_floor(player, easy).win_rate
+
+
+def test_explicit_enemy_overrides_power_scale() -> None:
+    stub = _stub(10, {"infantry": 1 / 3, "cavalry": 1 / 3, "archers": 1 / 3}, 99.0)
+    player = _score(1000.0)
+    weak_enemy = _score(100.0)
+    result = simulate_floor(player, stub, enemy=weak_enemy)
+    assert result.enemy_score == pytest.approx(100.0)
+    assert result.win_rate > 0.8

@@ -316,6 +316,59 @@ def attach_gear_icon_urls(
         _patch_assignment(conquest.get("gear_assignment"))
 
 
+def attach_mystic_gear_icon_urls(
+    payload: dict[str, Any],
+    icon_by_piece_id: dict[str, str | None],
+) -> None:
+    """Patch gear_assignment on mystic-trial march payloads (Radiant/Coliseum/Molten)."""
+    if not icon_by_piece_id:
+        return
+
+    def _patch(assignment: dict[str, list[dict[str, Any]]] | None) -> None:
+        if not assignment:
+            return
+        for pieces in assignment.values():
+            for piece in pieces:
+                pid = piece.get("piece_id")
+                if pid and pid in icon_by_piece_id:
+                    piece["icon_url"] = icon_by_piece_id[pid]
+
+    for march in payload.get("marches") or []:
+        if isinstance(march, dict):
+            _patch(march.get("gear_assignment"))
+
+
+def apply_saved_radiant_opponents(
+    payload: dict[str, Any],
+    *,
+    governor_dir: Path,
+    stage: int,
+    round_no: int,
+) -> dict[str, Any]:
+    """Merge persisted stage·round opponent marches into an optimize payload."""
+    from ks.heroes.optimize.mystic_trial.radiant_opponents import (
+        get_player_bonuses,
+        get_stage_round,
+        load_store,
+        merge_saved_into_opponent,
+        opponents_path,
+    )
+
+    store = load_store(opponents_path(governor_dir))
+    saved = get_stage_round(store, stage, round_no)
+    if not saved:
+        payload["stage"] = stage
+        payload["round"] = round_no
+        return payload
+    payload["opponent"] = merge_saved_into_opponent(payload.get("opponent"), saved)
+    player_bonuses = get_player_bonuses(store, stage, round_no)
+    if player_bonuses is not None:
+        payload["player_bonuses"] = player_bonuses
+    payload["stage"] = stage
+    payload["round"] = round_no
+    return payload
+
+
 def run_radiant_optimize(
     heroes: list[HeroRecord],
     *,
@@ -328,6 +381,8 @@ def run_radiant_optimize(
     floor: int | None = None,
     enemy_ratio: dict[str, float] | None = None,
     enemy_bonuses: dict[str, dict[str, float]] | None = None,
+    saved_opponents: list[dict[str, Any]] | None = None,
+    player_report_bonuses: dict[str, dict[str, float]] | None = None,
 ) -> dict[str, Any]:
     """Dual-march Radiant Spire proxy from current inventory + governor gear."""
     from ks.heroes.optimize.radiant_spire import optimize_radiant
@@ -361,10 +416,15 @@ def run_radiant_optimize(
         truegold=truegold,
         floor=floor,
         floors_path=root / "config" / "mystic_trial" / "radiant_spire_floors.yaml",
+        room_path=root / "config" / "mystic_trial" / "radiant_spire.yaml",
         enemy_ratio=enemy_ratio,
         enemy_bonuses=enemy_bonuses,
+        saved_opponents=saved_opponents,
+        player_report_bonuses=player_report_bonuses,
     )
-    return result.to_dict()
+    out = result.to_dict()
+    out["catalog_hero_names"] = sorted(catalog.keys())
+    return out
 
 
 def run_coliseum_optimize(

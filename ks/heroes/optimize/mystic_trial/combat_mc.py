@@ -1,4 +1,8 @@
-"""Deterministic floor combat vs stub (#38) — not full Monte Carlo variance."""
+"""Legacy deterministic floor compare (#38 stub).
+
+Prefer ``fight_utility.evaluate_attrition`` for Radiant ranking; this module
+remains for older tests and callers that only need a closed-form win_rate.
+"""
 
 from __future__ import annotations
 
@@ -31,21 +35,34 @@ def simulate_floor(
     player: MarchScore,
     stub: FloorStub,
     *,
+    enemy: MarchScore | None = None,
     rounds: int = 10,
 ) -> McResult:
-    """Compare player proxy to scaled enemy proxy; map ratio to win_rate.
+    """Compare player proxy to enemy proxy (or scaled stub); map to win_rate.
 
-    Enemy score ≈ player_score × enemy_power_scale (stub difficulty).
-    win_rate = clamp(player / (player + enemy), 0, 1).
-    remaining_hp_est ≈ (player - enemy) / max(player, 1) clipped to [-1, 1].
+    When ``enemy`` is provided (saved opponent with AI heroes/troops), use that
+    score directly. Otherwise Enemy score ≈ player_score × enemy_power_scale.
+    win_rate = clamp(adj_player / (adj_player + enemy), 0, 1).
     """
     if rounds < 1:
         raise ValueError(f"rounds must be >= 1; got {rounds}")
     player_score = float(player.score)
-    enemy_score = max(0.0, player_score * float(stub.enemy_power_scale))
+    if enemy is not None:
+        enemy_score = max(0.0, float(enemy.score))
+        mix_ratio = {
+            t: float((enemy.by_type.get(t) or {}).get("n") or 0.0) for t in stub.enemy_ratio
+        }
+        total_n = sum(mix_ratio.values())
+        if total_n > 0:
+            mix_ratio = {t: mix_ratio[t] / total_n for t in mix_ratio}
+        else:
+            mix_ratio = dict(stub.enemy_ratio)
+    else:
+        enemy_score = max(0.0, player_score * float(stub.enemy_power_scale))
+        mix_ratio = dict(stub.enemy_ratio)
     # Bias by troop mix mismatch: if enemy is infantry-heavy and player offense
     # is archer-skewed in by_type, slightly reduce player (simple heuristic).
-    mix_penalty = _mix_penalty(player.by_type, stub.enemy_ratio)
+    mix_penalty = _mix_penalty(player.by_type, mix_ratio)
     adj_player = max(0.0, player_score * (1.0 - mix_penalty))
     denom = adj_player + enemy_score
     win_rate = 0.5 if denom <= 0 else adj_player / denom

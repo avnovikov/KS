@@ -219,6 +219,50 @@ main {
   font-size: 1.35rem;
 }
 
+/* Title + Spire floor control on one row (floor used to live in header-actions
+   and wrapped into empty space between brand and primary nav). */
+.page-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem 1rem;
+  margin: 0.1rem 0 0.3rem;
+}
+
+.page-heading .page-title {
+  margin: 0;
+}
+
+.floor-picker,
+.stage-round-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.stage-round-picker label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.floor-picker select,
+.stage-round-picker input {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.25rem 0.45rem;
+}
+
+.stage-round-picker input {
+  width: 3.75rem;
+}
+
 .page-meta {
   color: var(--muted);
   font-size: 0.82rem;
@@ -617,6 +661,83 @@ input.tier-input {
 .opponent-edit {
   margin: 0.75rem 0 1rem;
   padding: 0.75rem 1rem;
+}
+
+.opponent-heroes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.opponent-heroes-shared {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.opponent-heroes label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.opponent-heroes select,
+.opponent-heroes input {
+  min-width: 0;
+  width: 100%;
+}
+
+.opponent-heroes-shared label {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.opponent-heroes-shared input {
+  width: 5.5rem;
+}
+
+.troop-counts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.troop-count-box {
+  border: 1px dashed var(--border);
+  padding: 0.5rem;
+  border-radius: var(--radius-sm, 6px);
+  font-size: 0.85rem;
+}
+
+.troop-count-box strong {
+  display: block;
+  margin-bottom: 0.35rem;
+  text-transform: capitalize;
+}
+
+.troop-count-box label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.25rem 0;
+}
+
+.troop-count-box input {
+  width: 5.5rem;
+}
+
+.opponent-apply-row {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
 }
 
 .ratio-row {
@@ -1835,6 +1956,10 @@ select.stack-input {
   }
 
   .bonus-edit {
+    grid-template-columns: 1fr;
+  }
+
+  .troop-counts {
     grid-template-columns: 1fr;
   }
 }

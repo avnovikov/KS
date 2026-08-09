@@ -9,9 +9,9 @@ Radiant (and other expedition proxies) understate formation Attack/Lethality/…
 
 ## Decision
 
-1. **Store:** `data/research/<run>/research.yaml` — per troop (`infantry` / `cavalry` / `archers`) percent-points for `attack_pct`, `defense_pct`, `lethality_pct`, `health_pct` (same units as governor / expedition hero shares).
-2. **UI:** Inventory → Research — manual table + note; GET/PUT `/api/research`.
-3. **Scoring:** `optimize_radiant` adds research into march `atk_pct` / `def_pct` / `leth_pct` / `hp_pct` alongside heroes + governor.
+1. **Store:** `data/research/<run>/research.yaml` — per troop (`infantry` / `cavalry` / `archers`) percent-points for `attack_pct`, `defense_pct`, `lethality_pct`, `health_pct`, plus a **`squad`** row for universal / all-troop Battle nodes (added into every troop’s effective %). Same units as governor / expedition hero shares.
+2. **UI:** Inventory → Research — table with squad + I/C/A rows + note; GET/PUT `/api/research`.
+3. **Scoring:** `optimize_radiant` adds research (troop + squad) into march `atk_pct` / `def_pct` / `leth_pct` / `hp_pct` alongside heroes + governor.
 4. **No double-count:** when a future (or existing) battle-report override replaces the formation stack, research is not stacked on top of that override. On this branch of main, Radiant has no report override yet — research always adds to heroes+governor until that lands.
 
 ## Non-goals

@@ -50,26 +50,36 @@ class TroopResearchRow:
 
 @dataclass(frozen=True)
 class ResearchBonuses:
-    """Per-troop research percent-points from Academy Battle (+ War Academy)."""
+    """Per-troop + squad-wide research percent-points from Academy Battle.
+
+    ``squad`` applies to every troop type (all-squad / universal Battle nodes).
+    Effective maps from ``attack_pct()`` etc. already include squad.
+    """
 
     troops: dict[str, TroopResearchRow]
+    squad: TroopResearchRow = TroopResearchRow()
     note: str = ""
 
     def attack_pct(self) -> dict[str, float]:
-        return {t: self.troops[t].attack_pct for t in TROOP_TYPES}
+        s = float(self.squad.attack_pct)
+        return {t: self.troops[t].attack_pct + s for t in TROOP_TYPES}
 
     def defense_pct(self) -> dict[str, float]:
-        return {t: self.troops[t].defense_pct for t in TROOP_TYPES}
+        s = float(self.squad.defense_pct)
+        return {t: self.troops[t].defense_pct + s for t in TROOP_TYPES}
 
     def lethality_pct(self) -> dict[str, float]:
-        return {t: self.troops[t].lethality_pct for t in TROOP_TYPES}
+        s = float(self.squad.lethality_pct)
+        return {t: self.troops[t].lethality_pct + s for t in TROOP_TYPES}
 
     def health_pct(self) -> dict[str, float]:
-        return {t: self.troops[t].health_pct for t in TROOP_TYPES}
+        s = float(self.squad.health_pct)
+        return {t: self.troops[t].health_pct + s for t in TROOP_TYPES}
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "note": self.note,
+            "squad": self.squad.to_dict(),
             "troops": {t: self.troops[t].to_dict() for t in TROOP_TYPES},
         }
 
@@ -77,6 +87,7 @@ class ResearchBonuses:
     def empty(cls, *, note: str = "") -> ResearchBonuses:
         return cls(
             troops={t: TroopResearchRow() for t in TROOP_TYPES},
+            squad=TroopResearchRow(),
             note=note,
         )
 
@@ -100,7 +111,10 @@ class ResearchBonuses:
         troops = {
             t: TroopResearchRow.from_dict(troop_raw.get(t)) for t in TROOP_TYPES
         }
-        return cls(troops=troops, note=note)
+        squad = TroopResearchRow.from_dict(
+            raw.get("squad") if isinstance(raw.get("squad"), Mapping) else None
+        )
+        return cls(troops=troops, squad=squad, note=note)
 
 
 __all__ = ["ResearchBonuses", "TroopResearchRow", "TROOP_TYPES"]

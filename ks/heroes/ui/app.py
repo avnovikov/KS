@@ -1378,6 +1378,8 @@ def create_app(
 
     @app.get("/api/optimize/radiant-spire")
     def api_optimize_radiant(
+        stage: int | None = None,
+        round: int | None = None,
         floor: int | None = None,
         enemy_infantry: float | None = None,
         enemy_cavalry: float | None = None,
@@ -1386,8 +1388,9 @@ def create_app(
     ) -> dict[str, Any]:
         """Dual-march Radiant Spire proxy from heroes, gear, troops, governor.
 
-        Optional enemy_* query parts override the floor stub (percents or fractions).
-        enemy_bonuses is a JSON object of per-troop Attack%/Defense%/Lethality%/Health%.
+        Pass both ``stage`` and ``round`` to enable the opponent panel and MC
+        stub (``floor`` is a deprecated alias for ``stage``). Optional enemy_*
+        query parts override the stub ratio; saved opponents override when set.
         """
         import json
 
@@ -1395,7 +1398,18 @@ def create_app(
             parse_enemy_bonuses,
             ratio_from_parts,
         )
-        from ks.heroes.ui.optimize_run import run_radiant_optimize
+        from ks.heroes.optimize.mystic_trial.radiant_opponents import (
+            get_player_bonuses,
+            get_stage_round,
+            load_store,
+            opponents_path,
+            ratio_from_counts,
+        )
+        from ks.heroes.ui.optimize_run import (
+            apply_saved_radiant_opponents,
+            attach_mystic_gear_icon_urls,
+            run_radiant_optimize,
+        )
 
         heroes_path, hero_store_local = _require_heroes()
         hero_store_local.reload()
@@ -1404,6 +1418,11 @@ def create_app(
         if gear_store is not None:
             gear_store.reload()
             gear_pieces = gear_store.all_pieces()
+
+        # Both stage and round required for opponent panel / stub; floor aliases stage.
+        stage_n = stage if stage is not None else floor
+        round_n = round
+        use_stage_round = stage_n is not None and round_n is not None
         try:
             ratio_override = ratio_from_parts(
                 enemy_infantry, enemy_cavalry, enemy_archers
@@ -1412,6 +1431,26 @@ def create_app(
             if enemy_bonuses is not None and str(enemy_bonuses).strip():
                 raw = json.loads(enemy_bonuses)
                 bonuses_override = parse_enemy_bonuses(raw)
+            saved_opponents = None
+            player_report_bonuses = None
+            if use_stage_round:
+                store = load_store(opponents_path(resolved_governor))
+                saved_opponents = get_stage_round(
+                    store,
+                    int(stage_n),
+                    int(round_n),
+                )
+                player_report_bonuses = get_player_bonuses(
+                    store, int(stage_n), int(round_n)
+                )
+                if saved_opponents and ratio_override is None:
+                    for march in saved_opponents:
+                        derived = ratio_from_counts(march["counts"])
+                        if derived is not None:
+                            ratio_override = derived
+                            break
+                    if bonuses_override is None:
+                        bonuses_override = saved_opponents[0]["bonuses"]
             payload = run_radiant_optimize(
                 heroes,
                 governor_bonuses=governor_store.bonuses(),
@@ -1419,22 +1458,156 @@ def create_app(
                 gear=gear_pieces,
                 troops_path=app.state.troops_path,
                 active_marches=2,
-                floor=floor,
-                enemy_ratio=ratio_override,
-                enemy_bonuses=bonuses_override,
+                floor=int(stage_n) if use_stage_round else None,
+                enemy_ratio=ratio_override if use_stage_round else None,
+                enemy_bonuses=bonuses_override if use_stage_round else None,
+                saved_opponents=saved_opponents if use_stage_round else None,
+                player_report_bonuses=(
+                    player_report_bonuses if use_stage_round else None
+                ),
             )
+            if use_stage_round:
+                apply_saved_radiant_opponents(
+                    payload,
+                    governor_dir=resolved_governor,
+                    stage=int(stage_n),
+                    round_no=int(round_n),
+                )
+            else:
+                # Spec: blank stage or round → proxy only (hide opponent panel).
+                payload.pop("opponent", None)
         except (ValueError, OSError, FileNotFoundError, KeyError, json.JSONDecodeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        try:
+            if gear_pieces and resolved_gear is not None:
+                bust = inventory_revision(resolved_gear, "gear.json")
+                raw_icons = ensure_all_icons(gear_pieces, resolved_gear)
+                attach_mystic_gear_icon_urls(
+                    payload,
+                    {
+                        pid: with_cache_bust(url, bust)
+                        for pid, url in raw_icons.items()
+                    },
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            bust_h = inventory_revision(heroes_path, "heroes.json")
+            icon_map = ensure_all_hero_icons(heroes, heroes_path)
+            icon_by_name = {
+                name: with_cache_bust(url, bust_h) for name, url in icon_map.items()
+            }
+            for march in payload.get("marches") or []:
+                if not isinstance(march, dict):
+                    continue
+                rows = list(march.get("heroes") or [])
+                if not rows:
+                    rows = [{"name": n} for n in (march.get("hero_names") or [])]
+                for row in rows:
+                    name = row.get("name")
+                    if name and name in icon_by_name:
+                        row["icon_url"] = icon_by_name[name]
+                march["heroes"] = rows
+        except Exception:  # noqa: BLE001
+            pass
         payload["heroes_dir"] = str(heroes_path)
         payload["governor_dir"] = str(resolved_governor)
         payload["research_dir"] = str(resolved_research)
         return payload
 
+    @app.put("/api/mystic-trial/radiant-opponents/{stage}/{round_no}/{slot}")
+    def api_put_radiant_opponent(
+        stage: int,
+        round_no: int,
+        slot: int,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist one opponent march slot for a stage · round (Apply)."""
+        from ks.heroes.optimize.mystic_trial.radiant_opponents import (
+            get_stage_round,
+            load_store,
+            opponents_path,
+            parse_march,
+            save_store,
+            upsert_march,
+        )
+
+        if stage < 1 or round_no < 1:
+            raise HTTPException(
+                status_code=400, detail="stage and round must be >= 1"
+            )
+        if slot not in (0, 1):
+            raise HTTPException(status_code=400, detail="slot must be 0 or 1")
+        try:
+            march = parse_march(body)
+            path = opponents_path(resolved_governor)
+            store = upsert_march(
+                load_store(path),
+                stage=stage,
+                round_no=round_no,
+                slot=slot,
+                march=march,
+            )
+            save_store(path, store)
+            marches = get_stage_round(store, stage, round_no)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "stage": stage,
+            "round": round_no,
+            "slot": slot,
+            "marches": marches,
+            "path": str(path),
+        }
+
+    @app.put("/api/mystic-trial/radiant-player-bonuses/{stage}/{round_no}")
+    def api_put_radiant_player_bonuses(
+        stage: int,
+        round_no: int,
+        body: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist your battle-report formation Atk/Def/Leth/HP for a stage·round."""
+        from ks.heroes.optimize.mystic_trial.floors import parse_enemy_bonuses
+        from ks.heroes.optimize.mystic_trial.radiant_opponents import (
+            get_player_bonuses,
+            load_store,
+            opponents_path,
+            save_store,
+            upsert_player_bonuses,
+        )
+
+        if stage < 1 or round_no < 1:
+            raise HTTPException(
+                status_code=400, detail="stage and round must be >= 1"
+            )
+        try:
+            bonuses = parse_enemy_bonuses(body.get("bonuses", body))
+            path = opponents_path(resolved_governor)
+            store = upsert_player_bonuses(
+                load_store(path),
+                stage=stage,
+                round_no=round_no,
+                bonuses=bonuses,
+            )
+            save_store(path, store)
+            saved = get_player_bonuses(store, stage, round_no)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "stage": stage,
+            "round": round_no,
+            "player_bonuses": saved,
+            "path": str(path),
+        }
+
     @app.get("/api/optimize/coliseum")
     def api_optimize_coliseum() -> dict[str, Any]:
         """Single-march Coliseum proxy — heroes + gear; governor weight 0."""
         heroes_path, hero_store_local = _require_heroes()
-        from ks.heroes.ui.optimize_run import run_coliseum_optimize
+        from ks.heroes.ui.optimize_run import (
+            attach_mystic_gear_icon_urls,
+            run_coliseum_optimize,
+        )
 
         hero_store_local.reload()
         heroes = hero_store_local.all_heroes()
@@ -1451,6 +1624,19 @@ def create_app(
             )
         except (ValueError, OSError, FileNotFoundError, KeyError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        try:
+            if gear_pieces and resolved_gear is not None:
+                bust = inventory_revision(resolved_gear, "gear.json")
+                raw_icons = ensure_all_icons(gear_pieces, resolved_gear)
+                attach_mystic_gear_icon_urls(
+                    payload,
+                    {
+                        pid: with_cache_bust(url, bust)
+                        for pid, url in raw_icons.items()
+                    },
+                )
+        except Exception:  # noqa: BLE001
+            pass
         payload["heroes_dir"] = str(heroes_path)
         payload["governor_dir"] = str(resolved_governor)
         return payload
@@ -1459,7 +1645,10 @@ def create_app(
     def api_optimize_molten() -> dict[str, Any]:
         """Single-march Molten Fort proxy — governor-primary scoring."""
         heroes_path, hero_store_local = _require_heroes()
-        from ks.heroes.ui.optimize_run import run_molten_optimize
+        from ks.heroes.ui.optimize_run import (
+            attach_mystic_gear_icon_urls,
+            run_molten_optimize,
+        )
 
         hero_store_local.reload()
         heroes = hero_store_local.all_heroes()
@@ -1476,6 +1665,19 @@ def create_app(
             )
         except (ValueError, OSError, FileNotFoundError, KeyError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        try:
+            if gear_pieces and resolved_gear is not None:
+                bust = inventory_revision(resolved_gear, "gear.json")
+                raw_icons = ensure_all_icons(gear_pieces, resolved_gear)
+                attach_mystic_gear_icon_urls(
+                    payload,
+                    {
+                        pid: with_cache_bust(url, bust)
+                        for pid, url in raw_icons.items()
+                    },
+                )
+        except Exception:  # noqa: BLE001
+            pass
         payload["heroes_dir"] = str(heroes_path)
         payload["governor_dir"] = str(resolved_governor)
         return payload

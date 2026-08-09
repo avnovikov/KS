@@ -13,6 +13,7 @@
   var boardEl = document.getElementById("board");
   var bannerEl = document.getElementById("proxy-banner");
   var regenBtn = document.getElementById("coliseum-regen");
+  var gearSheet = B.bindGearSheet();
 
   function showError(msg) {
     errorEl.hidden = false;
@@ -74,6 +75,10 @@
           "proxy " + Number(march.score || 0).toFixed(0)
         ),
         heroes: march.hero_names || [],
+        onHeroClick: function (name) {
+          var assignment = march.gear_assignment || {};
+          gearSheet.open(name, "Coliseum · March", assignment[name]);
+        },
       });
     }
 
