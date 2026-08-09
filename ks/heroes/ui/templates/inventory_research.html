@@ -1,0 +1,91 @@
+{% extends "_layout.html" %}
+{% block title %}Research · KS{% endblock %}
+
+{% block content %}
+<section class="panel">
+  <h1 class="page-title">Academy research</h1>
+  <p class="hint">
+    Manual percent-points from Academy <strong>Battle</strong> (+ War Academy).
+    Same units as battle-report troop bonuses (e.g. <code>22.5</code> = +22.5%).
+    Radiant adds these on top of heroes + governor.
+  </p>
+  <p class="page-meta">{{ research_dir }}</p>
+  <label class="field-label" for="research-note">Note</label>
+  <input id="research-note" class="field-input" type="text" value="{{ summary.note }}" />
+  <div class="table-scroll" style="margin-top:1rem">
+    <table class="contrib-table" id="research-table">
+      <thead>
+        <tr>
+          <th>Troop</th>
+          <th>Attack %</th>
+          <th>Defense %</th>
+          <th>Lethality %</th>
+          <th>Health %</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for troop, row in summary.bonuses.troops.items() %}
+        <tr data-troop="{{ troop }}">
+          <td>{{ troop }}</td>
+          <td><input data-stat="attack_pct" type="number" step="0.01" min="0" value="{{ '%.2f'|format(row.attack_pct) }}" /></td>
+          <td><input data-stat="defense_pct" type="number" step="0.01" min="0" value="{{ '%.2f'|format(row.defense_pct) }}" /></td>
+          <td><input data-stat="lethality_pct" type="number" step="0.01" min="0" value="{{ '%.2f'|format(row.lethality_pct) }}" /></td>
+          <td><input data-stat="health_pct" type="number" step="0.01" min="0" value="{{ '%.2f'|format(row.health_pct) }}" /></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="hint" style="margin-top:0.75rem">
+    Tip: sum nodes in Academy Battle for each troop, or leave zeros and paste full formation totals elsewhere when available.
+  </p>
+  <button type="button" class="btn" id="research-save">Save</button>
+  <span id="research-status" class="muted" aria-live="polite"></span>
+</section>
+<style>
+  .field-label { display:block; margin-top:0.75rem; font-size:0.85rem; }
+  .field-input { width:min(40rem, 100%); padding:0.4rem 0.6rem; }
+  #research-table input { width:6rem; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var saveBtn = document.getElementById("research-save");
+  var statusEl = document.getElementById("research-status");
+  var noteEl = document.getElementById("research-note");
+  if (!saveBtn) return;
+  saveBtn.addEventListener("click", async function () {
+    saveBtn.disabled = true;
+    statusEl.textContent = "Saving…";
+    var troops = {};
+    document.querySelectorAll("#research-table tr[data-troop]").forEach(function (tr) {
+      var troop = tr.dataset.troop;
+      troops[troop] = {};
+      tr.querySelectorAll("input[data-stat]").forEach(function (inp) {
+        troops[troop][inp.dataset.stat] = Number(inp.value) || 0;
+      });
+    });
+    try {
+      var res = await fetch("/api/research", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note: noteEl ? noteEl.value : "", troops: troops }),
+      });
+      var body = await res.json().catch(function () { return {}; });
+      if (!res.ok) {
+        statusEl.textContent = body.detail || ("Save failed: " + res.status);
+        saveBtn.disabled = false;
+        return;
+      }
+      statusEl.textContent = "Saved.";
+      saveBtn.disabled = false;
+    } catch (err) {
+      statusEl.textContent = String(err);
+      saveBtn.disabled = false;
+    }
+  });
+})();
+</script>
+{% endblock %}

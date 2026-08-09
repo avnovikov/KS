@@ -81,6 +81,7 @@ def startup_paths(*, gear: bool, heroes: bool) -> list[tuple[str, str]]:
     # read it either way.
     rows.append(("Inventory · Troops", "/inventory/troops"))
     rows.append(("Inventory · Governor", "/inventory/governor-gear"))
+    rows.append(("Inventory · Research", "/inventory/research"))
     if heroes:
         rows.append(("Optimiser · Event lineups", "/optimiser/events"))
         rows.append(("Optimiser · Gear XP", "/optimiser/gear-xp"))
@@ -499,6 +500,7 @@ def create_app(
     heroes_dir: Path | None = None,
     troops_path: Path | None = None,
     governor_dir: Path | None = None,
+    research_dir: Path | None = None,
     gear_config: Path | None = None,
     heroes_config: Path | None = None,
     serial: str | None = None,
@@ -536,6 +538,7 @@ def create_app(
     )
     troop_store.ensure_exists()
     from ks.heroes.governor_store import GovernorGearStore
+    from ks.heroes.research_store import ResearchStore
 
     if governor_dir is not None:
         resolved_governor = governor_dir.expanduser().resolve()
@@ -546,6 +549,16 @@ def create_app(
     else:
         resolved_governor = (REPO_ROOT / "data" / "governor" / "full-run").resolve()
     governor_store = GovernorGearStore(resolved_governor)
+
+    if research_dir is not None:
+        resolved_research = research_dir.expanduser().resolve()
+    elif resolved_heroes is not None and resolved_heroes.parent.name == "heroes":
+        resolved_research = (
+            resolved_heroes.parent.parent / "research" / "full-run"
+        ).resolve()
+    else:
+        resolved_research = (REPO_ROOT / "data" / "research" / "full-run").resolve()
+    research_store = ResearchStore(resolved_research)
     gear_config_path = (gear_config or DEFAULT_GEAR_CONFIG).expanduser().resolve()
     heroes_config_path = (
         (heroes_config or DEFAULT_HEROES_CONFIG).expanduser().resolve()
@@ -559,9 +572,11 @@ def create_app(
     app.state.gear_dir = resolved_gear
     app.state.heroes_dir = resolved_heroes
     app.state.governor_dir = resolved_governor
+    app.state.research_dir = resolved_research
     app.state.store = gear_store
     app.state.hero_store = hero_store
     app.state.governor_store = governor_store
+    app.state.research_store = research_store
     app.state.gear_config = gear_config_path
     app.state.heroes_config = heroes_config_path
     app.state.serial = serial
@@ -766,9 +781,33 @@ def create_app(
             governor_dir=str(resolved_governor),
         )
 
+    @app.get("/inventory/research", response_class=HTMLResponse)
+    def inventory_research_page(request: Request) -> HTMLResponse:
+        summary = research_store.summary()
+        return _shell_page(
+            request,
+            "inventory_research.html",
+            primary="inventory",
+            subtab="research",
+            summary=summary,
+            research_dir=str(resolved_research),
+        )
+
     @app.get("/api/governor-gear")
     def api_governor_gear() -> dict[str, Any]:
         return governor_store.summary()
+
+    @app.get("/api/research")
+    def api_research_get() -> dict[str, Any]:
+        return research_store.summary()
+
+    @app.put("/api/research")
+    def api_research_put(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        try:
+            research_store.update_from_dict(body)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return research_store.summary()
 
     @app.post("/api/governor-gear/{slot_id}/upgrade")
     def api_governor_upgrade(slot_id: str) -> dict[str, Any]:
@@ -1310,6 +1349,7 @@ def create_app(
             payload = run_radiant_optimize(
                 heroes,
                 governor_bonuses=governor_store.bonuses(),
+                research_bonuses=research_store.bonuses(),
                 gear=gear_pieces,
                 troops_path=app.state.troops_path,
                 active_marches=2,
@@ -1319,6 +1359,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         payload["heroes_dir"] = str(heroes_path)
         payload["governor_dir"] = str(resolved_governor)
+        payload["research_dir"] = str(resolved_research)
         return payload
 
     @app.get("/api/optimize/coliseum")
@@ -1480,6 +1521,7 @@ def run_ui(
     heroes_dir: Path | None = None,
     troops_path: Path | None = None,
     governor_dir: Path | None = None,
+    research_dir: Path | None = None,
     host: str = "127.0.0.1",
     port: int = 8765,
     gear_config: Path | None = None,
@@ -1499,6 +1541,7 @@ def run_ui(
         heroes_dir=heroes_dir,
         troops_path=troops_path,
         governor_dir=governor_dir,
+        research_dir=research_dir,
         gear_config=gear_config,
         heroes_config=heroes_config,
         serial=serial,
@@ -1513,4 +1556,5 @@ def run_ui(
         print(f"Gear: {Path(gear_dir).expanduser().resolve()}")
     print(f"Troops: {app.state.troops_path}")
     print(f"Governor: {app.state.governor_dir}")
+    print(f"Research: {app.state.research_dir}")
     uvicorn.run(app, host=host, port=port, log_level="info")
