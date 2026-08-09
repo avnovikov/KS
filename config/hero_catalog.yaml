@@ -63,15 +63,27 @@ heroes:
     rally_widget_priority: 4
     garrison_widget_priority: 2
     effects:
+    - kind: damage_taken_down
+      max_value: 50.0
+      applies_to: expedition
+      effect_op: 111
+      first_expedition: true
+    - kind: attack_up
+      max_value: 25.0
+      applies_to: expedition
+      effect_op: 102
+      first_expedition: false
+    - kind: lethality_up
+      max_value: 25.0
+      applies_to: expedition
+      effect_op: 101
+      first_expedition: false
     - kind: rally_lethality
       max_value: 15.0
       applies_to: widget
-    - kind: damage_taken_down
-      max_value: 40.0
-      applies_to: expedition
     - kind: damage_up
       max_value: 30.0
-      applies_to: expedition
+      applies_to: conquest
     arena_role: front_fighter
     arena_value: 90
     arena_tags:
@@ -107,12 +119,12 @@ heroes:
       effect_kind: lethality_up
     - slot: 6
       name: Valiant Fury
-      family: expedition
+      family: conquest
       effect_kind: damage_up
     - slot: 7
       name: Zeal
-      family: expedition
-      effect_kind: lethality_up
+      family: widget
+      effect_kind: rally_lethality
   Petra:
     widget_type: attack
     widget_name: Fate's Writ
