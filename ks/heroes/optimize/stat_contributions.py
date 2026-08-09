@@ -89,19 +89,16 @@ _TROOP_PREFIX: dict[str, str] = {
 }
 
 # Conquest: a percent kind lifts these flat labels.
+# Coeff / rate / heal kinds are scored by conquest_combat sim-lite — do not
+# fold Damage Up / AoE / AS / Crit / Heal into Hero Attack or Health flats.
 _CONQUEST_KIND_LABELS: dict[str, tuple[str, ...]] = {
     "attack_up": ("Hero Attack", "Escort Attack"),
-    "damage_up": ("Hero Attack", "Escort Attack"),
-    "aoe_damage_up": ("Hero Attack", "Escort Attack"),
-    "crit_rate_up": ("Hero Attack",),
-    "attack_speed_up": ("Hero Attack",),
     "defender_attack": ("Hero Attack", "Escort Attack"),
     "defense_up": ("Hero Defense", "Escort Defense"),
     "damage_taken_down": ("Hero Defense", "Escort Defense"),
     "opp_damage_down": ("Hero Defense", "Escort Defense"),
     "defender_defense": ("Hero Defense", "Escort Defense"),
     "health_up": ("Hero Health", "Escort Health"),
-    "heal_up": ("Hero Health", "Escort Health"),
     "defender_health": ("Hero Health", "Escort Health"),
 }
 

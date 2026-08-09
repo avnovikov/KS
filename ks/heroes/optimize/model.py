@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ks.heroes.gear_models import GearRecord
+from ks.heroes.governor_bonuses import governor_attack_mult
+from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.bear_damage import (
     BeartrapBuffs,
@@ -275,28 +277,36 @@ def _troop_combat_weights(
     troops: TroopsConfig,
     troop_stats: TroopStatsTable | None,
     truegold: int,
+    governor: GovernorTroopBonuses | None = None,
 ) -> tuple[float, float, float]:
     weights = scenario.formation_weights or {"infantry": 1.0, "cavalry": 1.0, "archers": 1.0}
     if troop_stats is None:
-        return (
+        base = (
             float(weights.get("infantry", 1.0)),
             float(weights.get("cavalry", 1.0)),
             float(weights.get("archers", 1.0)),
         )
-    combat_w = inventory_combat_weights(
-        {
-            "infantry": troops.levels("infantry"),
-            "cavalry": troops.levels("cavalry"),
-            "archers": troops.levels("archers"),
-        },
-        troop_stats,
-        truegold=truegold,
-        mode=scenario.mode,
-    )
+    else:
+        combat_w = inventory_combat_weights(
+            {
+                "infantry": troops.levels("infantry"),
+                "cavalry": troops.levels("cavalry"),
+                "archers": troops.levels("archers"),
+            },
+            troop_stats,
+            truegold=truegold,
+            mode=scenario.mode,
+        )
+        base = (
+            float(weights.get("infantry", 1.0)) * float(combat_w["infantry"]),
+            float(weights.get("cavalry", 1.0)) * float(combat_w["cavalry"]),
+            float(weights.get("archers", 1.0)) * float(combat_w["archers"]),
+        )
+    # Governor Atk% already includes set Attack when present — do not add set again.
     return (
-        float(weights.get("infantry", 1.0)) * float(combat_w["infantry"]),
-        float(weights.get("cavalry", 1.0)) * float(combat_w["cavalry"]),
-        float(weights.get("archers", 1.0)) * float(combat_w["archers"]),
+        base[0] * governor_attack_mult(governor, "infantry"),
+        base[1] * governor_attack_mult(governor, "cavalry"),
+        base[2] * governor_attack_mult(governor, "archers"),
     )
 
 
@@ -447,6 +457,7 @@ def _extract_bear_damage_solution(
     troop_stats: TroopStatsTable,
     truegold: int,
     beartrap_buffs: BeartrapBuffs | None,
+    governor: GovernorTroopBonuses | None = None,
 ) -> ModeSolution:
     x = variables.hero_selected
     chosen = tuple(sorted(n for n in x if pulp.value(x[n]) and pulp.value(x[n]) > 0.5))
@@ -463,6 +474,7 @@ def _extract_bear_damage_solution(
         skillmod=skillmod,
         trap_attack_bonus=buffs.trap_attack_bonus,
         host_attack_pct=buffs.host_attack_pct,
+        governor=governor,
     )
     breakdown = dmg.breakdown()
     breakdown["hero_strength"] = float(lineup_strength)
@@ -489,6 +501,7 @@ def solve_mode(
     one_per_troop_type: bool = True,
     gear_by_troop: dict[str, dict[str, GearRecord]] | None = None,
     beartrap_buffs: BeartrapBuffs | None = None,
+    governor: GovernorTroopBonuses | None = None,
 ) -> ModeSolution:
     usable = _select_usable_heroes(heroes, catalog)
     if len(usable) < 3:
@@ -513,7 +526,9 @@ def solve_mode(
     if bear_mode:
         _build_bear_hero_objective(variables, features.strengths)
     else:
-        troop_weights = _troop_combat_weights(scenario, troops, troop_stats, truegold)
+        troop_weights = _troop_combat_weights(
+            scenario, troops, troop_stats, truegold, governor=governor
+        )
         terms = _build_objective(
             variables,
             features,
@@ -538,6 +553,7 @@ def solve_mode(
             troop_stats=troop_stats,
             truegold=truegold,
             beartrap_buffs=beartrap_buffs,
+            governor=governor,
         )
 
     return _extract_optimal_solution(variables, features, troops, terms, scenario)

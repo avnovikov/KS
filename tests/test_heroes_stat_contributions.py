@@ -196,12 +196,12 @@ def test_expedition_gear_falls_back_to_formula_when_ocr_missing() -> None:
 
 
 def test_shares_are_never_negative() -> None:
-    # "Damage Up" maps to kind damage_up, which defaults to the conquest
-    # family — so the extreme 900% actually reaches the conquest split.
+    # Attack Up maps into Hero Attack flats; extreme percent must clamp so
+    # skills share stays below the naked flat (multiplicative split).
     hero = _hero(
         stats=HeroStats(conquest={"Hero Attack": 10}),
         skills=(
-            SkillRecord(slot=0, upgrade_preview="Damage Up: 900%", current_bonus=900.0),
+            SkillRecord(slot=0, upgrade_preview="Attack Up: 900%", current_bonus=900.0),
         ),
     )
     c = hero_contribution(hero, None, family=CONQUEST)

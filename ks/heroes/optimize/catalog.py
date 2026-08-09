@@ -47,12 +47,25 @@ def _parse_skills(skills_raw: list[Any], *, hero_name: str) -> list[CatalogSkill
                 f"skill {name!r} for {hero_name!r} has invalid family {family!r}"
             )
         effect_kind = item.get("effect_kind")
+        ladder_raw = item.get("ladder")
+        ladder: tuple[float, ...] | None = None
+        if ladder_raw is not None:
+            if not isinstance(ladder_raw, (list, tuple)) or not ladder_raw:
+                raise ValueError(
+                    f"skill {name!r} for {hero_name!r} ladder must be a non-empty list"
+                )
+            ladder = tuple(float(v) for v in ladder_raw)
+        hits = item.get("hits_per_cast")
+        cast_rate = item.get("cast_rate")
         skills.append(
             CatalogSkill(
                 slot=int(item["slot"]),
                 name=name,
                 family=family,
                 effect_kind=str(effect_kind) if effect_kind is not None else None,
+                ladder=ladder,
+                hits_per_cast=int(hits) if hits is not None else None,
+                cast_rate=float(cast_rate) if cast_rate is not None else None,
             )
         )
     skills.sort(key=lambda s: s.slot)

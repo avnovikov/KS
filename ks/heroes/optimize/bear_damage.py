@@ -9,6 +9,8 @@ from typing import Mapping
 
 import yaml
 
+from ks.heroes.governor_bonuses import governor_attack_mult
+from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.optimize.troop_stats import TroopStatsTable, TroopUnitStats
 
 BEAR_COUNT = 5000
@@ -98,6 +100,8 @@ def attack_per_troop(
     trap_attack_bonus: float,
     skillmod: float,
     host_attack_pct: float = 0.0,
+    governor: GovernorTroopBonuses | None = None,
+    troop_type: str = "infantry",
 ) -> float:
     assert skillmod > 0, f"skillmod must be positive; got {skillmod}"
     assert trap_attack_bonus >= 0, f"trap_attack_bonus must be >= 0; got {trap_attack_bonus}"
@@ -107,6 +111,7 @@ def attack_per_troop(
         * (float(unit.lethality) / 100.0)
         * float(skillmod)
         * (1.0 + float(host_attack_pct))
+        * governor_attack_mult(governor, troop_type)
     )
 
 
@@ -117,6 +122,7 @@ def simulate(
     skillmod: float = 1.0,
     trap_attack_bonus: float = 0.25,
     host_attack_pct: float = 0.0,
+    governor: GovernorTroopBonuses | None = None,
 ) -> BearDamageResult:
     """
     Simulate constant 10-round bear damage.
@@ -128,7 +134,7 @@ def simulate(
     full attack_per_troop with skillmod=1 and trap applied.
 
     Preferred path: pass base attack from stats; this function applies trap, lethality 10,
-    skillmod, and host attack %.
+    skillmod, host attack %, and optional governor troop Attack%.
     """
     if skillmod <= 0:
         raise ValueError(f"skillmod must be positive; got {skillmod}")
@@ -150,6 +156,7 @@ def simulate(
             * (10.0 / 100.0)
             * skillmod
             * (1.0 + host_attack_pct)
+            * governor_attack_mult(governor, typ)
         )
         army = math.sqrt(n * BEAR_COUNT) if n > 0 else 0.0
         dmg = (army * atk / BEAR_DEFENSE / 100.0) if n > 0 else 0.0
@@ -180,6 +187,7 @@ def simulate_from_units(
     skillmod: float = 1.0,
     trap_attack_bonus: float = 0.25,
     host_attack_pct: float = 0.0,
+    governor: GovernorTroopBonuses | None = None,
 ) -> BearDamageResult:
     """Simulate using full TroopUnitStats (attack + lethality from table)."""
     if skillmod <= 0:
@@ -200,6 +208,8 @@ def simulate_from_units(
             trap_attack_bonus=trap_attack_bonus,
             skillmod=skillmod,
             host_attack_pct=host_attack_pct,
+            governor=governor,
+            troop_type=typ,
         )
         army = math.sqrt(n * BEAR_COUNT)
         dmg = army * atk / BEAR_DEFENSE / 100.0
@@ -264,6 +274,7 @@ def greedy_fill_march(
     skillmod: float = 1.0,
     trap_attack_bonus: float = 0.25,
     host_attack_pct: float = 0.0,
+    governor: GovernorTroopBonuses | None = None,
 ) -> tuple[dict[str, int], dict[str, dict[int, int]], BearDamageResult]:
     """
     Fill capacity by repeatedly adding one troop of the type/tier that most
@@ -323,6 +334,7 @@ def greedy_fill_march(
             skillmod=skillmod,
             trap_attack_bonus=trap_attack_bonus,
             host_attack_pct=host_attack_pct,
+            governor=governor,
         ).score
 
         for typ in ("infantry", "cavalry", "archers"):
@@ -352,6 +364,7 @@ def greedy_fill_march(
                 skillmod=skillmod,
                 trap_attack_bonus=trap_attack_bonus,
                 host_attack_pct=host_attack_pct,
+                governor=governor,
             ).score
             delta_per = (float(trial_score - base_score) / add_n) + (
                 _offense_rank(unit, typ) * 1e-12
@@ -376,6 +389,7 @@ def greedy_fill_march(
         skillmod=skillmod,
         trap_attack_bonus=trap_attack_bonus,
         host_attack_pct=host_attack_pct,
+        governor=governor,
     )
     return counts, filled_levels, result
 

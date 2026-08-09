@@ -26,7 +26,13 @@ from ks.heroes.optimize.stat_contributions import (
     formation_contribution,
     hero_contribution,
 )
+from ks.heroes.optimize.conquest_combat import conquest_hero_score
 from ks.heroes.optimize.types import CatalogEntry
+from ks.heroes.governor_models import GovernorTroopBonuses
+
+# Keep sim-lite scores in the same order of magnitude as contribution_strength.
+_SIM_LITE_SCORE_SCALE = 1_000_000.0
+_POWER_SCALE = 1_000_000.0
 
 try:
     import pulp
@@ -117,13 +123,15 @@ def hero_base_score(
     effective_power: int | None,
     contribution: StatContribution | None,
     side: str,
+    governor: GovernorTroopBonuses | None = None,
 ) -> float:
     """Compute a hero's base ILP score before placement multipliers.
 
-    Strength comes from ``contribution`` — power plus the hero's conquest stat
-    totals, gear included — replacing the old ``power/1e6`` term and the
-    0.15-scaled flat gear bonus. ``effective_power`` remains only as the
-    fallback for callers with no contribution to hand.
+    Strength comes from ``contribution`` power plus Conquest **sim-lite**
+    skill DPS×toughness when the hero has leveled Conquest coeff skills.
+    Falls back to flat contribution_strength (power + Attack/Def/Health)
+    when sim-lite has no skill DPS yet. ``effective_power`` remains only as
+    the fallback for callers with no contribution to hand.
     """
     meta = _meta_for(hero.name, roles)
     if entry is not None and entry.arena_value is not None:
@@ -137,7 +145,14 @@ def hero_base_score(
                 "hero_base_score needs a conquest contribution; got "
                 f"{contribution.family!r}"
             )
-        strength_term = 40.0 * contribution_strength(contribution)
+        breakdown = conquest_hero_score(hero, entry, governor=governor)
+        if not breakdown.incomplete and breakdown.skill_dps > 0.0:
+            strength_term = 40.0 * (
+                contribution.power.total / _POWER_SCALE
+                + breakdown.score / _SIM_LITE_SCORE_SCALE
+            )
+        else:
+            strength_term = 40.0 * contribution_strength(contribution)
     else:
         power = effective_power if effective_power is not None else hero.power
         strength_term = 40.0 * (float(power) / 1_000_000.0) if power else 0.0
@@ -342,6 +357,7 @@ def solve_combat_formation(
     placement_mult_fn: Callable[..., float] | None = None,
     with_explanations: bool = True,
     explain_fn: Callable[..., dict[str, dict[str, Any]]] | None = None,
+    governor: GovernorTroopBonuses | None = None,
 ) -> CombatFormationResult:
     """Solve the 5-hero 2F+3B placement ILP for any combat mode.
 
@@ -382,6 +398,7 @@ def solve_combat_formation(
             effective_power=effective_power,
             contribution=contribution,
             side=effective_side,
+            governor=governor,
         )
     )
     _placement_mult_fn = placement_mult_fn or (
