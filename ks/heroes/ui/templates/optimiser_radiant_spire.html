@@ -1,5 +1,5 @@
 {% extends "_layout.html" %}
-{% block title %}Radiant Spire · Optimiser · KS{% endblock %}
+{% block title %}Radiant Spire · Mystic Trial · Optimiser · KS{% endblock %}
 
 {% block actions %}
 <label class="hint" for="radiant-floor" style="margin-right:0.5rem;">Floor</label>
@@ -14,8 +14,9 @@
 {% endblock %}
 
 {% block content %}
+{% include "_mystic_trial_rooms.html" %}
 <h1 class="page-title">Radiant Spire</h1>
-<p class="page-meta">{{ heroes_dir }} · governor {{ governor_dir }}</p>
+<p class="page-meta">Event lineups · Mystic Trial · {{ heroes_dir }} · governor {{ governor_dir }}</p>
 <p class="banner-warn" id="proxy-banner" role="status">
   Proxy score — not in-game clear prediction.
 </p>

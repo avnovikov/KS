@@ -1,5 +1,5 @@
 {% extends "_layout.html" %}
-{% block title %}Coliseum · Optimiser · KS{% endblock %}
+{% block title %}Coliseum · Mystic Trial · Optimiser · KS{% endblock %}
 
 {% block actions %}
 <button type="button" id="coliseum-regen"
@@ -7,8 +7,9 @@
 {% endblock %}
 
 {% block content %}
+{% include "_mystic_trial_rooms.html" %}
 <h1 class="page-title">Coliseum</h1>
-<p class="page-meta">{{ heroes_dir }} · governor {{ governor_dir }}</p>
+<p class="page-meta">Event lineups · Mystic Trial · {{ heroes_dir }} · governor {{ governor_dir }}</p>
 <p class="banner-warn" id="proxy-banner" role="status">
   Proxy score — not in-game clear prediction. Heroes + gear primary; governor weight 0.
 </p>

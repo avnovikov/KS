@@ -89,10 +89,16 @@ def _client(tmp_path: Path) -> TestClient:
 
 def test_radiant_page_and_api(tmp_path: Path) -> None:
     client = _client(tmp_path)
-    page = client.get("/optimiser/radiant-spire")
+    page = client.get("/optimiser/events/mystic-trial/radiant-spire")
     assert page.status_code == 200
     assert "Radiant Spire" in page.text
+    assert "Mystic Trial" in page.text
     assert "optimiser_radiant_spire.js" in page.text
+    assert 'aria-label="Mystic Trial room"' in page.text
+
+    legacy = client.get("/optimiser/radiant-spire", follow_redirects=False)
+    assert legacy.status_code == 302
+    assert legacy.headers["location"] == "/optimiser/events/mystic-trial/radiant-spire"
 
     api = client.get("/api/optimize/radiant-spire")
     assert api.status_code == 200, api.text

@@ -38,7 +38,7 @@ SHELL_PAGES = (
     "/inventory/governor-gear",
     "/optimiser/events",
     "/optimiser/gear-xp",
-    "/optimiser/radiant-spire",
+    "/optimiser/events/mystic-trial/radiant-spire",
     "/optimiser/hero-levels",
 )
 
@@ -1311,6 +1311,8 @@ def test_events_page_renders_the_four_event_segments(tmp_path: Path) -> None:
         "arena",
         "conquest",
     ]
+    assert 'href="/optimiser/events/mystic-trial/radiant-spire"' in body
+    assert ">Mystic Trial</a>" in body
 
 
 def test_events_page_ships_no_inline_script_or_style(tmp_path: Path) -> None:

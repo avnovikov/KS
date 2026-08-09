@@ -84,9 +84,12 @@ def startup_paths(*, gear: bool, heroes: bool) -> list[tuple[str, str]]:
     if heroes:
         rows.append(("Optimiser · Event lineups", "/optimiser/events"))
         rows.append(("Optimiser · Gear XP", "/optimiser/gear-xp"))
-        rows.append(("Optimiser · Radiant Spire", "/optimiser/radiant-spire"))
-        rows.append(("Optimiser · Coliseum", "/optimiser/coliseum"))
-        rows.append(("Optimiser · Molten Fort", "/optimiser/molten-fort"))
+        rows.append(
+            (
+                "Optimiser · Mystic Trial",
+                "/optimiser/events/mystic-trial/radiant-spire",
+            )
+        )
     return rows
 
 
@@ -813,40 +816,80 @@ def create_app(
             heroes_dir=str(heroes_path),
         )
 
-    @app.get("/optimiser/radiant-spire", response_class=HTMLResponse)
+    @app.get("/optimiser/events/mystic-trial", response_class=HTMLResponse)
+    def optimiser_mystic_trial_hub() -> RedirectResponse:
+        return RedirectResponse(
+            url="/optimiser/events/mystic-trial/radiant-spire",
+            status_code=302,
+        )
+
+    @app.get(
+        "/optimiser/events/mystic-trial/radiant-spire",
+        response_class=HTMLResponse,
+    )
     def optimiser_radiant_page(request: Request) -> HTMLResponse:
         heroes_path, _ = _require_heroes()
         return _shell_page(
             request,
             "optimiser_radiant_spire.html",
             primary="optimiser",
-            subtab="radiant",
+            subtab="events",
+            mystic_room="radiant",
             heroes_dir=str(heroes_path),
             governor_dir=str(resolved_governor),
         )
 
-    @app.get("/optimiser/coliseum", response_class=HTMLResponse)
+    @app.get(
+        "/optimiser/events/mystic-trial/coliseum",
+        response_class=HTMLResponse,
+    )
     def optimiser_coliseum_page(request: Request) -> HTMLResponse:
         heroes_path, _ = _require_heroes()
         return _shell_page(
             request,
             "optimiser_coliseum.html",
             primary="optimiser",
-            subtab="coliseum",
+            subtab="events",
+            mystic_room="coliseum",
             heroes_dir=str(heroes_path),
             governor_dir=str(resolved_governor),
         )
 
-    @app.get("/optimiser/molten-fort", response_class=HTMLResponse)
+    @app.get(
+        "/optimiser/events/mystic-trial/molten-fort",
+        response_class=HTMLResponse,
+    )
     def optimiser_molten_page(request: Request) -> HTMLResponse:
         heroes_path, _ = _require_heroes()
         return _shell_page(
             request,
             "optimiser_molten_fort.html",
             primary="optimiser",
-            subtab="molten",
+            subtab="events",
+            mystic_room="molten",
             heroes_dir=str(heroes_path),
             governor_dir=str(resolved_governor),
+        )
+
+    @app.get("/optimiser/radiant-spire", response_class=HTMLResponse)
+    def optimiser_radiant_legacy() -> RedirectResponse:
+        return RedirectResponse(
+            url="/optimiser/events/mystic-trial/radiant-spire",
+            status_code=302,
+        )
+
+    @app.get("/optimiser/coliseum", response_class=HTMLResponse)
+    def optimiser_coliseum_legacy() -> RedirectResponse:
+        return RedirectResponse(
+            url="/optimiser/events/mystic-trial/coliseum",
+            status_code=302,
+        )
+
+    @app.get("/optimiser/molten-fort", response_class=HTMLResponse)
+    def optimiser_molten_legacy() -> RedirectResponse:
+        return RedirectResponse(
+            url="/optimiser/events/mystic-trial/molten-fort",
+            status_code=302,
         )
 
     @app.get("/optimiser/gear-xp", response_class=HTMLResponse)
