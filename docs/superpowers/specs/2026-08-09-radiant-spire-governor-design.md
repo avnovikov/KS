@@ -163,13 +163,25 @@ lineup_score = march_score_1 + march_score_2   # equal weight; configurable
 
 ---
 
-## Part C — v1.1 (same spec track; not in first implementation PR)
+## Stories (backlog)
 
-1. **`config/mystic_trial/radiant_spire_floors.yaml`**  
+Tracked as GitHub issues so proxy-first v1 does not lose the deferred combat work:
+
+| # | Story | Spec part |
+|---|---|---|
+| [#39](https://github.com/avnovikov/KS/issues/39) | Manual governor gear inventory (6 slots + upgrade) | A — **v1 slice** |
+| [#40](https://github.com/avnovikov/KS/issues/40) | Radiant Spire dual-march proxy optimiser | B — **v1 slice** |
+| [#37](https://github.com/avnovikov/KS/issues/37) | Radiant Spire enemy floor stub database | C — **v1.1** |
+| [#38](https://github.com/avnovikov/KS/issues/38) | Radiant Spire Monte Carlo / multi-round combat engine | C — **v1.1** (depends on #37) |
+
+## Part C — v1.1 (stories #37 / #38; not in first implementation PR)
+
+1. **Enemy floor stubs** ([#37](https://github.com/avnovikov/KS/issues/37))  
+   - `config/mystic_trial/radiant_spire_floors.yaml`  
    - Floor id, enemy ratio (default 33/33/33; floor 10 = 53/27/20), `enemy_power_scale` or full unit stats.  
    - Editable; seeded from community notes; grow via user reports / OCR later.
 
-2. **Combat engine swap**  
+2. **Combat engine swap** ([#38](https://github.com/avnovikov/KS/issues/38))  
    - Multi-round or Monte Carlo using our stats vs floor stub.  
    - Optimiser objective → estimated win rate / remaining HP instead of proxy.  
    - Keep proxy as fallback when floor data missing.
