@@ -1,12 +1,11 @@
 """Radiant Spire dual-march proxy optimiser (foundational score).
 
 Proxy is tunable, not game-authoritative — see design spec.
-Monte Carlo / floor stubs are deferred (GitHub #37 / #38).
+Floor stubs / MC: mystic_trial floors + combat_mc (GitHub #37 / #38).
 """
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -15,6 +14,17 @@ from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.bear_damage import blend_unit_stats
 from ks.heroes.optimize.gear_assign import assign_exclusive_sets
+from ks.heroes.optimize.mystic_trial.proxy import (
+    PROXY_BANNER,
+    MarchScore,
+    score_march,
+)
+from ks.heroes.optimize.mystic_trial.ratios import (
+    TROOP_TYPES,
+    counts_for_ratio,
+    normalize_ratio,
+    ratio_candidates,
+)
 from ks.heroes.optimize.scoring import normalize_troop
 from ks.heroes.optimize.stat_contributions import (
     EXPEDITION,
@@ -23,8 +33,7 @@ from ks.heroes.optimize.stat_contributions import (
 from ks.heroes.optimize.troop_stats import TroopStatsTable, TroopUnitStats
 from ks.heroes.optimize.types import CatalogEntry, TroopsConfig
 
-TROOP_TYPES: tuple[str, ...] = ("infantry", "cavalry", "archers")
-PROXY_BANNER = "Proxy score — not in-game clear prediction."
+# Radiant seed kept for callers / tests that import SEED_RATIO.
 SEED_RATIO: dict[str, float] = {
     "infantry": 0.50,
     "cavalry": 0.15,
@@ -39,21 +48,8 @@ PUBLISHED_RATIOS: tuple[dict[str, float], ...] = (
     {"infantry": 1 / 3, "cavalry": 1 / 3, "archers": 1 / 3},
 )
 
-
-@dataclass(frozen=True)
-class MarchScore:
-    score: float
-    offense_sum: float
-    tough_sum: float
-    by_type: dict[str, dict[str, float]]
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "score": self.score,
-            "offense_sum": self.offense_sum,
-            "tough_sum": self.tough_sum,
-            "by_type": {k: dict(v) for k, v in self.by_type.items()},
-        }
+# Back-compat alias used by older imports.
+_normalize_ratio = normalize_ratio
 
 
 @dataclass(frozen=True)
@@ -97,117 +93,6 @@ class RadiantResult:
             "active_marches": self.active_marches,
             "schema_marches": self.schema_marches,
         }
-
-
-def _normalize_ratio(raw: Mapping[str, float]) -> dict[str, float]:
-    vals = {t: max(0.0, float(raw.get(t, 0.0))) for t in TROOP_TYPES}
-    total = sum(vals.values())
-    if total <= 0:
-        raise ValueError(f"ratio must have positive mass; got {dict(raw)}")
-    return {t: vals[t] / total for t in TROOP_TYPES}
-
-
-def ratio_candidates(*, step: float = 0.05) -> list[dict[str, float]]:
-    """Seed + published alternates + ±step grid on two axes (third residual)."""
-    seen: set[tuple[float, float, float]] = set()
-    out: list[dict[str, float]] = []
-
-    def add(raw: Mapping[str, float]) -> None:
-        r = _normalize_ratio(raw)
-        key = (round(r["infantry"], 6), round(r["cavalry"], 6), round(r["archers"], 6))
-        if key in seen:
-            return
-        seen.add(key)
-        out.append(r)
-
-    for pub in PUBLISHED_RATIOS:
-        add(pub)
-
-    # Grid: infantry and cavalry in [0, 1] by step; archers = residual.
-    n = int(round(1.0 / step))
-    for i in range(n + 1):
-        for c in range(n + 1 - i):
-            inf = i * step
-            cav = c * step
-            arch = 1.0 - inf - cav
-            if arch < -1e-9:
-                continue
-            add({"infantry": inf, "cavalry": cav, "archers": max(0.0, arch)})
-    return out
-
-
-def counts_for_ratio(
-    ratio: Mapping[str, float],
-    capacity: int,
-    owned: Mapping[str, int],
-) -> dict[str, int]:
-    """Largest-remainder allocation, capped by owned inventory."""
-    if capacity < 0:
-        raise ValueError(f"capacity must be >= 0; got {capacity}")
-    r = _normalize_ratio(ratio)
-    soft_cap = min(
-        int(capacity),
-        sum(max(0, int(owned.get(t, 0))) for t in TROOP_TYPES),
-    )
-    if soft_cap == 0:
-        return {t: 0 for t in TROOP_TYPES}
-
-    exact = {t: r[t] * soft_cap for t in TROOP_TYPES}
-    floors = {t: int(math.floor(exact[t])) for t in TROOP_TYPES}
-    for t in TROOP_TYPES:
-        floors[t] = min(floors[t], max(0, int(owned.get(t, 0))))
-    rem = soft_cap - sum(floors.values())
-    order = sorted(
-        TROOP_TYPES,
-        key=lambda t: (exact[t] - math.floor(exact[t]), r[t]),
-        reverse=True,
-    )
-    for t in order:
-        if rem <= 0:
-            break
-        room = max(0, int(owned.get(t, 0)) - floors[t])
-        take = min(room, rem)
-        floors[t] += take
-        rem -= take
-    # If inventory blocked remainder, leave unused capacity (honest fill).
-    return floors
-
-
-def score_march(
-    counts: Mapping[str, int],
-    units: Mapping[str, TroopUnitStats | None],
-    *,
-    atk_pct: Mapping[str, float],
-    def_pct: Mapping[str, float],
-    leth_pct: Mapping[str, float],
-    hp_pct: Mapping[str, float],
-) -> MarchScore:
-    """Geometric-mean proxy √(Σoffense × Σtough) from the design spec."""
-    offense_sum = 0.0
-    tough_sum = 0.0
-    by_type: dict[str, dict[str, float]] = {}
-    for troop in TROOP_TYPES:
-        n = int(counts.get(troop, 0) or 0)
-        unit = units.get(troop)
-        if n <= 0 or unit is None:
-            by_type[troop] = {"n": float(n), "offense": 0.0, "tough": 0.0}
-            continue
-        atk_m = 1.0 + float(atk_pct.get(troop, 0.0)) / 100.0
-        def_m = 1.0 + float(def_pct.get(troop, 0.0)) / 100.0
-        leth_m = 1.0 + float(leth_pct.get(troop, 0.0)) / 100.0
-        hp_m = 1.0 + float(hp_pct.get(troop, 0.0)) / 100.0
-        offense = n * unit.attack * atk_m * (unit.lethality / 100.0) * leth_m
-        tough = n * unit.defense * def_m * unit.health * hp_m
-        by_type[troop] = {"n": float(n), "offense": offense, "tough": tough}
-        offense_sum += offense
-        tough_sum += tough
-    score = math.sqrt(max(0.0, offense_sum) * max(0.0, tough_sum))
-    return MarchScore(
-        score=score,
-        offense_sum=offense_sum,
-        tough_sum=tough_sum,
-        by_type=by_type,
-    )
 
 
 def _hero_troop(hero: HeroRecord, entry: CatalogEntry | None) -> str | None:
@@ -392,7 +277,7 @@ def optimize_radiant(
         fill_cap = min(capacity, sum(remaining_owned.values()))
 
         best: MarchResult | None = None
-        for ratio in ratio_candidates():
+        for ratio in ratio_candidates(published=PUBLISHED_RATIOS):
             counts = counts_for_ratio(ratio, fill_cap, remaining_owned)
             scored = score_march(
                 counts,
@@ -434,3 +319,18 @@ def optimize_radiant(
         governor=governor.to_dict(),
         active_marches=active_marches,
     )
+
+
+__all__ = [
+    "PROXY_BANNER",
+    "PUBLISHED_RATIOS",
+    "SEED_RATIO",
+    "TROOP_TYPES",
+    "MarchResult",
+    "MarchScore",
+    "RadiantResult",
+    "counts_for_ratio",
+    "optimize_radiant",
+    "ratio_candidates",
+    "score_march",
+]
