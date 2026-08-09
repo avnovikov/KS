@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from ks.heroes.gear_models import GearRecord
 from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.models import HeroRecord, HeroStats
 from ks.heroes.optimize.catalog import load_catalog

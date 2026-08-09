@@ -84,6 +84,7 @@ def startup_paths(*, gear: bool, heroes: bool) -> list[tuple[str, str]]:
     if heroes:
         rows.append(("Optimiser · Event lineups", "/optimiser/events"))
         rows.append(("Optimiser · Gear XP", "/optimiser/gear-xp"))
+        rows.append(("Optimiser · Radiant Spire", "/optimiser/radiant-spire"))
     return rows
 
 
@@ -759,6 +760,18 @@ def create_app(
             heroes_dir=str(heroes_path),
         )
 
+    @app.get("/optimiser/radiant-spire", response_class=HTMLResponse)
+    def optimiser_radiant_page(request: Request) -> HTMLResponse:
+        heroes_path, _ = _require_heroes()
+        return _shell_page(
+            request,
+            "optimiser_radiant_spire.html",
+            primary="optimiser",
+            subtab="radiant",
+            heroes_dir=str(heroes_path),
+            governor_dir=str(resolved_governor),
+        )
+
     @app.get("/optimiser/gear-xp", response_class=HTMLResponse)
     def optimiser_gear_xp_page(request: Request) -> HTMLResponse:
         heroes_path, _ = _require_heroes()
@@ -1156,6 +1169,32 @@ def create_app(
             bundle["warnings"] = warnings
         bundle["heroes_dir"] = str(heroes_path)
         return bundle
+
+    @app.get("/api/optimize/radiant-spire")
+    def api_optimize_radiant() -> dict[str, Any]:
+        """Dual-march Radiant Spire proxy from heroes, gear, troops, governor."""
+        heroes_path, hero_store_local = _require_heroes()
+        from ks.heroes.ui.optimize_run import run_radiant_optimize
+
+        hero_store_local.reload()
+        heroes = hero_store_local.all_heroes()
+        gear_pieces: list[GearRecord] = []
+        if gear_store is not None:
+            gear_store.reload()
+            gear_pieces = gear_store.all_pieces()
+        try:
+            payload = run_radiant_optimize(
+                heroes,
+                governor_bonuses=governor_store.bonuses(),
+                gear=gear_pieces,
+                troops_path=app.state.troops_path,
+                active_marches=2,
+            )
+        except (ValueError, OSError, FileNotFoundError, KeyError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        payload["heroes_dir"] = str(heroes_path)
+        payload["governor_dir"] = str(resolved_governor)
+        return payload
 
     def _prepare_gear_xp_search(body: dict[str, Any]) -> tuple[str, Any, list[GearRecord], Any]:
         """Shared request parsing for the blocking and streaming gear-XP

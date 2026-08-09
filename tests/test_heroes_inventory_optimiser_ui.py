@@ -38,6 +38,7 @@ SHELL_PAGES = (
     "/inventory/governor-gear",
     "/optimiser/events",
     "/optimiser/gear-xp",
+    "/optimiser/radiant-spire",
     "/optimiser/hero-levels",
 )
 

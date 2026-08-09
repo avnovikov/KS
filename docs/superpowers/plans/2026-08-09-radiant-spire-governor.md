@@ -31,34 +31,34 @@
 
 **Files:** `ks/heroes/governor_store.py`, wire `app.py` GET/PATCH/POST upgrade, tests
 
-- [ ] RED: upsert, upgrade one step, dual persist
-- [ ] GREEN: store + API
-- [ ] Commit
+- [x] RED: upsert, upgrade one step, dual persist
+- [x] GREEN: store + API
+- [x] Commit
 
 ### Task 3: Governor inventory UI
 
 **Files:** `inventory_governor_gear.html`, JS, `_subnav_inventory.html`
 
-- [ ] RED/smoke: page 200, 6 slots, upgrade button hits API
-- [ ] GREEN: UI
-- [ ] Commit
+- [x] RED/smoke: page 200, 6 slots, upgrade button hits API
+- [x] GREEN: UI
+- [x] Commit
 
 ### Task 4: Radiant proxy + dual-march ratio search
 
 **Files:** `ks/heroes/optimize/radiant_spire.py`, tests
 
-- [ ] RED: exclusive heroes, ratio grid, governor shifts score
-- [ ] GREEN: scorer + search
-- [ ] Commit
+- [x] RED: exclusive heroes, ratio grid, governor shifts score
+- [x] GREEN: scorer + search
+- [x] Commit
 
 ### Task 5: Radiant UI + optimize bundle hook
 
 **Files:** `optimize_run.py` or dedicated route, optimiser template/JS, subnav
 
-- [ ] Wire API + page showing 2 marches
-- [ ] Tests smoke
-- [ ] Commit
+- [x] Wire API + page showing 2 marches
+- [x] Tests smoke
+- [x] Commit
 
 ### Task 6: Verify
 
-- [ ] Full pytest subset green; manual curl upgrade + optimize
+- [x] Full pytest subset green; manual curl upgrade + optimize
