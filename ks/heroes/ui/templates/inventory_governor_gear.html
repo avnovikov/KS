@@ -26,11 +26,18 @@
   </div>
 </section>
 <style>
-  .gov-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin-top: 1rem; }
+  /* In-game profile: 2 columns × 3 rows (pair per row: cav / inf / archers). */
+  .gov-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(3, auto);
+    gap: 1rem;
+    margin-top: 1rem;
+    max-width: 40rem;
+  }
   .gov-card { border: 1px solid var(--border, #444); padding: 1rem; border-radius: 8px; }
   .chip-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.75rem 0; }
   .chip { border: 1px solid var(--border, #555); padding: 0.25rem 0.6rem; border-radius: 999px; font-size: 0.85rem; }
-  @media (max-width: 800px) { .gov-grid { grid-template-columns: 1fr 1fr; } }
 </style>
 {% endblock %}
 
