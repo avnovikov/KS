@@ -2,6 +2,13 @@
 {% block title %}Radiant Spire · Optimiser · KS{% endblock %}
 
 {% block actions %}
+<label class="hint" for="radiant-floor" style="margin-right:0.5rem;">Floor</label>
+<select id="radiant-floor" title="Enemy floor stub for MC ranking; blank = proxy only">
+  <option value="">Proxy only</option>
+  {% for n in range(1, 11) %}
+  <option value="{{ n }}">{{ n }}{% if n == 10 %} (wall){% endif %}</option>
+  {% endfor %}
+</select>
 <button type="button" id="radiant-regen"
         title="Recompute dual marches from current inventory">Regenerate</button>
 {% endblock %}
@@ -18,6 +25,7 @@
 <section class="panel" id="radiant-summary" hidden>
   <h2 class="section-title">Lineup</h2>
   <p id="radiant-score" class="hint"></p>
+  <p id="radiant-engine" class="hint" hidden></p>
   <div class="chip-row" id="governor-chips"></div>
 </section>
 

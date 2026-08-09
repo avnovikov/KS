@@ -6,10 +6,12 @@
   var errorEl = document.getElementById("radiant-error");
   var summaryEl = document.getElementById("radiant-summary");
   var scoreEl = document.getElementById("radiant-score");
+  var engineEl = document.getElementById("radiant-engine");
   var chipsEl = document.getElementById("governor-chips");
   var marchesEl = document.getElementById("radiant-marches");
   var bannerEl = document.getElementById("proxy-banner");
   var regenBtn = document.getElementById("radiant-regen");
+  var floorEl = document.getElementById("radiant-floor");
 
   function fmtPct(n) {
     return Number(n || 0).toFixed(1) + "%";
@@ -24,6 +26,14 @@
       "/" +
       Math.round((ratio.archers || 0) * 100)
     );
+  }
+
+  function selectedFloor() {
+    if (!floorEl) return null;
+    var v = String(floorEl.value || "").trim();
+    if (!v) return null;
+    var n = Number(v);
+    return Number.isFinite(n) && n > 0 ? n : null;
   }
 
   function showError(msg) {
@@ -43,8 +53,28 @@
       bannerEl.textContent = data.proxy_banner;
     }
     summaryEl.hidden = false;
-    scoreEl.textContent =
-      "Lineup proxy score: " + Number(data.lineup_score || 0).toFixed(0);
+    var engine = data.engine || "proxy";
+    if (engine === "mc") {
+      scoreEl.textContent =
+        "Lineup win-rate score: " + Number(data.lineup_score || 0).toFixed(3);
+    } else {
+      scoreEl.textContent =
+        "Lineup proxy score: " + Number(data.lineup_score || 0).toFixed(0);
+    }
+    if (engineEl) {
+      var bits = ["Engine: " + engine];
+      if (data.floor && data.floor.floor != null) {
+        bits.push("floor " + data.floor.floor);
+        bits.push(
+          "enemy scale ×" + Number(data.floor.enemy_power_scale || 0).toFixed(2)
+        );
+      }
+      if (data.warnings && data.warnings.length) {
+        bits.push(data.warnings.join("; "));
+      }
+      engineEl.hidden = false;
+      engineEl.textContent = bits.join(" · ");
+    }
 
     var gov = data.governor || {};
     chipsEl.innerHTML = "";
@@ -103,7 +133,17 @@
         ((march.counts && march.counts.archers) || 0);
       card.appendChild(counts);
       var score = document.createElement("p");
-      score.textContent = "Proxy " + Number(march.score || 0).toFixed(0);
+      var mc =
+        march.breakdown && march.breakdown.mc ? march.breakdown.mc : null;
+      if (mc) {
+        score.textContent =
+          "Win rate " +
+          Number(mc.win_rate || 0).toFixed(3) +
+          " · proxy " +
+          Number((march.breakdown.proxy && march.breakdown.proxy.score) || 0).toFixed(0);
+      } else {
+        score.textContent = "Proxy " + Number(march.score || 0).toFixed(0);
+      }
       card.appendChild(score);
       marchesEl.appendChild(card);
     });
@@ -111,7 +151,8 @@
     statusEl.textContent =
       "Ready · " +
       (data.active_marches || marches.filter(Boolean).length) +
-      " active marches";
+      " active marches · " +
+      engine;
   }
 
   async function load() {
@@ -120,7 +161,12 @@
     marchesEl.innerHTML = "";
     clearError();
     try {
-      var res = await fetch("/api/optimize/radiant-spire", { cache: "no-store" });
+      var floor = selectedFloor();
+      var url = "/api/optimize/radiant-spire";
+      if (floor != null) {
+        url += "?floor=" + encodeURIComponent(String(floor));
+      }
+      var res = await fetch(url, { cache: "no-store" });
       var body = await res.json().catch(function () {
         return {};
       });
@@ -136,6 +182,11 @@
 
   if (regenBtn) {
     regenBtn.addEventListener("click", function () {
+      load();
+    });
+  }
+  if (floorEl) {
+    floorEl.addEventListener("change", function () {
       load();
     });
   }
