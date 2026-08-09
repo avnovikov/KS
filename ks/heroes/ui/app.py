@@ -80,6 +80,7 @@ def startup_paths(*, gear: bool, heroes: bool) -> list[tuple[str, str]]:
     # Troops is editable whichever inventory is configured — the optimisers
     # read it either way.
     rows.append(("Inventory · Troops", "/inventory/troops"))
+    rows.append(("Inventory · Governor", "/inventory/governor-gear"))
     if heroes:
         rows.append(("Optimiser · Event lineups", "/optimiser/events"))
         rows.append(("Optimiser · Gear XP", "/optimiser/gear-xp"))
@@ -443,6 +444,7 @@ def create_app(
     *,
     heroes_dir: Path | None = None,
     troops_path: Path | None = None,
+    governor_dir: Path | None = None,
     gear_config: Path | None = None,
     heroes_config: Path | None = None,
     serial: str | None = None,
@@ -479,6 +481,17 @@ def create_app(
         seed_from=REPO_ROOT / "config" / "troops.yaml",
     )
     troop_store.ensure_exists()
+    from ks.heroes.governor_store import GovernorGearStore
+
+    if governor_dir is not None:
+        resolved_governor = governor_dir.expanduser().resolve()
+    elif resolved_heroes is not None and resolved_heroes.parent.name == "heroes":
+        resolved_governor = (
+            resolved_heroes.parent.parent / "governor" / "full-run"
+        ).resolve()
+    else:
+        resolved_governor = (REPO_ROOT / "data" / "governor" / "full-run").resolve()
+    governor_store = GovernorGearStore(resolved_governor)
     gear_config_path = (gear_config or DEFAULT_GEAR_CONFIG).expanduser().resolve()
     heroes_config_path = (
         (heroes_config or DEFAULT_HEROES_CONFIG).expanduser().resolve()
@@ -491,8 +504,10 @@ def create_app(
     app = FastAPI(title="KS Heroes UI", version="0.2.0")
     app.state.gear_dir = resolved_gear
     app.state.heroes_dir = resolved_heroes
+    app.state.governor_dir = resolved_governor
     app.state.store = gear_store
     app.state.hero_store = hero_store
+    app.state.governor_store = governor_store
     app.state.gear_config = gear_config_path
     app.state.heroes_config = heroes_config_path
     app.state.serial = serial
@@ -684,6 +699,54 @@ def create_app(
             troops_path=str(troop_store.path),
             load_error=load_error,
         )
+
+    @app.get("/inventory/governor-gear", response_class=HTMLResponse)
+    def inventory_governor_gear_page(request: Request) -> HTMLResponse:
+        summary = governor_store.summary()
+        return _shell_page(
+            request,
+            "inventory_governor_gear.html",
+            primary="inventory",
+            subtab="governor",
+            summary=summary,
+            governor_dir=str(resolved_governor),
+        )
+
+    @app.get("/api/governor-gear")
+    def api_governor_gear() -> dict[str, Any]:
+        return governor_store.summary()
+
+    @app.post("/api/governor-gear/{slot_id}/upgrade")
+    def api_governor_upgrade(slot_id: str) -> dict[str, Any]:
+        try:
+            governor_store.upgrade(slot_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return governor_store.summary()
+
+    @app.patch("/api/governor-gear/{slot_id}")
+    def api_governor_patch(slot_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        from ks.heroes.governor_models import GovernorPiece
+
+        if slot_id not in governor_store.cfg.slots:
+            raise HTTPException(status_code=404, detail=f"unknown slot {slot_id}")
+        tier = body.get("tier")
+        stars = body.get("stars")
+        prev = governor_store.get(slot_id)
+        assert prev is not None
+        try:
+            governor_store.upsert(
+                GovernorPiece(
+                    slot_id=slot_id,
+                    tier=str(tier if tier is not None else prev.tier),
+                    stars=int(stars if stars is not None else prev.stars),
+                )
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return governor_store.summary()
 
     @app.get("/optimiser/events", response_class=HTMLResponse)
     def optimiser_events_page(request: Request) -> HTMLResponse:
@@ -1202,6 +1265,7 @@ def run_ui(
     *,
     heroes_dir: Path | None = None,
     troops_path: Path | None = None,
+    governor_dir: Path | None = None,
     host: str = "127.0.0.1",
     port: int = 8765,
     gear_config: Path | None = None,
@@ -1220,6 +1284,7 @@ def run_ui(
         gear_dir,
         heroes_dir=heroes_dir,
         troops_path=troops_path,
+        governor_dir=governor_dir,
         gear_config=gear_config,
         heroes_config=heroes_config,
         serial=serial,
@@ -1233,4 +1298,5 @@ def run_ui(
     if gear_dir is not None:
         print(f"Gear: {Path(gear_dir).expanduser().resolve()}")
     print(f"Troops: {app.state.troops_path}")
+    print(f"Governor: {app.state.governor_dir}")
     uvicorn.run(app, host=host, port=port, log_level="info")

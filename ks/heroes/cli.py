@@ -477,6 +477,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to troops.yaml (default: config/troops.yaml).",
     )
     ui.add_argument(
+        "--governor",
+        type=Path,
+        default=None,
+        help=(
+            "Governor gear dir (governor_gear.json). "
+            "Default: data/governor/full-run beside heroes."
+        ),
+    )
+    ui.add_argument(
         "--serial",
         type=str,
         default=None,
@@ -1195,6 +1204,7 @@ def _cmd_ui(args: argparse.Namespace) -> int:
         gear,
         heroes_dir=heroes,
         troops_path=Path(args.troops) if args.troops is not None else None,
+        governor_dir=Path(args.governor) if args.governor is not None else None,
         host=str(args.host),
         port=int(args.port),
         gear_config=Path(args.config),
