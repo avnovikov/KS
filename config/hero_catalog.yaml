@@ -58,27 +58,33 @@ heroes:
     - slot: 0
       name: Antler Assault
       family: conquest
+      effect_kind: damage_up
     - slot: 1
       name: Spear Charge
       family: conquest
+      effect_kind: damage_up
     - slot: 2
       name: Fury
       family: conquest
+      effect_kind: attack_up
     - slot: 3
       name: Oath of Guardian
       family: expedition
     - slot: 4
       name: Echoes of Valhalla
       family: expedition
+      effect_kind: attack_up
     - slot: 5
       name: Nature's Balance
       family: expedition
+      effect_kind: lethality_up
     - slot: 6
       name: Valiant Fury
       family: expedition
     - slot: 7
       name: Zeal
       family: expedition
+      effect_kind: lethality_up
   Petra:
     widget_type: attack
     widget_name: Fate's Writ
@@ -168,9 +174,11 @@ heroes:
     - slot: 0
       name: Gallant Throw
       family: conquest
+      effect_kind: damage_up
     - slot: 1
       name: Brave the Storm
       family: conquest
+      effect_kind: damage_up
     - slot: 2
       name: Persistence
       family: conquest
@@ -180,6 +188,7 @@ heroes:
     - slot: 4
       name: Hero's Domain
       family: expedition
+      effect_kind: damage_up
     - slot: 5
       name: Youthful Rage
       family: expedition
@@ -217,6 +226,7 @@ heroes:
     - slot: 0
       name: Rapid Fire
       family: conquest
+      effect_kind: damage_up
     - slot: 1
       name: Final Prayer
       family: conquest
@@ -224,6 +234,7 @@ heroes:
     - slot: 2
       name: Superior Techniques
       family: conquest
+      effect_kind: attack_up
     - slot: 3
       name: Taskforce Training
       family: expedition
@@ -234,12 +245,15 @@ heroes:
     - slot: 5
       name: Positional Battler
       family: expedition
+      effect_kind: lethality_up
     - slot: 6
       name: Fearless Advance
       family: expedition
+      effect_kind: attack_up
     - slot: 7
       name: Defend to Attack
       family: expedition
+      effect_kind: attack_up
   Hilde:
     widget_type: defense
     widget_name: Revelation
@@ -344,12 +358,15 @@ heroes:
     - slot: 0
       name: Burst Fire
       family: conquest
+      effect_kind: defense_up
     - slot: 1
       name: Defense Upgrade
       family: conquest
+      effect_kind: defense_up
     - slot: 2
       name: Weapon Upgrade
       family: conquest
+      effect_kind: attack_up
     - slot: 3
       name: Stand of Arms
       family: expedition
@@ -376,12 +393,15 @@ heroes:
     - slot: 0
       name: Petalbloom
       family: conquest
+      effect_kind: damage_up
     - slot: 1
       name: Falling Swallow
       family: conquest
+      effect_kind: damage_up
     - slot: 2
       name: Twin Fangs
       family: conquest
+      effect_kind: attack_up
     - slot: 3
       name: On Guard
       family: expedition
@@ -411,6 +431,7 @@ heroes:
     - slot: 1
       name: Fire Sigil
       family: conquest
+      effect_kind: damage_up
     - slot: 2
       name: Divine Melody
       family: conquest
@@ -440,9 +461,11 @@ heroes:
     - slot: 0
       name: Shielded Strike
       family: conquest
+      effect_kind: damage_up
     - slot: 1
       name: Joint Defense
       family: conquest
+      effect_kind: defense_up
     - slot: 2
       name: Shield Block
       family: conquest
@@ -472,12 +495,14 @@ heroes:
     - slot: 0
       name: Headshot
       family: conquest
+      effect_kind: damage_up
     - slot: 1
       name: Quick Shot
       family: conquest
     - slot: 2
       name: Natural Selection
       family: conquest
+      effect_kind: damage_up
     - slot: 3
       name: Sixth Sense
       family: expedition
@@ -485,6 +510,7 @@ heroes:
     - slot: 4
       name: Precision Shot
       family: expedition
+      effect_kind: damage_up
   Gordon:
     widget_type: none
     troop: cavalry
@@ -503,18 +529,23 @@ heroes:
     - slot: 0
       name: BBQ Feast
       family: conquest
+      effect_kind: attack_up
     - slot: 1
       name: Culinary Chaos
       family: conquest
+      effect_kind: damage_taken_down
     - slot: 2
       name: Emergency Snack
       family: conquest
+      effect_kind: health_up
     - slot: 3
       name: Super Nutrients
       family: expedition
+      effect_kind: health_up
     - slot: 4
       name: Trash Talk
       family: expedition
+      effect_kind: attack_up
   Fahd:
     widget_type: none
     troop: cavalry
@@ -536,6 +567,7 @@ heroes:
     - slot: 1
       name: Eagle Wings
       family: conquest
+      effect_kind: attack_up
     - slot: 2
       name: Dune General
       family: conquest
@@ -618,6 +650,7 @@ heroes:
     - slot: 0
       name: Incendiary Arrows
       family: conquest
+      effect_kind: damage_up
     - slot: 1
       name: Sharpshooter
       family: conquest
@@ -643,9 +676,11 @@ heroes:
     - slot: 0
       name: Axe Whirl
       family: conquest
+      effect_kind: damage_up
     - slot: 1
       name: Razor Sharp
       family: conquest
+      effect_kind: damage_up
     - slot: 2
       name: Woodland Inheritor
       family: expedition
@@ -665,9 +700,11 @@ heroes:
     - slot: 0
       name: Hammer Burn
       family: conquest
+      effect_kind: damage_up
     - slot: 1
       name: Armor Enhancement
       family: conquest
+      effect_kind: damage_taken_down
     - slot: 2
       name: Burnished Iron
       family: expedition
@@ -687,6 +724,7 @@ heroes:
     - slot: 0
       name: Shrapnel Load
       family: conquest
+      effect_kind: damage_up
     - slot: 1
       name: Detonate
       family: conquest
@@ -709,9 +747,11 @@ heroes:
     - slot: 0
       name: Rain of Arrows
       family: conquest
+      effect_kind: damage_up
     - slot: 1
       name: Target Lock
       family: conquest
+      effect_kind: damage_up
     - slot: 2
       name: Green Thumb
       family: expedition

@@ -123,10 +123,10 @@ def parse_skills(html: str, *, effect_kinds: set[str] | None = None) -> list[dic
         if level == 4 and family in {"conquest", "expedition", "widget"}:
             row: dict = {"slot": slot, "name": text, "family": family}
             kind = _bonus_near(html, text)
-            if kind and (effect_kinds is None or kind in effect_kinds):
-                # Prefer linking expedition skills used by optimisers.
-                if family == "expedition" or kind in (effect_kinds or set()):
-                    row["effect_kind"] = kind
+            if kind and family in {"expedition", "conquest", "widget"}:
+                # Always attach kind from the page bonus label so leveled
+                # scoring can resolve max_value (including widget fallbacks).
+                row["effect_kind"] = kind
             skills.append(row)
             slot += 1
     return skills

@@ -64,49 +64,74 @@
     });
   }
 
+  function skillCardHtml(cs) {
+    var level = levelBySlot[String(cs.slot)];
+    var levelLabel = level == null ? "—" : String(level);
+    return (
+      '<article class="skill-card" data-slot="' +
+      esc(cs.slot) +
+      '">' +
+      "<h4>" +
+      esc(cs.name) +
+      "</h4>" +
+      '<p class="muted">' +
+      esc(cs.family) +
+      (cs.effect_kind ? " · " + esc(cs.effect_kind) : "") +
+      "</p>" +
+      '<div class="skill-level-row">' +
+      '<button type="button" class="btn skill-dec" data-slot="' +
+      esc(cs.slot) +
+      '" aria-label="Decrease level">−</button>' +
+      '<span class="skill-level" data-slot="' +
+      esc(cs.slot) +
+      '">Lv ' +
+      esc(levelLabel) +
+      "</span>" +
+      '<button type="button" class="btn skill-inc" data-slot="' +
+      esc(cs.slot) +
+      '" aria-label="Increase level">+</button>' +
+      "</div></article>"
+    );
+  }
+
   function skillsEditorHtml() {
     if (!catalogSkills.length) {
       return '<h3 class="section-title">Skills</h3><p class="empty">No catalog skills for this hero.</p>';
     }
-    var cards = catalogSkills
-      .map(function (cs) {
-        var level = levelBySlot[String(cs.slot)];
-        var levelLabel = level == null ? "—" : String(level);
+    var conquest = [];
+    var expedition = [];
+    catalogSkills.forEach(function (cs) {
+      var fam = (cs.family || "").toLowerCase();
+      if (fam === "conquest") conquest.push(cs);
+      else expedition.push(cs); // expedition + widget on the right
+    });
+    function col(title, list) {
+      if (!list.length) {
         return (
-          '<article class="skill-card" data-slot="' +
-          esc(cs.slot) +
-          '">' +
-          "<h4>" +
-          esc(cs.name) +
-          "</h4>" +
-          '<p class="muted">' +
-          esc(cs.family) +
-          (cs.effect_kind ? " · " + esc(cs.effect_kind) : "") +
-          "</p>" +
-          '<div class="skill-level-row">' +
-          '<button type="button" class="btn skill-dec" data-slot="' +
-          esc(cs.slot) +
-          '" aria-label="Decrease level">−</button>' +
-          '<span class="skill-level" data-slot="' +
-          esc(cs.slot) +
-          '">Lv ' +
-          esc(levelLabel) +
-          "</span>" +
-          '<button type="button" class="btn skill-inc" data-slot="' +
-          esc(cs.slot) +
-          '" aria-label="Increase level">+</button>' +
-          "</div></article>"
+          '<div class="skill-col"><h4 class="skill-col-title">' +
+          esc(title) +
+          '</h4><p class="empty">None</p></div>'
         );
-      })
-      .join("");
+      }
+      return (
+        '<div class="skill-col"><h4 class="skill-col-title">' +
+        esc(title) +
+        "</h4>" +
+        list.map(skillCardHtml).join("") +
+        "</div>"
+      );
+    }
     return (
       '<h3 class="section-title">Skills</h3>' +
       '<p class="hint">Catalog skills · levels 1–5 overwrite OCR.</p>' +
       '<div class="skill-grid" id="skill-grid">' +
-      cards +
+      col("Conquest", conquest) +
+      col("Expedition", expedition) +
       "</div>" +
-      '<style>' +
-      ".skill-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.75rem;margin-top:.5rem;}" +
+      "<style>" +
+      ".skill-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin-top:.5rem;align-items:start;}" +
+      ".skill-col{display:flex;flex-direction:column;gap:.75rem;}" +
+      ".skill-col-title{margin:0;font-size:.95rem;letter-spacing:.02em;text-transform:uppercase;opacity:.85;}" +
       ".skill-card{border:1px solid var(--border,#444);border-radius:8px;padding:.75rem;}" +
       ".skill-card h4{margin:0 0 .25rem;font-size:1rem;}" +
       ".skill-level-row{display:flex;align-items:center;gap:.5rem;margin-top:.5rem;}" +
