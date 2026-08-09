@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from ks.heroes.gear_models import GearRecord
+from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.combat_formation import (
     load_combat_roles,
@@ -87,6 +88,7 @@ def _attach_arena_survival(
     gear_profile: str,
     gear_order: tuple[str, ...],
     with_survival: bool,
+    governor: GovernorTroopBonuses | None = None,
 ) -> Any:
     if not with_survival:
         return result
@@ -100,6 +102,7 @@ def _attach_arena_survival(
             effective_power=effective_power,
             contribution=contribution,
             side=side,
+            governor=governor,
         )
 
     return attach_survival(
@@ -125,6 +128,7 @@ def optimize_arena_attack(
     gear_profile: str = "early_game_combat",
     with_explanations: bool = True,
     with_survival: bool = True,
+    governor: GovernorTroopBonuses | None = None,
 ) -> ArenaResult:
     combat = solve_combat_formation(
         "arena",
@@ -136,6 +140,7 @@ def optimize_arena_attack(
         gear_profile=gear_profile,
         gear_slot_order=_ATTACK_GEAR_ORDER,
         with_explanations=with_explanations,
+        governor=governor,
     )
     combat = _attach_arena_survival(
         combat,
@@ -147,6 +152,7 @@ def optimize_arena_attack(
         gear_profile=gear_profile,
         gear_order=_ATTACK_GEAR_ORDER,
         with_survival=with_survival,
+        governor=governor,
     )
     return ArenaResult.from_combat(combat)
 
@@ -160,6 +166,7 @@ def optimize_arena_defense(
     gear_profile: str = "early_game_combat",
     with_explanations: bool = True,
     with_survival: bool = True,
+    governor: GovernorTroopBonuses | None = None,
 ) -> ArenaResult:
     """Offline defense: prefer tanks + heal; fronts claim gear first."""
     combat = solve_combat_formation(
@@ -172,6 +179,7 @@ def optimize_arena_defense(
         gear_profile=gear_profile,
         gear_slot_order=_DEFENSE_GEAR_ORDER,
         with_explanations=with_explanations,
+        governor=governor,
     )
     combat = _attach_arena_survival(
         combat,
@@ -183,6 +191,7 @@ def optimize_arena_defense(
         gear_profile=gear_profile,
         gear_order=_DEFENSE_GEAR_ORDER,
         with_survival=with_survival,
+        governor=governor,
     )
     return ArenaResult.from_combat(combat)
 
@@ -197,6 +206,7 @@ def optimize_arena(
     gear_profile: str = "early_game_combat",
     with_explanations: bool = True,
     with_survival: bool = True,
+    governor: GovernorTroopBonuses | None = None,
 ) -> ArenaResult:
     solvers: dict[str, Callable[..., ArenaResult]] = {
         "attack": optimize_arena_attack,
@@ -214,4 +224,5 @@ def optimize_arena(
         gear_profile=gear_profile,
         with_explanations=with_explanations,
         with_survival=with_survival,
+        governor=governor,
     )

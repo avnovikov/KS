@@ -36,6 +36,7 @@ _SKILL_LABEL_KINDS: dict[str, str] = {
     "area of effect damage up": "aoe_damage_up",
     "2nd wave damage up": "damage_up",
     "heal up": "heal_up",
+    "enemy damage taken up": "enemy_damage_taken_up",
 }
 
 # Fallback family for kinds the catalog never tags with applies_to.
@@ -51,6 +52,7 @@ _DEFAULT_KIND_FAMILY: dict[str, str] = {
     "heal_up": CONQUEST,
     "attack_speed_up": CONQUEST,
     "crit_rate_up": CONQUEST,
+    "enemy_damage_taken_up": CONQUEST,
 }
 
 _WIDGET = "widget"
@@ -130,6 +132,23 @@ def kind_family(
     return _DEFAULT_KIND_FAMILY.get(kind)
 
 
+def leveled_effect_value(
+    max_value: float,
+    level: int,
+    ladder: list[float] | tuple[float, ...] | None = None,
+) -> float:
+    """Resolve a skill effect at ``level`` (1–5).
+
+    When ``ladder`` has an entry for the level, use that absolute value.
+    Otherwise use the linear hybrid fallback ``max_value * level / 5``.
+    """
+    if level < 1 or level > 5:
+        raise ValueError(f"skill level must be 1..5; got {level}")
+    if ladder is not None and len(ladder) >= level:
+        return float(ladder[level - 1])
+    return float(max_value) * (level / 5.0)
+
+
 def leveled_catalog_percents(
     hero: HeroRecord,
     entry: CatalogEntry | None,
@@ -138,9 +157,9 @@ def leveled_catalog_percents(
 ) -> dict[str, float]:
     """Percent points from catalog skills scaled by stored skill levels (1–5).
 
-    ``value = max_value * (level / 5)`` for each catalog skill with
-    ``effect_kind`` whose slot/name has a level on the hero record.
-    When ``family`` is set, only skills of that family are included.
+    Uses hybrid ladders when present on the catalog skill; otherwise
+    ``max_value * (level / 5)``. When ``family`` is set, only skills of that
+    family are included.
     """
     if entry is None or not entry.skills:
         return {}
@@ -170,11 +189,14 @@ def leveled_catalog_percents(
         if level is None:
             continue
         max_value = _effect_max_for_skill(entry, cskill)
-        if max_value is None:
+        if max_value is None and cskill.ladder is None:
             continue
-        out[cskill.effect_kind] = out.get(cskill.effect_kind, 0.0) + max_value * (
-            level / 5.0
+        value = leveled_effect_value(
+            max_value if max_value is not None else 0.0,
+            level,
+            cskill.ladder,
         )
+        out[cskill.effect_kind] = out.get(cskill.effect_kind, 0.0) + value
     return out
 
 
@@ -186,6 +208,7 @@ _DEFAULT_EFFECT_MAX: dict[str, float] = {
     "damage_taken_down": 20.0,
     "damage_up": 25.0,
     "aoe_damage_up": 25.0,
+    "enemy_damage_taken_up": 25.0,
 }
 
 
@@ -237,9 +260,12 @@ def family_percents(
         raise ValueError(f"unknown family {family!r}; want conquest|expedition")
     leveled = leveled_catalog_percents(hero, entry, family=family)
     has_manual_levels = any(s.level is not None for s in hero.skills)
-    # OCR current_bonus is too noisy (often garbage text parses). Prefer
-    # explicit skill levels; otherwise star-scaled catalog effects.
-    scraped, incomplete = {}, not has_manual_levels
+    # Prefer explicit skill levels; OCR current_bonus is noisy once levels exist.
+    if has_manual_levels:
+        scraped: dict[str, float] = {}
+        incomplete = False
+    else:
+        scraped, incomplete = skill_percents(hero)
     fallback = catalog_percents(entry, hero.stars, hero.pellets)
     merged: dict[str, float] = {}
     for kind, value in leveled.items():

@@ -12,6 +12,64 @@ from ks.heroes.optimize.stat_contributions import CONQUEST, Share, StatContribut
 from ks.heroes.optimize.types import CatalogEntry
 
 
+def test_hero_base_score_prefers_higher_damage_up_ladder() -> None:
+    """OG-02: sim-lite ultimate ladder beats equal power/flats with low ladder."""
+    from ks.heroes.models import SkillRecord
+    from ks.heroes.optimize.types import CatalogSkill, EffectTag
+
+    roles = _roles()
+    stats = HeroStats(
+        conquest={
+            "Hero Attack": 10_000,
+            "Hero Defense": 5_000,
+            "Hero Health": 50_000,
+        }
+    )
+    entry = CatalogEntry(
+        name="Carry",
+        arena_value=50.0,
+        rarity="legendary",
+        effects=(
+            EffectTag(kind="damage_up", max_value=224.0, applies_to="conquest"),
+        ),
+        skills=(
+            CatalogSkill(
+                slot=0,
+                name="Ultimate",
+                family="conquest",
+                effect_kind="damage_up",
+                ladder=(160.0, 176.0, 192.0, 208.0, 224.0),
+                hits_per_cast=3,
+            ),
+        ),
+    )
+    low = HeroRecord(
+        name="Carry",
+        stars=5,
+        power=1_000_000,
+        skills=(SkillRecord(slot=0, name="Ultimate", level=1),),
+        stats=stats,
+    )
+    high = HeroRecord(
+        name="Carry",
+        stars=5,
+        power=1_000_000,
+        skills=(SkillRecord(slot=0, name="Ultimate", level=5),),
+        stats=stats,
+    )
+    # Same contribution flats — old proxy would not see ladder; sim-lite must.
+    contrib = _conq(1_000_000, attack=10_000.0, health=50_000.0)
+    low_score = hero_base_score(
+        low, entry, roles, effective_power=1_000_000,
+        contribution=contrib, side="attack",
+    )
+    high_score = hero_base_score(
+        high, entry, roles, effective_power=1_000_000,
+        contribution=contrib, side="attack",
+    )
+    assert high_score > low_score
+
+
 def test_slots_match_arena_shape() -> None:
     assert FRONT == ("F1", "F2")
     assert BACK == ("B1", "B2", "B3")

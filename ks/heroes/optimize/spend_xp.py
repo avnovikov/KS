@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator
 
 from ks.heroes.gear_models import GearRecord
+from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.xp_ladder import (
     FodderBag,
@@ -106,12 +107,14 @@ def build_event_utility(
     config_root: Path | None = None,
     troops_path: Path | None = None,
     mode: str | None = None,
+    governor: GovernorTroopBonuses | None = None,
 ) -> UtilityFn:
     """Return U(gear) -> (utility, summary) for sword/bear/arena events.
 
     `troops_path` overrides where troop counts/truegold are read from (the
     UI-editable copy); it defaults to the repo-relative config/troops.yaml
-    used before Task 2 wired in a store.
+    used before Task 2 wired in a store. ``governor`` is passed through to
+    child recommend / arena scorers (OG-06).
     """
     root = (config_root or REPO_ROOT).expanduser().resolve()
     key = event.strip().lower().replace(" ", "_")
@@ -138,6 +141,7 @@ def build_event_utility(
                 roles,
                 gear=gear,
                 with_explanations=False,
+                governor=governor,
             )
             util = float(result.score) if result.status == "Optimal" else float("-inf")
             return util, {
@@ -198,6 +202,7 @@ def build_event_utility(
                 truegold=truegold,
                 gear=gear,
                 gear_profile=gear_profile,
+                governor=governor,
             )
             return float(result.expected_personal_points), {
                 "mode": result.recommended_mode,
@@ -216,6 +221,7 @@ def build_event_utility(
             truegold=truegold,
             gear=gear,
             gear_profile=gear_profile,
+            governor=governor,
         )
         best = max(results.values(), key=lambda r: r.expected_personal_points)
         return float(best.expected_personal_points), {

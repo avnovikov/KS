@@ -81,6 +81,11 @@ class CatalogSkill:
     name: str
     family: str  # conquest | expedition | widget
     effect_kind: str | None = None
+    # Hybrid ladders: absolute values at levels 1..N (usually 5). When set,
+    # leveled scoring uses ladder[level-1] instead of max_value * level/5.
+    ladder: tuple[float, ...] | None = None
+    hits_per_cast: int | None = None
+    cast_rate: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -90,6 +95,12 @@ class CatalogSkill:
         }
         if self.effect_kind is not None:
             out["effect_kind"] = self.effect_kind
+        if self.ladder is not None:
+            out["ladder"] = list(self.ladder)
+        if self.hits_per_cast is not None:
+            out["hits_per_cast"] = self.hits_per_cast
+        if self.cast_rate is not None:
+            out["cast_rate"] = self.cast_rate
         return out
 
 

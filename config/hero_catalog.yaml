@@ -31,11 +31,31 @@ heroes:
     - kind: rally_attack
       max_value: 15.0
       applies_to: widget
+    - kind: damage_up
+      max_value: 224.0
+      applies_to: conquest
     arena_role: front_fighter
     arena_value: 95
     arena_tags:
     - aoe
     - tank
+    # Conquest ladders: Kingshot Mastery Conquest guide (Attack × X coeffs).
+    skills:
+    - slot: 0
+      name: Combo Slash
+      family: conquest
+      effect_kind: damage_up
+      ladder: [160, 176, 192, 208, 224]
+      hits_per_cast: 3
+    - slot: 1
+      name: Arcane Swordship
+      family: conquest
+      effect_kind: damage_up
+    - slot: 2
+      name: Onslaught
+      family: conquest
+      effect_kind: attack_up
+      ladder: [16, 24, 32, 40, 48]
   Helga:
     widget_type: attack
     widget_name: Bands of Tyre
@@ -98,6 +118,27 @@ heroes:
     - kind: rally_attack
       max_value: 15.0
       applies_to: widget
+    - kind: damage_up
+      max_value: 378.0
+      applies_to: conquest
+    # Conquest ladders: Kingshot Mastery Conquest guide.
+    skills:
+    - slot: 0
+      name: Dichotomy
+      family: conquest
+      effect_kind: damage_up
+      ladder: [270, 297, 324, 351, 378]
+      hits_per_cast: 1
+    - slot: 1
+      name: Change of Fate
+      family: conquest
+      effect_kind: damage_up
+      ladder: [50, 55, 60, 65, 70]
+    - slot: 2
+      name: Turn Card
+      family: conquest
+      effect_kind: heal_up
+      ladder: [100, 110, 120, 130, 140]
   Marlin:
     widget_type: attack
     widget_name: Mistweaver
@@ -594,6 +635,27 @@ heroes:
     - kind: rally_attack
       max_value: 15.0
       applies_to: widget
+    - kind: aoe_damage_up
+      max_value: 252.0
+      applies_to: conquest
+    # Conquest ladders: Kingshot Mastery Conquest guide.
+    skills:
+    - slot: 0
+      name: Gilded Barrage
+      family: conquest
+      effect_kind: aoe_damage_up
+      ladder: [180, 198, 216, 234, 252]
+      hits_per_cast: 1
+    - slot: 1
+      name: Lucky Strike
+      family: conquest
+      effect_kind: damage_up
+      ladder: [100, 110, 120, 130, 140]
+    - slot: 2
+      name: Priceless Shot
+      family: conquest
+      effect_kind: damage_up
+      ladder: [35, 38.5, 42, 45.5, 49]
   Jaeger:
     widget_type: defense
     effects:

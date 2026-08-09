@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from ks.heroes.gear_models import GearRecord
+from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.gear_assign import (
     assign_best_sets,
@@ -67,6 +68,7 @@ def _solve_all_modes(
     truegold: int,
     gear_by_troop: dict[str, dict[str, GearRecord]] | None,
     beartrap_buffs: BeartrapBuffs | None = None,
+    governor: GovernorTroopBonuses | None = None,
 ) -> list[ModeSolution]:
     return [
         solve_mode(
@@ -79,6 +81,7 @@ def _solve_all_modes(
             truegold=truegold,
             gear_by_troop=gear_by_troop,
             beartrap_buffs=beartrap_buffs,
+            governor=governor,
         )
         for mode, scenario in modes.items()
     ]
@@ -180,6 +183,7 @@ def recommend(
     gear: list[GearRecord] | None = None,
     gear_profile: str = "early_game_growth",
     beartrap_buffs: BeartrapBuffs | None = None,
+    governor: GovernorTroopBonuses | None = None,
 ) -> RecommendResult:
     if not scenarios:
         raise ValueError("scenarios must not be empty")
@@ -196,6 +200,7 @@ def recommend(
         truegold=truegold,
         gear_by_troop=gear_by_troop,
         beartrap_buffs=beartrap_buffs,
+        governor=governor,
     )
     best = _pick_best_feasible(solutions)
     total = sum(best.troops.values()) or 1
@@ -275,6 +280,7 @@ def recommend_all_modes(
     truegold: int = 0,
     gear: list[GearRecord] | None = None,
     gear_profile: str = "early_game_growth",
+    governor: GovernorTroopBonuses | None = None,
 ) -> dict[str, RecommendResult]:
     """Run recommend once per scenario mode (full per-mode points/formation).
 
@@ -298,6 +304,7 @@ def recommend_all_modes(
                 truegold=truegold,
                 gear=gear,
                 gear_profile=gear_profile,
+                governor=governor,
             )
         except ValueError as exc:
             errors[mode] = str(exc)

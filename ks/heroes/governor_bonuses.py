@@ -74,3 +74,49 @@ def enrich_piece(piece: GovernorPiece, cfg: GovernorGearConfig) -> GovernorPiece
             f"no ladder step for tier={piece.tier!r} stars={piece.stars}"
         )
     return piece.with_ladder(step)
+
+
+def empty_governor_bonuses() -> GovernorTroopBonuses:
+    """Zeroed troop bonuses (baseline when no governor inventory)."""
+    return GovernorTroopBonuses(
+        attack_pct={t: 0.0 for t in _TROOPS},
+        defense_pct={t: 0.0 for t in _TROOPS},
+        set_attack_pct=0.0,
+        set_defense_pct=0.0,
+        set_tier=None,
+    )
+
+
+def governor_attack_mult(
+    governor: GovernorTroopBonuses | None, troop: str
+) -> float:
+    """``1 + attack%/100`` for ``troop``. Set bonuses are already in attack_pct."""
+    if governor is None:
+        return 1.0
+    key = troop.strip().lower()
+    if key in ("archer", "a"):
+        key = "archers"
+    elif key in ("i",):
+        key = "infantry"
+    elif key in ("c",):
+        key = "cavalry"
+    pct = float(governor.attack_pct.get(key, 0.0) or 0.0)
+    return 1.0 + pct / 100.0
+
+
+def governor_defense_mult(
+    governor: GovernorTroopBonuses | None, troop: str
+) -> float:
+    """``1 + defense%/100`` for ``troop``. Set bonuses are already in defense_pct."""
+    if governor is None:
+        return 1.0
+    key = troop.strip().lower()
+    if key in ("archer", "a"):
+        key = "archers"
+    elif key in ("i",):
+        key = "infantry"
+    elif key in ("c",):
+        key = "cavalry"
+    pct = float(governor.defense_pct.get(key, 0.0) or 0.0)
+    return 1.0 + pct / 100.0
+

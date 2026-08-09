@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ks.heroes.gear_models import GearRecord
+from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.combat_formation import (
     CombatFormationResult,
@@ -45,6 +46,7 @@ def _conquest_base_score(
     *,
     effective_power: int | None,
     contribution: StatContribution | None = None,
+    governor: GovernorTroopBonuses | None = None,
 ) -> float:
     """Base ILP score for Conquest: attack scoring amplified by ultimate level."""
     base = hero_base_score(
@@ -54,6 +56,7 @@ def _conquest_base_score(
         effective_power=effective_power,
         contribution=contribution,
         side="attack",
+        governor=governor,
     )
     return base * ultimate_level_multiplier(hero)
 
@@ -67,12 +70,24 @@ def optimize_conquest(
     gear_profile: str = "early_game_combat",
     with_explanations: bool = False,
     with_survival: bool = True,
+    governor: GovernorTroopBonuses | None = None,
 ) -> CombatFormationResult:
     """Select and place the best 5-hero Conquest formation (2F + 3B).
 
     When ``with_survival`` is true, attach a ``survival`` block comparing the
     lineup to self-play foes from the same roster/gear.
     """
+
+    def _base(hero, entry, roles, *, effective_power, contribution=None):
+        return _conquest_base_score(
+            hero,
+            entry,
+            roles,
+            effective_power=effective_power,
+            contribution=contribution,
+            governor=governor,
+        )
+
     result = solve_combat_formation(
         "conquest",
         heroes,
@@ -82,12 +97,13 @@ def optimize_conquest(
         gear=gear,
         gear_profile=gear_profile,
         gear_slot_order=CONQUEST_GEAR_ORDER,
-        base_score_fn=_conquest_base_score,
+        base_score_fn=_base,
         placement_mult_fn=lambda troop, slot, name, roles: placement_mult(
             troop, slot, name, roles, side="attack"
         ),
         with_explanations=with_explanations,
         explain_fn=None,
+        governor=governor,
     )
     if not with_survival:
         return result
@@ -99,7 +115,7 @@ def optimize_conquest(
         gear=gear,
         gear_profile=gear_profile,
         side="attack",
-        base_score_fn=_conquest_base_score,
+        base_score_fn=_base,
         gear_order=CONQUEST_GEAR_ORDER,
         heuristic_mode="conquest",
     )

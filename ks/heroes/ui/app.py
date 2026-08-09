@@ -1254,7 +1254,10 @@ def create_app(
                 except Exception as exc:  # noqa: BLE001 — optimize without icons
                     icon_warning = f"gear icons unavailable: {exc}"
         bundle = run_optimize_bundle(
-            heroes, gear=gear_pieces, troops_path=app.state.troops_path
+            heroes,
+            gear=gear_pieces,
+            troops_path=app.state.troops_path,
+            governor=governor_store.bonuses() if governor_store is not None else None,
         )
         if icon_by_id:
             attach_gear_icon_urls(bundle, icon_by_id)

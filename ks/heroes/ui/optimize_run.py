@@ -39,6 +39,7 @@ def _event_bundle(
     troop_stats_path: Path,
     gear: list[GearRecord] | None,
     gear_profile: str,
+    governor: GovernorTroopBonuses | None = None,
 ) -> dict[str, Any]:
     troops = load_troops_config(troops_path)
     scenarios = load_scenarios(scenarios_path)
@@ -61,6 +62,7 @@ def _event_bundle(
                 truegold=truegold,
                 gear=gear,
                 gear_profile=gear_profile,
+                governor=governor,
             )
             payload = result.to_dict()
             payload["contributions"] = {
@@ -126,6 +128,7 @@ def run_optimize_bundle(
     troops_path: Path | None = None,
     gear_profile_events: str = "early_game_growth",
     gear_profile_arena: str = "early_game_combat",
+    governor: GovernorTroopBonuses | None = None,
 ) -> dict[str, Any]:
     """Compute sword + bear mode tables, arena attack/defense, and conquest.
 
@@ -195,6 +198,7 @@ def run_optimize_bundle(
             troop_stats_path=troop_stats_path,
             gear=gear,
             gear_profile=gear_profile_events,
+            governor=governor,
         )
     except _DOMAIN_ERRORS as exc:
         errors["sword"] = str(exc)
@@ -215,6 +219,7 @@ def run_optimize_bundle(
             troop_stats_path=troop_stats_path,
             gear=gear,
             gear_profile=gear_profile_events,
+            governor=governor,
         )
     except _DOMAIN_ERRORS as exc:
         errors["bear"] = str(exc)
@@ -238,6 +243,7 @@ def run_optimize_bundle(
                 roles,
                 gear=gear,
                 gear_profile=gear_profile_arena,
+                governor=governor,
             )
             payload = result.to_dict()
             warn = (result.reasons or {}).get("_explain_warning")
@@ -267,6 +273,7 @@ def run_optimize_bundle(
                 conquest_roles,
                 gear=gear,
                 gear_profile=gear_profile_arena,
+                governor=governor,
             )
             out["conquest"] = conquest_result.to_dict()
             if conquest_result.status != "Optimal":
