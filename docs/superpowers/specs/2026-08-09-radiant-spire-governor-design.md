@@ -165,7 +165,9 @@ lineup_score = march_score_1 + march_score_2   # equal weight; configurable
 
 ## Stories (backlog)
 
-Tracked as GitHub issues so proxy-first v1 does not lose the deferred combat work:
+Tracked as GitHub issues so proxy-first v1 does not lose deferred work:
+
+### Radiant / governor inventory
 
 | # | Story | Spec part |
 |---|---|---|
@@ -173,6 +175,20 @@ Tracked as GitHub issues so proxy-first v1 does not lose the deferred combat wor
 | [#40](https://github.com/avnovikov/KS/issues/40) | Radiant Spire dual-march proxy optimiser | B — **v1 slice** |
 | [#37](https://github.com/avnovikov/KS/issues/37) | Radiant Spire enemy floor stub database | C — **v1.1** |
 | [#38](https://github.com/avnovikov/KS/issues/38) | Radiant Spire Monte Carlo / multi-round combat engine | C — **v1.1** (depends on #37) |
+
+### Governor gear in all optimisers
+
+| # | Story |
+|---|---|
+| [#41](https://github.com/avnovikov/KS/issues/41) | **Umbrella:** wire governor gear into all combat optimizers |
+| [#42](https://github.com/avnovikov/KS/issues/42) | Bear Trap |
+| [#43](https://github.com/avnovikov/KS/issues/43) | Swordland |
+| [#44](https://github.com/avnovikov/KS/issues/44) | Arena |
+| [#45](https://github.com/avnovikov/KS/issues/45) | Conquest |
+| [#46](https://github.com/avnovikov/KS/issues/46) | Gear XP event utility |
+| [#47](https://github.com/avnovikov/KS/issues/47) | Molten Fort (governor-primary mystic room) |
+
+All of the above depend on [#39](https://github.com/avnovikov/KS/issues/39) except as noted. Shared implementation should expose one `governor_troop_bonuses()` helper reused by each optimiser.
 
 ## Part C — v1.1 (stories #37 / #38; not in first implementation PR)
 
