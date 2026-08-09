@@ -9,6 +9,7 @@
 #   - https://kingshotguide.net/guides/joiner-hero-mechanics-no-one-told-you-about/
 #   - https://kingshotdata.com/heroes/*
 #   - https://kingshotmastery.com/heroes/* (per-hero skills)
+# skills extracted_on: 2026-08-09 from kingshotmastery.com/heroes/*
 # Join key = scraped HeroRecord.name.
 #
 heroes:
@@ -53,6 +54,31 @@ heroes:
     - tank
     troop: infantry
     rarity: legendary
+    skills:
+    - slot: 0
+      name: Antler Assault
+      family: conquest
+    - slot: 1
+      name: Spear Charge
+      family: conquest
+    - slot: 2
+      name: Fury
+      family: conquest
+    - slot: 3
+      name: Oath of Guardian
+      family: expedition
+    - slot: 4
+      name: Echoes of Valhalla
+      family: expedition
+    - slot: 5
+      name: Nature's Balance
+      family: expedition
+    - slot: 6
+      name: Valiant Fury
+      family: expedition
+    - slot: 7
+      name: Zeal
+      family: expedition
   Petra:
     widget_type: attack
     widget_name: Fate's Writ
@@ -138,6 +164,33 @@ heroes:
     - aoe
     troop: cavalry
     rarity: legendary
+    skills:
+    - slot: 0
+      name: Gallant Throw
+      family: conquest
+    - slot: 1
+      name: Brave the Storm
+      family: conquest
+    - slot: 2
+      name: Persistence
+      family: conquest
+    - slot: 3
+      name: Rally Flag
+      family: expedition
+    - slot: 4
+      name: Hero's Domain
+      family: expedition
+    - slot: 5
+      name: Youthful Rage
+      family: expedition
+      effect_kind: lethality_up
+    - slot: 6
+      name: Crimson Spirit
+      family: expedition
+    - slot: 7
+      name: Divine Strength
+      family: expedition
+      effect_kind: lethality_up
   Saul:
     widget_type: defense
     widget_march_skill: Defender (dual DefenseUp)
@@ -160,6 +213,33 @@ heroes:
     - dps
     troop: archer
     rarity: legendary
+    skills:
+    - slot: 0
+      name: Rapid Fire
+      family: conquest
+    - slot: 1
+      name: Final Prayer
+      family: conquest
+      effect_kind: defense_up
+    - slot: 2
+      name: Superior Techniques
+      family: conquest
+    - slot: 3
+      name: Taskforce Training
+      family: expedition
+      effect_kind: defense_up
+    - slot: 4
+      name: Resourceful
+      family: expedition
+    - slot: 5
+      name: Positional Battler
+      family: expedition
+    - slot: 6
+      name: Fearless Advance
+      family: expedition
+    - slot: 7
+      name: Defend to Attack
+      family: expedition
   Hilde:
     widget_type: defense
     widget_name: Revelation
@@ -249,12 +329,35 @@ heroes:
       applies_to: expedition
       effect_op: 101
       first_expedition: true
+    - kind: damage_taken_down
+      max_value: 20.0
+      applies_to: expedition
+      effect_op: 111
+      first_expedition: false
     arena_role: back_dps
     arena_value: 88
     arena_tags:
     - aoe
     - dps
     rarity: epic
+    skills:
+    - slot: 0
+      name: Burst Fire
+      family: conquest
+    - slot: 1
+      name: Defense Upgrade
+      family: conquest
+    - slot: 2
+      name: Weapon Upgrade
+      family: conquest
+    - slot: 3
+      name: Stand of Arms
+      family: expedition
+      effect_kind: lethality_up
+    - slot: 4
+      name: Shield Wall
+      family: expedition
+      effect_kind: damage_taken_down
   Yeonwoo:
     widget_type: none
     troop: archer
@@ -269,6 +372,23 @@ heroes:
     arena_tags:
     - dps
     rarity: epic
+    skills:
+    - slot: 0
+      name: Petalbloom
+      family: conquest
+    - slot: 1
+      name: Falling Swallow
+      family: conquest
+    - slot: 2
+      name: Twin Fangs
+      family: conquest
+    - slot: 3
+      name: On Guard
+      family: expedition
+      effect_kind: lethality_up
+    - slot: 4
+      name: Well-Traveled
+      family: expedition
   Amane:
     widget_type: none
     troop: archer
@@ -283,6 +403,24 @@ heroes:
     arena_tags:
     - dps
     rarity: epic
+    skills:
+    - slot: 0
+      name: Sakura Blossom
+      family: conquest
+      effect_kind: attack_up
+    - slot: 1
+      name: Fire Sigil
+      family: conquest
+    - slot: 2
+      name: Divine Melody
+      family: conquest
+    - slot: 3
+      name: Tri-Phalanx
+      family: expedition
+      effect_kind: attack_up
+    - slot: 4
+      name: Exorcism
+      family: expedition
   Howard:
     widget_type: none
     troop: infantry
@@ -298,6 +436,24 @@ heroes:
     - tank
     - team_def
     rarity: epic
+    skills:
+    - slot: 0
+      name: Shielded Strike
+      family: conquest
+    - slot: 1
+      name: Joint Defense
+      family: conquest
+    - slot: 2
+      name: Shield Block
+      family: conquest
+      effect_kind: damage_taken_down
+    - slot: 3
+      name: Defenders' Edge
+      family: expedition
+      effect_kind: damage_taken_down
+    - slot: 4
+      name: Weaken
+      family: expedition
   Quinn:
     widget_type: none
     troop: archer
@@ -312,6 +468,23 @@ heroes:
     arena_tags:
     - dps
     rarity: epic
+    skills:
+    - slot: 0
+      name: Headshot
+      family: conquest
+    - slot: 1
+      name: Quick Shot
+      family: conquest
+    - slot: 2
+      name: Natural Selection
+      family: conquest
+    - slot: 3
+      name: Sixth Sense
+      family: expedition
+      effect_kind: damage_taken_down
+    - slot: 4
+      name: Precision Shot
+      family: expedition
   Gordon:
     widget_type: none
     troop: cavalry
@@ -326,6 +499,22 @@ heroes:
     arena_tags:
     - heal
     rarity: epic
+    skills:
+    - slot: 0
+      name: BBQ Feast
+      family: conquest
+    - slot: 1
+      name: Culinary Chaos
+      family: conquest
+    - slot: 2
+      name: Emergency Snack
+      family: conquest
+    - slot: 3
+      name: Super Nutrients
+      family: expedition
+    - slot: 4
+      name: Trash Talk
+      family: expedition
   Fahd:
     widget_type: none
     troop: cavalry
@@ -340,6 +529,22 @@ heroes:
     arena_tags:
     - dps
     rarity: epic
+    skills:
+    - slot: 0
+      name: Sandstorm
+      family: conquest
+    - slot: 1
+      name: Eagle Wings
+      family: conquest
+    - slot: 2
+      name: Dune General
+      family: conquest
+    - slot: 3
+      name: Desert Eclipse
+      family: expedition
+    - slot: 4
+      name: Pathfinder
+      family: expedition
   Margot:
     widget_type: defense
     effects:
@@ -409,6 +614,22 @@ heroes:
     - kind: aoe_damage_up
       max_value: 98.0
       applies_to: conquest
+    skills:
+    - slot: 0
+      name: Incendiary Arrows
+      family: conquest
+    - slot: 1
+      name: Sharpshooter
+      family: conquest
+    - slot: 2
+      name: Deadly Strike
+      family: conquest
+    - slot: 3
+      name: Iron Constitution
+      family: expedition
+    - slot: 4
+      name: Quick Paced
+      family: expedition
   Forrest:
     arena_role: front_tank
     arena_value: 40
@@ -418,6 +639,19 @@ heroes:
     rarity: rare
     widget_type: none
     gen: 1
+    skills:
+    - slot: 0
+      name: Axe Whirl
+      family: conquest
+    - slot: 1
+      name: Razor Sharp
+      family: conquest
+    - slot: 2
+      name: Woodland Inheritor
+      family: expedition
+    - slot: 3
+      name: Master Woodcutter
+      family: expedition
   Seth:
     arena_role: front_tank
     arena_value: 40
@@ -427,6 +661,19 @@ heroes:
     rarity: rare
     widget_type: none
     gen: 1
+    skills:
+    - slot: 0
+      name: Hammer Burn
+      family: conquest
+    - slot: 1
+      name: Armor Enhancement
+      family: conquest
+    - slot: 2
+      name: Burnished Iron
+      family: expedition
+    - slot: 3
+      name: Craftsmanship
+      family: expedition
   Edwin:
     arena_role: back_cc
     arena_value: 50
@@ -436,6 +683,19 @@ heroes:
     rarity: rare
     widget_type: none
     gen: 1
+    skills:
+    - slot: 0
+      name: Shrapnel Load
+      family: conquest
+    - slot: 1
+      name: Detonate
+      family: conquest
+    - slot: 2
+      name: Demolitions Expert
+      family: expedition
+    - slot: 3
+      name: Stone Mining
+      family: expedition
   Olive:
     arena_role: back_dps
     arena_value: 35
@@ -445,3 +705,16 @@ heroes:
     rarity: rare
     widget_type: none
     gen: 1
+    skills:
+    - slot: 0
+      name: Rain of Arrows
+      family: conquest
+    - slot: 1
+      name: Target Lock
+      family: conquest
+    - slot: 2
+      name: Green Thumb
+      family: expedition
+    - slot: 3
+      name: Forager's Luck
+      family: expedition

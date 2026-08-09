@@ -440,6 +440,57 @@ def update_hero_stars(
     return updated
 
 
+def update_hero_skills(
+    store: HeroStore,
+    name: str,
+    skills_raw: list[dict[str, Any]],
+) -> HeroRecord:
+    """Replace hero skills; levels must be 1..5. Overwrites OCR skill rows."""
+    from ks.heroes.models import SkillRecord
+
+    heroes = {h.name: h for h in store.all_heroes()}
+    hero = heroes.get(name)
+    if hero is None:
+        raise KeyError(name)
+    if not isinstance(skills_raw, list) or not skills_raw:
+        raise ValueError("skills must be a non-empty list")
+    skills: list[SkillRecord] = []
+    seen_slots: set[int] = set()
+    for item in skills_raw:
+        if not isinstance(item, dict):
+            raise ValueError("each skill must be a mapping")
+        slot = int(item["slot"])
+        if slot in seen_slots:
+            raise ValueError(f"duplicate skill slot {slot}")
+        seen_slots.add(slot)
+        level = item.get("level")
+        if level is None:
+            raise ValueError(f"skill slot {slot} requires level 1..5")
+        level_i = int(level)
+        if level_i < 1 or level_i > 5:
+            raise ValueError(f"skill level must be 1..5; got {level_i} for slot {slot}")
+        name_s = str(item.get("name") or "").strip() or None
+        skills.append(
+            SkillRecord(
+                slot=slot,
+                name=name_s,
+                level=level_i,
+                description=item.get("description"),
+                upgrade_preview=item.get("upgrade_preview"),
+                current_bonus=(
+                    float(item["current_bonus"])
+                    if item.get("current_bonus") is not None
+                    else None
+                ),
+                raw_text=item.get("raw_text"),
+            )
+        )
+    skills.sort(key=lambda s: s.slot)
+    updated = replace(hero, skills=tuple(skills))
+    store.upsert(updated, overwrite=frozenset({"skills"}))
+    return updated
+
+
 def create_app(
     gear_dir: Path | None = None,
     *,
@@ -997,7 +1048,51 @@ def create_app(
         icon_url = with_cache_bust(
             ensure_all_hero_icons([hero], heroes_path).get(name), bust
         )
-        return {"hero": {**hero.to_dict(), "icon_url": icon_url}}
+        from ks.heroes.optimize.catalog import load_catalog
+
+        catalog = load_catalog(None, REPO_ROOT / "config" / "hero_catalog.yaml")
+        entry = catalog.get(name)
+        catalog_skills = (
+            [s.to_dict() for s in entry.skills] if entry is not None else []
+        )
+        return {
+            "hero": {**hero.to_dict(), "icon_url": icon_url},
+            "catalog_skills": catalog_skills,
+        }
+
+    @app.patch("/api/heroes/{name}/skills")
+    async def api_patch_hero_skills(name: str, request: Request) -> dict[str, Any]:
+        heroes_path, store = _require_heroes()
+        try:
+            raw = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="JSON body required") from exc
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="JSON object required")
+        skills_raw = raw.get("skills")
+        if not isinstance(skills_raw, list):
+            raise HTTPException(status_code=400, detail="skills must be a list")
+        try:
+            updated = update_hero_skills(store, name, skills_raw)
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=404, detail=f"unknown hero: {name}"
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        icon_url = ensure_all_hero_icons([updated], heroes_path).get(name)
+        from ks.heroes.optimize.catalog import load_catalog
+
+        catalog = load_catalog(None, REPO_ROOT / "config" / "hero_catalog.yaml")
+        entry = catalog.get(name)
+        catalog_skills = (
+            [s.to_dict() for s in entry.skills] if entry is not None else []
+        )
+        return {
+            "ok": True,
+            "hero": {**updated.to_dict(), "icon_url": icon_url},
+            "catalog_skills": catalog_skills,
+        }
 
     @app.patch("/api/heroes/{name}")
     async def api_patch_hero(name: str, request: Request) -> dict[str, Any]:

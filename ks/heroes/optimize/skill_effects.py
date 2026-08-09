@@ -130,6 +130,55 @@ def kind_family(
     return _DEFAULT_KIND_FAMILY.get(kind)
 
 
+def leveled_catalog_percents(
+    hero: HeroRecord,
+    entry: CatalogEntry | None,
+) -> dict[str, float]:
+    """Percent points from catalog skills scaled by stored skill levels (1–5).
+
+    ``value = max_value * (level / 5)`` for each catalog skill with
+    ``effect_kind`` whose slot/name has a level on the hero record.
+    """
+    if entry is None or not entry.skills:
+        return {}
+    level_by_slot: dict[int, int] = {}
+    level_by_name: dict[str, int] = {}
+    for skill in hero.skills:
+        if skill.level is None:
+            continue
+        level = int(skill.level)
+        if level < 1 or level > 5:
+            raise ValueError(
+                f"skill level must be 1..5; got {level} for {hero.name} slot {skill.slot}"
+            )
+        level_by_slot[int(skill.slot)] = level
+        if skill.name:
+            level_by_name[str(skill.name)] = level
+
+    max_by_kind: dict[str, float] = {}
+    for tag in entry.effects:
+        if tag.applies_to == _WIDGET:
+            continue
+        max_by_kind[tag.kind] = max_by_kind.get(tag.kind, 0.0) + float(tag.max_value)
+
+    out: dict[str, float] = {}
+    for cskill in entry.skills:
+        if not cskill.effect_kind:
+            continue
+        level = level_by_slot.get(cskill.slot)
+        if level is None:
+            level = level_by_name.get(cskill.name)
+        if level is None:
+            continue
+        max_value = max_by_kind.get(cskill.effect_kind)
+        if max_value is None:
+            continue
+        out[cskill.effect_kind] = out.get(cskill.effect_kind, 0.0) + max_value * (
+            level / 5.0
+        )
+    return out
+
+
 def family_percents(
     hero: HeroRecord,
     entry: CatalogEntry | None,
@@ -137,19 +186,25 @@ def family_percents(
     family: str,
     catalog: dict[str, CatalogEntry] | None = None,
 ) -> tuple[dict[str, float], bool]:
-    """Percents for ``family`` from the scrape, falling back to the catalog.
+    """Percents for ``family`` from leveled skills, scrape, then star catalog.
 
-    Scraped ``current_bonus`` is preferred because it reflects the hero's
-    actual skill levels. When the scrape yields nothing for a kind the catalog
-    knows about, the star-scaled catalog value fills in and the result is
-    flagged incomplete.
+    Preference order per kind:
+    1. Catalog skill with an explicit stored level (``level/5 × max_value``)
+    2. Scraped ``current_bonus`` when present
+    3. Star-scaled catalog effect fallback (marks incomplete)
     """
     if family not in (CONQUEST, EXPEDITION):
         raise ValueError(f"unknown family {family!r}; want conquest|expedition")
+    leveled = leveled_catalog_percents(hero, entry)
     scraped, incomplete = skill_percents(hero)
     fallback = catalog_percents(entry, hero.stars, hero.pellets)
     merged: dict[str, float] = {}
+    for kind, value in leveled.items():
+        if kind_family(kind, catalog) == family:
+            merged[kind] = value
     for kind, value in scraped.items():
+        if kind in merged:
+            continue
         if kind_family(kind, catalog) == family:
             merged[kind] = value
     for kind, value in fallback.items():

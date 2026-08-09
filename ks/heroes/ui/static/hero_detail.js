@@ -1,9 +1,7 @@
 /* Hero detail sheet for /inventory/heroes.
  *
- * Split out of inventory_heroes.html's inline <script> so that page ships
- * pure markup, and kept out of inventory.js because none of it applies to the
- * gear table: this is a read-only GET /api/heroes/{name} view of stats and
- * skills, opened from the name/icon in the first column.
+ * Catalog-backed skill grid (2 columns) with level 1–5 controls that overwrite
+ * OCR skill rows via PATCH /api/heroes/{name}/skills.
  */
 (function () {
   "use strict";
@@ -17,15 +15,13 @@
   var bodyEl = document.getElementById("hero-detail-body");
   var closeBtn = document.getElementById("hero-detail-close");
 
-  // The shared escaper from app.js, which _layout.html loads first. This
-  // file used to carry its own four-character copy; the event lineups board
-  // carried a five-character one. See app.js for why there is now one.
   var esc = window.escapeHtml;
-
-  // …and the shared origin check, which this file was the one page script not
-  // to apply. `hero.icon_url` here is the same field the board runs through
-  // safeUrl before it builds a portrait, arriving from the same store.
   var safeUrl = window.safeUrl;
+
+  var currentHero = null;
+  var catalogSkills = [];
+  var levelBySlot = {};
+  var saving = false;
 
   function fmt(value) {
     return value === null || value === undefined || value === "" ? "—" : String(value);
@@ -53,41 +49,79 @@
     );
   }
 
-  function skillsTable(skills) {
-    if (!skills || !skills.length) {
-      return '<h3 class="section-title">Skills</h3><p class="empty">No skills scraped.</p>';
+  function syncLevelsFromHero(hero) {
+    levelBySlot = {};
+    (hero.skills || []).forEach(function (s) {
+      if (s && s.level != null) levelBySlot[String(s.slot)] = Number(s.level);
+    });
+  }
+
+  function skillsPayload() {
+    return catalogSkills.map(function (cs) {
+      var level = levelBySlot[String(cs.slot)];
+      if (level == null) level = 1;
+      return { slot: cs.slot, name: cs.name, level: level };
+    });
+  }
+
+  function skillsEditorHtml() {
+    if (!catalogSkills.length) {
+      return '<h3 class="section-title">Skills</h3><p class="empty">No catalog skills for this hero.</p>';
     }
-    var body = skills
-      .map(function (skill) {
-        var bonus = skill.current_bonus != null ? " · bonus " + skill.current_bonus : "";
-        var desc = skill.description || skill.upgrade_preview || skill.raw_text || "";
+    var cards = catalogSkills
+      .map(function (cs) {
+        var level = levelBySlot[String(cs.slot)];
+        var levelLabel = level == null ? "—" : String(level);
         return (
-          "<tr><td>" +
-          esc(skill.slot) +
-          "</td><td><strong>" +
-          esc(skill.name || "—") +
-          '</strong><div class="skill-desc">Lv ' +
-          esc(fmt(skill.level)) +
-          esc(bonus) +
-          "</div>" +
-          (desc ? '<div class="skill-desc">' + esc(desc) + "</div>" : "") +
-          "</td></tr>"
+          '<article class="skill-card" data-slot="' +
+          esc(cs.slot) +
+          '">' +
+          "<h4>" +
+          esc(cs.name) +
+          "</h4>" +
+          '<p class="muted">' +
+          esc(cs.family) +
+          (cs.effect_kind ? " · " + esc(cs.effect_kind) : "") +
+          "</p>" +
+          '<div class="skill-level-row">' +
+          '<button type="button" class="btn skill-dec" data-slot="' +
+          esc(cs.slot) +
+          '" aria-label="Decrease level">−</button>' +
+          '<span class="skill-level" data-slot="' +
+          esc(cs.slot) +
+          '">Lv ' +
+          esc(levelLabel) +
+          "</span>" +
+          '<button type="button" class="btn skill-inc" data-slot="' +
+          esc(cs.slot) +
+          '" aria-label="Increase level">+</button>' +
+          "</div></article>"
         );
       })
       .join("");
     return (
       '<h3 class="section-title">Skills</h3>' +
-      '<table class="skill-table"><thead><tr><th>Slot</th><th>Skill</th></tr></thead>' +
-      "<tbody>" +
-      body +
-      "</tbody></table>"
+      '<p class="hint">Catalog skills · levels 1–5 overwrite OCR.</p>' +
+      '<div class="skill-grid" id="skill-grid">' +
+      cards +
+      "</div>" +
+      '<style>' +
+      ".skill-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.75rem;margin-top:.5rem;}" +
+      ".skill-card{border:1px solid var(--border,#444);border-radius:8px;padding:.75rem;}" +
+      ".skill-card h4{margin:0 0 .25rem;font-size:1rem;}" +
+      ".skill-level-row{display:flex;align-items:center;gap:.5rem;margin-top:.5rem;}" +
+      ".skill-level{min-width:3.5rem;text-align:center;font-variant-numeric:tabular-nums;}" +
+      "@media (max-width:520px){.skill-grid{grid-template-columns:1fr;}}" +
+      "</style>"
     );
   }
 
-  function renderHeroDetail(hero) {
+  function renderHeroDetail(hero, catalog) {
+    currentHero = hero;
+    catalogSkills = catalog || [];
+    syncLevelsFromHero(hero);
+
     if (iconEl) {
-      // The *checked* URL decides both the src and whether the <img> is shown
-      // at all, so a rejected one leaves no broken frame behind.
       var iconSrc = safeUrl(hero.icon_url);
       iconEl.src = iconSrc;
       iconEl.className = "rarity-" + rarityClass(hero.rarity);
@@ -115,7 +149,13 @@
       ["Escorts", hero.escorts],
       ["Stars", hero.stars],
       ["Pellets", hero.pellets],
-      ["Roster", "p" + (hero.roster_page == null ? 0 : hero.roster_page) + " #" + (hero.roster_index == null ? 0 : hero.roster_index)],
+      [
+        "Roster",
+        "p" +
+          (hero.roster_page == null ? 0 : hero.roster_page) +
+          " #" +
+          (hero.roster_index == null ? 0 : hero.roster_index),
+      ],
       ["Scraped", hero.scraped_at],
     ];
     var factHtml = facts
@@ -138,8 +178,55 @@
         "</div>" +
         statsTable("Conquest", stats.conquest) +
         statsTable("Expedition", stats.expedition) +
-        skillsTable(hero.skills);
+        skillsEditorHtml();
+      bindSkillControls();
     }
+  }
+
+  function bindSkillControls() {
+    if (!bodyEl) return;
+    bodyEl.querySelectorAll(".skill-inc, .skill-dec").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var slot = btn.getAttribute("data-slot");
+        var cur = levelBySlot[slot];
+        if (cur == null) cur = 1;
+        if (btn.classList.contains("skill-inc")) cur = Math.min(5, cur + 1);
+        else cur = Math.max(1, cur - 1);
+        levelBySlot[slot] = cur;
+        var label = bodyEl.querySelector('.skill-level[data-slot="' + slot + '"]');
+        if (label) label.textContent = "Lv " + cur;
+        saveSkills();
+      });
+    });
+  }
+
+  function saveSkills() {
+    if (!currentHero || saving || !catalogSkills.length) return;
+    saving = true;
+    fetch("/api/heroes/" + encodeURIComponent(currentHero.name) + "/skills", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ skills: skillsPayload() }),
+    })
+      .then(function (res) {
+        return res.json().then(function (data) {
+          return { ok: res.ok, data: data };
+        });
+      })
+      .then(function (result) {
+        if (!result.ok) throw new Error(result.data.detail || "Save failed");
+        currentHero = result.data.hero;
+        catalogSkills = result.data.catalog_skills || catalogSkills;
+        syncLevelsFromHero(currentHero);
+        if (window.showToast) window.showToast("Skills saved");
+      })
+      .catch(function (err) {
+        if (window.showToast) window.showToast(String(err.message || err), "err");
+        else alert(String(err.message || err));
+      })
+      .finally(function () {
+        saving = false;
+      });
   }
 
   function openHeroModal(name) {
@@ -154,7 +241,7 @@
       })
       .then(function (result) {
         if (!result.ok) throw new Error(result.data.detail || "Failed to load hero");
-        renderHeroDetail(result.data.hero);
+        renderHeroDetail(result.data.hero, result.data.catalog_skills || []);
       })
       .catch(function (err) {
         if (bodyEl) bodyEl.innerHTML = '<p class="empty">' + esc(err.message || err) + "</p>";
@@ -166,8 +253,6 @@
     modal.setAttribute("aria-hidden", "true");
   }
 
-  // Close button + backdrop click + Escape, from app.js. closeHeroModal is
-  // idempotent, so the old `contains("open")` guard on Escape is not needed.
   window.bindDialogDismiss(modal, closeBtn, closeHeroModal);
 
   Array.prototype.slice

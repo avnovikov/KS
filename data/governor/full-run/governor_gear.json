@@ -1,0 +1,52 @@
+{
+  "pieces": [
+    {
+      "slot_id": "hood",
+      "tier": "green",
+      "stars": 0,
+      "attack_pct": 9.35,
+      "defense_pct": 9.35,
+      "power": 224400
+    },
+    {
+      "slot_id": "necklace",
+      "tier": "green",
+      "stars": 0,
+      "attack_pct": 9.35,
+      "defense_pct": 9.35,
+      "power": 224400
+    },
+    {
+      "slot_id": "cloak",
+      "tier": "green",
+      "stars": 0,
+      "attack_pct": 9.35,
+      "defense_pct": 9.35,
+      "power": 224400
+    },
+    {
+      "slot_id": "breeches",
+      "tier": "green",
+      "stars": 0,
+      "attack_pct": 9.35,
+      "defense_pct": 9.35,
+      "power": 224400
+    },
+    {
+      "slot_id": "ring",
+      "tier": "green",
+      "stars": 0,
+      "attack_pct": 9.35,
+      "defense_pct": 9.35,
+      "power": 224400
+    },
+    {
+      "slot_id": "staff",
+      "tier": "green",
+      "stars": 0,
+      "attack_pct": 9.35,
+      "defense_pct": 9.35,
+      "power": 224400
+    }
+  ]
+}
