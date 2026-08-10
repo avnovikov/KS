@@ -15,7 +15,7 @@ from ks.heroes.gear_models import GearRecord
 from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.bear_damage import blend_unit_stats
-from ks.heroes.optimize.gear_assign import assign_exclusive_sets, assignment_to_dict
+from ks.heroes.optimize.gear_assign import assign_best_sets, assignment_to_dict
 from ks.heroes.optimize.mystic_trial.floors import FloorStub
 from ks.heroes.optimize.mystic_trial.proxy import (
     PROXY_BANNER,
@@ -542,12 +542,13 @@ def optimize_radiant(
         pick_names = [h.name for h in pick]
         remaining = [(h, t, r) for h, t, r in remaining if h.name not in pick_names]
 
-        gear_by_hero = assign_exclusive_sets(
+        # Marches use fungible class sets (same faceplate may appear on both
+        # Coliseum/Radiant marches). Arena is the exclusive-piece path.
+        gear_by_hero = assign_best_sets(
             list(heroes),
             dict(catalog),
             list(gear_pieces),
             selected=pick_names,
-            priority=pick_names,
             profile="early_game_growth",
         )
         gear_assignment = assignment_to_dict(gear_by_hero)
