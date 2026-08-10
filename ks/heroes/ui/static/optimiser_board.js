@@ -576,6 +576,208 @@
     return board;
   }
 
+  /** Shared Atk/Def/Leth/HP card strip (Radiant opponent bonuses, research, …). */
+  var BONUS_STAT_KEYS = [
+    { key: "attack_pct", label: "Atk" },
+    { key: "defense_pct", label: "Def" },
+    { key: "lethality_pct", label: "Leth" },
+    { key: "health_pct", label: "HP" },
+  ];
+
+  function ensureBonusEditorsIn(container, lines) {
+    if (!container || container.childNodes.length) return;
+    var rows = lines || [];
+    rows.forEach(function (line) {
+      var id = typeof line === "string" ? line : line.id;
+      var label =
+        typeof line === "string"
+          ? line
+          : line.label || line.id;
+      var box = document.createElement("div");
+      box.className = "bonus-troop";
+      var title = document.createElement("strong");
+      title.textContent = label;
+      box.appendChild(title);
+      BONUS_STAT_KEYS.forEach(function (spec) {
+        var lab = document.createElement("label");
+        lab.appendChild(document.createTextNode(spec.label));
+        var inp = document.createElement("input");
+        inp.type = "number";
+        inp.step = "any";
+        inp.min = "0";
+        inp.dataset.troop = id;
+        inp.dataset.bonus = spec.key;
+        inp.title =
+          "Percent-points or game total (e.g. 160.2 / 60.2 / 0.602); shown as entered";
+        lab.appendChild(inp);
+        box.appendChild(lab);
+      });
+      container.appendChild(box);
+    });
+  }
+
+  function readBonusesFrom(container, lines) {
+    ensureBonusEditorsIn(container, lines);
+    var out = {};
+    (lines || []).forEach(function (line) {
+      var id = typeof line === "string" ? line : line.id;
+      out[id] = {};
+      BONUS_STAT_KEYS.forEach(function (spec) {
+        var inp = container.querySelector(
+          'input[data-troop="' + id + '"][data-bonus="' + spec.key + '"]'
+        );
+        out[id][spec.key] = Number(inp && inp.value) || 0;
+      });
+    });
+    return out;
+  }
+
+  function fillBonusesInto(container, bonuses, lines) {
+    ensureBonusEditorsIn(container, lines);
+    var bonusSrc = bonuses || {};
+    (lines || []).forEach(function (line) {
+      var id = typeof line === "string" ? line : line.id;
+      var row = bonusSrc[id] || {};
+      BONUS_STAT_KEYS.forEach(function (spec) {
+        var inp = container.querySelector(
+          'input[data-troop="' + id + '"][data-bonus="' + spec.key + '"]'
+        );
+        if (inp) inp.value = String(Number(row[spec.key] || 0));
+      });
+    });
+  }
+
+  var CLASS_PICKER_TROOPS = [
+    { id: "infantry", label: "Infantry" },
+    { id: "cavalry", label: "Cavalry" },
+    { id: "archers", label: "Archers" },
+  ];
+
+  /**
+   * 3-column Inf/Cav/Arch hero picker (portrait + name).
+   * One selection per column; click again clears. Selection order is always
+   * [infantry, cavalry, archers].
+   *
+   * @returns {{ getSelection: Function, setSelection: Function, refresh: Function }}
+   */
+  function mountClassHeroPicker(container, opts) {
+    opts = opts || {};
+    if (!container) {
+      throw new Error("mountClassHeroPicker requires a container");
+    }
+    var byTroop = opts.byTroop || {};
+    var selected = {
+      infantry: "",
+      cavalry: "",
+      archers: "",
+    };
+    var onChange =
+      typeof opts.onChange === "function" ? opts.onChange : function () {};
+
+    function selectionList() {
+      return [selected.infantry, selected.cavalry, selected.archers];
+    }
+
+    function notify() {
+      onChange(selectionList().slice());
+    }
+
+    function applySelection(namesOrMap) {
+      selected.infantry = "";
+      selected.cavalry = "";
+      selected.archers = "";
+      if (Array.isArray(namesOrMap)) {
+        selected.infantry = String(namesOrMap[0] || "").trim();
+        selected.cavalry = String(namesOrMap[1] || "").trim();
+        selected.archers = String(namesOrMap[2] || "").trim();
+      } else if (namesOrMap && typeof namesOrMap === "object") {
+        selected.infantry = String(namesOrMap.infantry || "").trim();
+        selected.cavalry = String(namesOrMap.cavalry || "").trim();
+        selected.archers = String(namesOrMap.archers || "").trim();
+      }
+    }
+
+    function paint() {
+      container.innerHTML = "";
+      container.classList.add("class-hero-picker");
+      CLASS_PICKER_TROOPS.forEach(function (troop) {
+        var col = document.createElement("div");
+        col.className = "class-hero-col";
+        col.dataset.troop = troop.id;
+        var title = document.createElement("strong");
+        title.className = "class-hero-col-title";
+        title.textContent = troop.label;
+        col.appendChild(title);
+        var list = document.createElement("div");
+        list.className = "class-hero-list";
+        var names = byTroop[troop.id] || [];
+        if (!names.length) {
+          var empty = document.createElement("p");
+          empty.className = "hint";
+          empty.textContent = "No heroes";
+          list.appendChild(empty);
+        }
+        names.forEach(function (name) {
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.className =
+            "class-hero-cell" +
+            (selected[troop.id] === name ? " is-selected" : "");
+          btn.dataset.troop = troop.id;
+          btn.dataset.name = name;
+
+          var portrait = document.createElement("span");
+          portrait.className = "portrait";
+          portrait.textContent = initials(name);
+          var img = document.createElement("img");
+          img.alt = "";
+          img.addEventListener("error", function () {
+            img.hidden = true;
+          });
+          var url = portraitUrl(name);
+          if (url) img.src = url;
+          portrait.appendChild(img);
+          btn.appendChild(portrait);
+
+          var label = document.createElement("span");
+          label.className = "class-hero-name";
+          label.textContent = name;
+          btn.appendChild(label);
+
+          btn.addEventListener("click", function () {
+            if (selected[troop.id] === name) {
+              selected[troop.id] = "";
+            } else {
+              selected[troop.id] = name;
+            }
+            paint();
+            notify();
+          });
+          list.appendChild(btn);
+        });
+        col.appendChild(list);
+        container.appendChild(col);
+      });
+    }
+
+    applySelection(opts.selected || null);
+    paint();
+
+    return {
+      getSelection: function () {
+        return selectionList().slice();
+      },
+      setSelection: function (namesOrMap) {
+        applySelection(namesOrMap);
+        paint();
+      },
+      refresh: function (nextByTroop) {
+        if (nextByTroop) byTroop = nextByTroop;
+        paint();
+      },
+    };
+  }
+
   global.OptimiserBoard = {
     heroName: heroName,
     heroSlug: heroSlug,
@@ -598,5 +800,11 @@
     renderContributionTable: renderContributionTable,
     renderGearGrid: renderGearGrid,
     bindGearSheet: bindGearSheet,
+    BONUS_STAT_KEYS: BONUS_STAT_KEYS,
+    ensureBonusEditorsIn: ensureBonusEditorsIn,
+    readBonusesFrom: readBonusesFrom,
+    fillBonusesInto: fillBonusesInto,
+    CLASS_PICKER_TROOPS: CLASS_PICKER_TROOPS,
+    mountClassHeroPicker: mountClassHeroPicker,
   };
 })(typeof window !== "undefined" ? window : this);

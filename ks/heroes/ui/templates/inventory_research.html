@@ -5,110 +5,35 @@
 <section class="panel">
   <h1 class="page-title">Academy research</h1>
   <p class="hint">
-    Manual percent-points from Academy <strong>Battle</strong> (+ War Academy).
-    Same units as battle-report troop bonuses (e.g. <code>22.5</code> = +22.5%).
-    <strong>Squad</strong> applies to every troop type; troop rows are type-specific.
-    Radiant adds these on top of heroes + governor.
+    Same Atk / Def / Leth / HP cards as Radiant opponent bonuses.
+    Enter values the way the game shows them (e.g. <strong>160.2</strong>,
+    <strong>60.2</strong>, or <strong>0.602</strong>).
+    <strong>Squad</strong> applies to every troop; the other three cards are
+    type-specific. Radiant adds these on top of heroes + governor.
   </p>
   <p class="page-meta">{{ research_dir }}</p>
   <label class="field-label" for="research-note">Note</label>
   <input id="research-note" class="field-input" type="text" value="{{ summary.note }}" />
-  <div class="table-scroll" style="margin-top:1rem">
-    <table class="contrib-table" id="research-table">
-      <thead>
-        <tr>
-          <th>Line</th>
-          <th>Attack %</th>
-          <th>Defense %</th>
-          <th>Lethality %</th>
-          <th>Health %</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% set squad = summary.bonuses.squad %}
-        <tr data-kind="squad">
-          <td>squad <span class="muted">(all troops)</span></td>
-          <td><input data-stat="attack_pct" type="number" step="0.01" min="0" value="{{ '%.2f'|format(squad.attack_pct) }}" /></td>
-          <td><input data-stat="defense_pct" type="number" step="0.01" min="0" value="{{ '%.2f'|format(squad.defense_pct) }}" /></td>
-          <td><input data-stat="lethality_pct" type="number" step="0.01" min="0" value="{{ '%.2f'|format(squad.lethality_pct) }}" /></td>
-          <td><input data-stat="health_pct" type="number" step="0.01" min="0" value="{{ '%.2f'|format(squad.health_pct) }}" /></td>
-        </tr>
-        {% for troop, row in summary.bonuses.troops.items() %}
-        <tr data-kind="troop" data-troop="{{ troop }}">
-          <td>{{ troop }}</td>
-          <td><input data-stat="attack_pct" type="number" step="0.01" min="0" value="{{ '%.2f'|format(row.attack_pct) }}" /></td>
-          <td><input data-stat="defense_pct" type="number" step="0.01" min="0" value="{{ '%.2f'|format(row.defense_pct) }}" /></td>
-          <td><input data-stat="lethality_pct" type="number" step="0.01" min="0" value="{{ '%.2f'|format(row.lethality_pct) }}" /></td>
-          <td><input data-stat="health_pct" type="number" step="0.01" min="0" value="{{ '%.2f'|format(row.health_pct) }}" /></td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="opponent-edit panel" style="margin-top:1rem">
+    <div class="bonus-edit bonus-edit--4" id="research-bonus-edit"></div>
   </div>
   <p class="hint" style="margin-top:0.75rem">
-    Tip: put universal Battle / squad nodes on <strong>squad</strong>; put Infantry/Cavalry/Archer-only nodes on the matching row.
+    Tip: universal Battle / squad nodes on <strong>Squad</strong>; Infantry /
+    Cavalry / Archer-only nodes on the matching card.
   </p>
-  <button type="button" class="btn" id="research-save">Save</button>
-  <span id="research-status" class="muted" aria-live="polite"></span>
+  <div class="opponent-apply-row">
+    <button type="button" class="btn" id="research-save">Save</button>
+    <span id="research-status" class="muted" aria-live="polite"></span>
+  </div>
 </section>
+<script type="application/json" id="research-initial">{{ summary.bonuses | tojson }}</script>
 <style>
   .field-label { display:block; margin-top:0.75rem; font-size:0.85rem; }
   .field-input { width:min(40rem, 100%); padding:0.4rem 0.6rem; }
-  #research-table input { width:6rem; }
 </style>
 {% endblock %}
 
 {% block scripts %}
-<script>
-(function () {
-  var saveBtn = document.getElementById("research-save");
-  var statusEl = document.getElementById("research-status");
-  var noteEl = document.getElementById("research-note");
-  if (!saveBtn) return;
-
-  function rowStats(tr) {
-    var out = {};
-    tr.querySelectorAll("input[data-stat]").forEach(function (inp) {
-      out[inp.dataset.stat] = Number(inp.value) || 0;
-    });
-    return out;
-  }
-
-  saveBtn.addEventListener("click", async function () {
-    saveBtn.disabled = true;
-    statusEl.textContent = "Saving…";
-    var troops = {};
-    var squad = { attack_pct: 0, defense_pct: 0, lethality_pct: 0, health_pct: 0 };
-    document.querySelectorAll("#research-table tr[data-kind]").forEach(function (tr) {
-      if (tr.dataset.kind === "squad") {
-        squad = rowStats(tr);
-      } else if (tr.dataset.kind === "troop") {
-        troops[tr.dataset.troop] = rowStats(tr);
-      }
-    });
-    try {
-      var res = await fetch("/api/research", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          note: noteEl ? noteEl.value : "",
-          squad: squad,
-          troops: troops,
-        }),
-      });
-      var body = await res.json().catch(function () { return {}; });
-      if (!res.ok) {
-        statusEl.textContent = body.detail || ("Save failed: " + res.status);
-        saveBtn.disabled = false;
-        return;
-      }
-      statusEl.textContent = "Saved.";
-      saveBtn.disabled = false;
-    } catch (err) {
-      statusEl.textContent = String(err);
-      saveBtn.disabled = false;
-    }
-  });
-})();
-</script>
+<script src="/static/optimiser_board.js"></script>
+<script src="/static/inventory_research.js"></script>
 {% endblock %}

@@ -8,6 +8,7 @@
 #   - https://kingshotmastery.com/guides/kingshot-widget-guide
 #   - https://kingshotguide.net/guides/joiner-hero-mechanics-no-one-told-you-about/
 #   - https://kingshotdata.com/heroes/*
+# troop/gen/rarity filled_on: 2026-08-09 from kingshotdata.com/heroes/*
 #   - https://kingshotmastery.com/heroes/* (per-hero skills)
 # skills extracted_on: 2026-08-09 from kingshotmastery.com/heroes/*
 # Join key = scraped HeroRecord.name.
@@ -56,6 +57,9 @@ heroes:
       family: conquest
       effect_kind: attack_up
       ladder: [16, 24, 32, 40, 48]
+    troop: infantry
+    gen: 1
+    rarity: legendary
   Helga:
     widget_type: attack
     widget_name: Bands of Tyre
@@ -159,6 +163,9 @@ heroes:
       family: conquest
       effect_kind: heal_up
       ladder: [100, 110, 120, 130, 140]
+    troop: cavalry
+    gen: 3
+    rarity: legendary
   Marlin:
     widget_type: attack
     widget_name: Mistweaver
@@ -169,6 +176,9 @@ heroes:
     - kind: rally_lethality
       max_value: 15.0
       applies_to: widget
+    troop: archers
+    gen: 2
+    rarity: legendary
   Rosa:
     widget_type: attack
     widget_name: Aeolian
@@ -179,6 +189,9 @@ heroes:
     - kind: rally_lethality
       max_value: 15.0
       applies_to: widget
+    troop: archers
+    gen: 4
+    rarity: legendary
   Yang:
     widget_type: attack
     widget_name: Frostkin
@@ -189,6 +202,9 @@ heroes:
     - kind: rally_lethality
       max_value: 15.0
       applies_to: widget
+    troop: archers
+    gen: 6
+    rarity: legendary
   Ava:
     widget_type: attack
     widget_name: Chameleos
@@ -199,6 +215,9 @@ heroes:
     - kind: rally_lethality
       max_value: 15.0
       applies_to: widget
+    troop: cavalry
+    gen: 7
+    rarity: legendary
   Zoe:
     widget_type: defense
     widget_name: The Unrighteous
@@ -214,6 +233,9 @@ heroes:
     - kind: defender_attack
       max_value: 15.0
       applies_to: widget
+    troop: infantry
+    gen: 2
+    rarity: legendary
   Jabel:
     widget_type: defense
     widget_name: Greaves of Faith
@@ -346,6 +368,9 @@ heroes:
       max_value: 20.0
       applies_to: expedition
       effect_op: 102
+    troop: cavalry
+    gen: 2
+    rarity: legendary
   Eric:
     widget_type: defense
     widget_name: Anvil of Truth
@@ -361,6 +386,9 @@ heroes:
     - kind: defender_defense
       max_value: 15.0
       applies_to: widget
+    troop: infantry
+    gen: 3
+    rarity: legendary
   Alcar:
     widget_type: defense
     widget_name: Praetorian Guard
@@ -371,6 +399,9 @@ heroes:
     - kind: defender_health
       max_value: 15.0
       applies_to: widget
+    troop: infantry
+    gen: 4
+    rarity: legendary
   Triton:
     widget_type: defense
     widget_name: Tidal Scepter
@@ -381,6 +412,9 @@ heroes:
     - kind: defender_defense
       max_value: 15.0
       applies_to: widget
+    troop: infantry
+    gen: 6
+    rarity: legendary
   Sophia:
     widget_type: defense
     widget_name: Scarlet Rose
@@ -390,6 +424,9 @@ heroes:
     - kind: defender_attack
       max_value: 15.0
       applies_to: widget
+    troop: cavalry
+    gen: 6
+    rarity: legendary
   Charles:
     widget_type: defense
     widget_name: Justice Fist
@@ -400,6 +437,9 @@ heroes:
     - kind: defender_health
       max_value: 15.0
       applies_to: widget
+    troop: infantry
+    gen: 7
+    rarity: legendary
   Wee & Woo:
     widget_type: defense
     widget_name: Mortar
@@ -410,6 +450,9 @@ heroes:
     - kind: defender_attack
       max_value: 15.0
       applies_to: widget
+    troop: archers
+    gen: 7
+    rarity: legendary
   Chenko:
     widget_type: none
     troop: cavalry
@@ -678,6 +721,9 @@ heroes:
       applies_to: expedition
       effect_op: 102
       first_expedition: true
+    troop: cavalry
+    gen: 4
+    rarity: legendary
   Vivian:
     widget_type: attack
     effects:
@@ -708,24 +754,36 @@ heroes:
       family: conquest
       effect_kind: damage_up
       ladder: [35, 38.5, 42, 45.5, 49]
+    troop: archers
+    gen: 5
+    rarity: legendary
   Jaeger:
     widget_type: defense
     effects:
     - kind: defense_up
       max_value: 20.0
       applies_to: expedition
+    troop: archers
+    gen: 3
+    rarity: legendary
   Long Fei:
     widget_type: attack
     effects:
     - kind: attack_up
       max_value: 25.0
       applies_to: expedition
+    troop: infantry
+    gen: 5
+    rarity: legendary
   Thrud:
     widget_type: attack
     effects:
     - kind: lethality_up
       max_value: 25.0
       applies_to: expedition
+    troop: cavalry
+    gen: 5
+    rarity: legendary
   Diana:
     arena_role: back_dps
     arena_value: 70

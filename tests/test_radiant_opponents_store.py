@@ -20,6 +20,10 @@ from ks.heroes.optimize.mystic_trial.radiant_opponents import (
 
 def test_opponents_path_under_governor(tmp_path: Path) -> None:
     assert opponents_path(tmp_path) == tmp_path / "mystic_trial" / "radiant_opponents.yaml"
+    assert (
+        opponents_path(tmp_path, room="coliseum")
+        == tmp_path / "mystic_trial" / "coliseum_opponents.yaml"
+    )
 
 
 def test_load_missing_file_is_empty(tmp_path: Path) -> None:
@@ -124,6 +128,59 @@ def test_merge_saved_into_opponent() -> None:
     assert merged["marches"][0]["counts"]["infantry"] == 100
     assert abs(merged["marches"][0]["ratio"]["infantry"] - 1.0) < 1e-9
     assert merged["marches"][1]["counts"]["cavalry"] == 50
+
+
+def test_merge_builds_panel_when_opponent_none() -> None:
+    saved = [
+        parse_march(
+            {
+                "hero_names": ["Helga", "Jabel", "Diana"],
+                "counts": {"infantry": 10, "cavalry": 0, "archers": 0},
+                "bonuses": {"infantry": {"attack_pct": 50}},
+            }
+        ),
+        parse_march({"counts": {"infantry": 0, "cavalry": 5, "archers": 5}}),
+    ]
+    merged = merge_saved_into_opponent(None, saved)
+    assert merged is not None
+    assert merged["saved"] is True
+    assert merged["marches"][0]["hero_names"] == ["Helga", "Jabel", "Diana"]
+    assert merged["marches"][0]["counts"]["infantry"] == 10
+    assert merged["marches"][1]["counts"]["cavalry"] == 5
+
+
+def test_player_event_troops_round_trip(tmp_path: Path) -> None:
+    from ks.heroes.optimize.mystic_trial.radiant_opponents import (
+        get_player_event_troops,
+        upsert_player_event_troops,
+    )
+
+    path = opponents_path(tmp_path, room="coliseum")
+    store = load_store(path)
+    store = upsert_player_event_troops(
+        store,
+        stage=2,
+        round_no=1,
+        event_troops={"tier": 10, "march_size": 250_000},
+    )
+    save_store(path, store)
+    again = load_store(path)
+    pet = get_player_event_troops(again, 2, 1)
+    assert pet == {"tier": 10, "march_size": 250_000}
+    # March upsert preserves event troops
+    store = upsert_march(
+        again,
+        stage=2,
+        round_no=1,
+        slot=0,
+        march=parse_march(
+            {"counts": {"infantry": 1, "cavalry": 0, "archers": 0}}
+        ),
+    )
+    assert get_player_event_troops(store, 2, 1) == {
+        "tier": 10,
+        "march_size": 250_000,
+    }
 
 
 def test_parse_march_rejects_bad_level() -> None:

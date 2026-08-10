@@ -3,21 +3,78 @@
 
 {% block actions %}
 <button type="button" id="coliseum-regen"
-        title="Recompute single march from current inventory">Regenerate</button>
+        title="Set stage and round first, then Generate"
+        disabled>Generate</button>
 {% endblock %}
 
 {% block content %}
 {% include "_mystic_trial_rooms.html" %}
-<h1 class="page-title">Coliseum</h1>
+<div class="page-heading">
+  <h1 class="page-title">Coliseum</h1>
+  <div class="stage-round-picker">
+    <label for="coliseum-stage">
+      <span>Stage</span>
+      <input id="coliseum-stage" type="number" min="1" step="1" placeholder="—"
+             title="Coliseum stage number" />
+    </label>
+    <label for="coliseum-round">
+      <span>Round</span>
+      <input id="coliseum-round" type="number" min="1" step="1" placeholder="—"
+             title="Round within the stage" />
+    </label>
+    <label for="coliseum-event-tier">
+      <span>Troop tier</span>
+      <input id="coliseum-event-tier" type="number" min="1" max="11" step="1"
+             value="10" title="Event-borrowed top troop tier" />
+    </label>
+    <label for="coliseum-event-march-size">
+      <span>March size</span>
+      <input id="coliseum-event-march-size" type="number" min="1" step="1"
+             value="250000" title="Event march capacity (borrowed troops)" />
+    </label>
+    <button type="button" id="coliseum-event-troops-apply"
+            title="Save event troop tier and march size for this stage · round">
+      Save troops
+    </button>
+    <button type="button" id="coliseum-regen-inline"
+            class="btn-generate"
+            title="Set stage and round first, then Generate"
+            disabled>Generate</button>
+  </div>
+</div>
 <p class="page-meta">Event lineups · Mystic Trial · {{ heroes_dir }} · governor {{ governor_dir }}</p>
 <p class="banner-warn" id="proxy-banner" role="status">
   Proxy score — not in-game clear prediction. Heroes + gear primary; governor weight 0.
 </p>
-<p class="status-line" id="coliseum-status" role="status">Solving march…</p>
+<p class="status-line" id="coliseum-status" role="status">
+  Enter stage &amp; round, set opponent overrides, then press Generate.
+</p>
 <p class="banner-err" id="coliseum-error" role="alert" hidden></p>
 
+<section id="coliseum-opponent-edit" hidden>
+  <h2 class="section-title">Opponent overrides</h2>
+  <p id="opponent-note" class="hint">
+    Select an opponent march below. Pick one Infantry / Cavalry / Archers hero
+    from the portrait grid. Enter Atk/Def/Leth/HP as the game shows them
+    (e.g. <strong>160.2</strong> for 160.2%), or 0.602 / 60.2 — not 1.47 unless the
+    screen really means +147%.
+  </p>
+  <div class="opponent-edit panel" id="opponent-edit">
+    <div class="opponent-heroes" id="opponent-hero-edit"></div>
+    <div class="troop-counts" id="opponent-troop-edit"></div>
+    <div class="bonus-edit" id="opponent-bonus-edit"></div>
+    <div class="opponent-apply-row">
+      <button type="button" id="opponent-copy-other" hidden>Copy to other opponent</button>
+      <button type="button" id="opponent-apply">Apply</button>
+    </div>
+  </div>
+</section>
+
 <p id="coliseum-score" class="hint" hidden></p>
+<p id="coliseum-engine" class="hint" hidden></p>
 <div class="chip-row" id="governor-chips"></div>
+
+{# Same reporting chrome as Radiant: chips pick a march, one board shows it. #}
 <div class="mode-chips" id="mode-chips" role="group" aria-label="Marches"></div>
 <section class="panel board" id="board"></section>
 {% include "_gear_detail_modal.html" %}

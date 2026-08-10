@@ -348,10 +348,13 @@ def optimize_radiant(
     active_marches: int = 2,
     truegold: int | None = None,
     one_per_troop_type: bool = True,
+    governor_weight: float = 1.0,
     floor: int | None = None,
     floors_path: Path | str | None = None,
     room_path: Path | str | None = None,
     event_march_capacity: int | None | types.EllipsisType = ...,
+    event_troop_tier: int | None | types.EllipsisType = ...,
+    player_event_troops: Mapping[str, Any] | None = None,
     enemy_ratio: Mapping[str, float] | None = None,
     enemy_bonuses: Mapping[str, Mapping[str, float]] | None = None,
     saved_opponents: Sequence[Mapping[str, Any]] | None = None,
@@ -359,20 +362,29 @@ def optimize_radiant(
 ) -> RadiantResult:
     """Assign exclusive hero marches and search troop ratios via proxy score.
 
-    ``event_march_capacity``: omit (default) to use room YAML; pass an int for an
-    explicit event fill size; pass ``None`` to use inventory ``march_capacity``
-    (+ escorts) instead of the event cap.
+    ``event_march_capacity`` / ``event_troop_tier``: omit to use room YAML;
+    pass explicit values to override; pass ``None`` for capacity to force
+    inventory march capacity (+ escorts).
+
+    ``player_event_troops`` ``{tier, march_size}`` overrides both when set
+    (stage·round event-borrowed troops — not inventory mix).
     """
     from pathlib import Path as _Path
 
     from ks.heroes.optimize.mystic_trial.floors import get_floor, load_floors
+    from ks.heroes.optimize.mystic_trial.radiant_opponents import (
+        parse_player_event_troops,
+    )
     from ks.heroes.optimize.mystic_trial.rooms import load_room
 
     if active_marches not in (1, 2, 3):
         raise ValueError(f"active_marches must be 1–3; got {active_marches}")
+    if governor_weight < 0:
+        raise ValueError(f"governor_weight must be >= 0; got {governor_weight}")
     if (enemy_ratio is not None or enemy_bonuses is not None) and floor is None:
         raise ValueError("enemy_ratio / enemy_bonuses overrides require floor=")
 
+    gov_w = float(governor_weight)
     research_bonuses = research if research is not None else ResearchBonuses.empty()
     research_atk = research_bonuses.attack_pct()
     research_def = research_bonuses.defense_pct()
@@ -381,6 +393,7 @@ def optimize_radiant(
 
     published = PUBLISHED_RATIOS
     room_event_cap: int | None = None
+    room_event_tier: int | None = None
     room_file = (
         _Path(room_path)
         if room_path is not None
@@ -393,11 +406,39 @@ def optimize_radiant(
         room = load_room(room_file)
         published = room.published_ratios
         room_event_cap = room.event_march_capacity
+        room_event_tier = room.event_troop_tier
     event_cap: int | None
-    if event_march_capacity is ...:
-        event_cap = room_event_cap
+    event_tier: int | None
+    pet: dict[str, int] | None = None
+    if player_event_troops is not None:
+        pet = parse_player_event_troops(player_event_troops)
+        event_cap = pet["march_size"]
+        event_tier = pet["tier"]
+    elif event_march_capacity is None:
+        # Explicit None → inventory march capacity (+ escorts), ignore room event troops.
+        event_cap = None
+        event_tier = None
     else:
-        event_cap = event_march_capacity
+        if event_march_capacity is ...:
+            event_cap = room_event_cap
+        else:
+            event_cap = event_march_capacity
+        if event_troop_tier is ...:
+            event_tier = room_event_tier
+        else:
+            event_tier = event_troop_tier
+        if event_tier is not None and event_cap is None:
+            from ks.heroes.optimize.mystic_trial.radiant_opponents import (
+                DEFAULT_EVENT_MARCH_SIZE,
+            )
+
+            event_cap = DEFAULT_EVENT_MARCH_SIZE
+        elif event_cap is not None and event_tier is None:
+            from ks.heroes.optimize.mystic_trial.radiant_opponents import (
+                DEFAULT_EVENT_TROOP_TIER,
+            )
+
+            event_tier = DEFAULT_EVENT_TROOP_TIER
 
     warnings: list[str] = []
     floor_payload: dict[str, Any] | None = None
@@ -428,11 +469,17 @@ def optimize_radiant(
                 floor_payload["overrides_applied"] = True
             if event_cap is not None:
                 floor_payload["event_march_capacity"] = int(event_cap)
+            if event_tier is not None:
+                floor_payload["event_troop_tier"] = int(event_tier)
 
     tg = troop_stats.default_truegold if truegold is None else int(truegold)
-    levels = _inventory_levels(troops)
+    if event_tier is not None and event_cap is not None:
+        levels = {t: {int(event_tier): int(event_cap)} for t in TROOP_TYPES}
+        owned = {t: int(event_cap) for t in TROOP_TYPES}
+    else:
+        levels = _inventory_levels(troops)
+        owned = {t: troops.owned(t) for t in TROOP_TYPES}
     units = _blend_units(levels, troop_stats, truegold=tg)
-    owned = {t: troops.owned(t) for t in TROOP_TYPES}
 
     ranked: list[tuple[HeroRecord, str, float]] = []
     for hero in heroes:
@@ -459,7 +506,9 @@ def optimize_radiant(
 
     enemy_scores: list[Any] = []
     for i, saved in enumerate(saved_list[:active_marches]):
-        if floor_stub is not None and opponent_complete(saved):
+        # Saved battle-report marches score as enemies even without a floor stub
+        # (Coliseum stage·round opponents; Radiant when floor unknown).
+        if opponent_complete(saved):
             try:
                 enemy_scores.append(
                     score_enemy_march(
@@ -471,9 +520,20 @@ def optimize_radiant(
                 enemy_scores.append(None)
         else:
             enemy_scores.append(None)
-    if floor_stub is not None and any(enemy_scores):
-        floor_payload = dict(floor_payload or floor_stub.to_dict())
+    if any(enemy_scores):
+        if floor_stub is not None:
+            floor_payload = dict(floor_payload or floor_stub.to_dict())
+        else:
+            floor_payload = dict(floor_payload or {})
         floor_payload["enemy_proxy"] = True
+    if event_cap is not None or event_tier is not None:
+        floor_payload = dict(floor_payload or {})
+        if event_cap is not None:
+            floor_payload["event_march_capacity"] = int(event_cap)
+        if event_tier is not None:
+            floor_payload["event_troop_tier"] = int(event_tier)
+        if pet is not None:
+            floor_payload["player_event_troops"] = dict(pet)
 
     for march_idx in range(active_marches):
         pick = _pick_march_heroes(remaining, one_per_troop_type=one_per_troop_type)
@@ -500,15 +560,21 @@ def optimize_radiant(
         hp_pct = {t: hero_hp[t] + float(research_hp.get(t, 0.0)) for t in TROOP_TYPES}
         atk_pct = {
             t: hero_atk[t]
-            + float(governor.attack_pct.get(t, 0.0))
-            + float(governor.set_attack_pct)
+            + gov_w
+            * (
+                float(governor.attack_pct.get(t, 0.0))
+                + float(governor.set_attack_pct)
+            )
             + float(research_atk.get(t, 0.0))
             for t in TROOP_TYPES
         }
         def_pct = {
             t: hero_def[t]
-            + float(governor.defense_pct.get(t, 0.0))
-            + float(governor.set_defense_pct)
+            + gov_w
+            * (
+                float(governor.defense_pct.get(t, 0.0))
+                + float(governor.set_defense_pct)
+            )
             + float(research_def.get(t, 0.0))
             for t in TROOP_TYPES
         }
@@ -646,7 +712,7 @@ def optimize_radiant(
                 remaining_owned[t] = max(0, remaining_owned[t] - best.counts[t])
         marches.append(best)
 
-    engine = "mc" if floor_stub is not None else "proxy"
+    engine = "mc" if (floor_stub is not None or any(enemy_scores)) else "proxy"
     opponent = (
         build_opponent_panel(marches, floor_stub) if floor_stub is not None else None
     )

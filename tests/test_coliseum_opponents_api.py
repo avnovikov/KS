@@ -1,4 +1,4 @@
-"""API tests for Radiant stage·round opponent persistence."""
+"""API tests for Coliseum stage·round opponent persistence."""
 
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ def _client(tmp_path: Path) -> TestClient:
     )
 
 
-def test_put_and_reload_opponent_slot(tmp_path: Path) -> None:
+def test_put_and_reload_coliseum_opponent_slot(tmp_path: Path) -> None:
     client = _client(tmp_path)
     body = {
         "hero_names": ["Helga", "Jabel", "Diana"],
@@ -105,69 +105,81 @@ def test_put_and_reload_opponent_slot(tmp_path: Path) -> None:
             }
         },
     }
-    put = client.put("/api/mystic-trial/radiant-opponents/3/2/0", json=body)
+    put = client.put("/api/mystic-trial/coliseum-opponents/3/2/0", json=body)
     assert put.status_code == 200, put.text
     path = Path(put.json()["path"])
+    assert path.name == "coliseum_opponents.yaml"
     assert path.is_file()
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert raw["stages"]["3"]["2"]["marches"][0]["counts"]["infantry"] == 42000
-    assert raw["stages"]["3"]["2"]["marches"][0]["hero_names"] == [
-        "Helga",
-        "Jabel",
-        "Diana",
-    ]
 
-    got = client.get("/api/mystic-trial/radiant-opponents/3/2")
+    # Does not write Radiant store
+    radiant = path.parent / "radiant_opponents.yaml"
+    assert not radiant.exists()
+
+    got = client.get("/api/mystic-trial/coliseum-opponents/3/2")
     assert got.status_code == 200, got.text
     draft = got.json()
-    assert "Helga" in (draft.get("catalog_hero_names") or [])
     assert draft["marches"][0]["hero_names"] == ["Helga", "Jabel", "Diana"]
-    assert draft["marches"][0]["counts"]["infantry"] == 42000
-    assert draft["marches"][0]["bonuses"]["infantry"]["attack_pct"] == 120.0
-    by_troop = draft.get("catalog_by_troop") or {}
-    assert "Helga" in (by_troop.get("infantry") or [])
-    assert "Jabel" in (by_troop.get("cavalry") or [])
-    assert "Diana" in (by_troop.get("archers") or [])
+    assert "Helga" in (draft.get("catalog_by_troop") or {}).get("infantry", [])
 
-    empty = client.get("/api/mystic-trial/radiant-opponents/9/9")
-    assert empty.status_code == 200, empty.text
-    assert len(empty.json()["marches"]) == 2
-    assert empty.json()["marches"][0]["counts"]["infantry"] == 0
-
-    opt = client.get("/api/optimize/radiant-spire?stage=3&round=2")
+    opt = client.get("/api/optimize/coliseum?stage=3&round=2")
     assert opt.status_code == 200, opt.text
     payload = opt.json()
     assert payload.get("opponent")
     assert payload["opponent"].get("saved") is True
-    assert "Helga" in (payload.get("catalog_hero_names") or [])
     march0 = payload["opponent"]["marches"][0]
     assert march0["hero_names"] == ["Helga", "Jabel", "Diana"]
-    assert march0["hero_level"] == 80
-    assert march0["gear_enhancement"] == 40
-    assert march0["levels"]["infantry"] == 7
     assert march0["counts"]["infantry"] == 42000
-    assert march0["bonuses"]["infantry"]["attack_pct"] == 120.0
-    assert payload.get("floor", {}).get("enemy_proxy") is True
+    assert len(payload.get("marches") or []) >= 2
+    assert (payload.get("floor") or {}).get("event_troop_tier") == 10
+    assert (payload.get("floor") or {}).get("event_march_capacity") == 250_000
     mc = (payload["marches"][0] or {}).get("breakdown", {}).get("mc") or {}
     assert mc.get("enemy_score", 0) > 0
+    assert payload.get("engine") == "mc"
 
 
-def test_proxy_only_without_round_hides_opponent(tmp_path: Path) -> None:
+def test_coliseum_event_troops_put(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+    put = client.put(
+        "/api/mystic-trial/coliseum-event-troops/1/1",
+        json={"tier": 10, "march_size": 250000},
+    )
+    assert put.status_code == 200, put.text
+    assert put.json()["player_event_troops"] == {
+        "tier": 10,
+        "march_size": 250000,
+    }
+    got = client.get("/api/mystic-trial/coliseum-opponents/1/1")
+    assert got.status_code == 200
+    assert got.json()["player_event_troops"]["march_size"] == 250000
+
+
+def test_coliseum_proxy_only_without_round_hides_opponent(tmp_path: Path) -> None:
     client = _client(tmp_path)
     client.put(
-        "/api/mystic-trial/radiant-opponents/3/2/0",
+        "/api/mystic-trial/coliseum-opponents/3/2/0",
         json={
             "levels": {"infantry": 6, "cavalry": 6, "archers": 6},
             "counts": {"infantry": 10, "cavalry": 0, "archers": 0},
             "bonuses": {},
         },
     )
-    # stage alone (legacy floor) without round → no opponent panel
-    res = client.get("/api/optimize/radiant-spire?stage=3")
+    res = client.get("/api/optimize/coliseum?stage=3")
     assert res.status_code == 200
     assert res.json().get("opponent") is None
 
-    # floor alias alone also proxy-only now (round required)
-    legacy = client.get("/api/optimize/radiant-spire?floor=3")
-    assert legacy.status_code == 200
-    assert legacy.json().get("opponent") is None
+    bare = client.get("/api/optimize/coliseum")
+    assert bare.status_code == 200
+    assert bare.json().get("opponent") is None
+
+
+def test_coliseum_stage_round_empty_still_shows_opponent_panel(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    res = client.get("/api/optimize/coliseum?stage=1&round=1")
+    assert res.status_code == 200, res.text
+    opp = res.json().get("opponent")
+    assert opp is not None
+    assert len(opp.get("marches") or []) == 2

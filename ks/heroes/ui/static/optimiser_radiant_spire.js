@@ -1,4 +1,4 @@
-/* Radiant Spire — report marches like Event lineups (chips → one board). */
+/* Radiant Spire — stage·round input first; Generate solves; opponent overrides via GET/PUT. */
 (function () {
   "use strict";
 
@@ -13,20 +13,20 @@
   var modeChipsEl = document.getElementById("mode-chips");
   var boardEl = document.getElementById("board");
   var opponentEditEl = document.getElementById("radiant-opponent-edit");
-  var playerBonusesEl = document.getElementById("radiant-player-bonuses");
   var opponentNoteEl = document.getElementById("opponent-note");
   var heroEditEl = document.getElementById("opponent-hero-edit");
   var troopEditEl = document.getElementById("opponent-troop-edit");
   var bonusEditEl = document.getElementById("opponent-bonus-edit");
-  var playerBonusEditEl = document.getElementById("player-bonus-edit");
   var bannerEl = document.getElementById("proxy-banner");
   var regenBtn = document.getElementById("radiant-regen");
+  var regenInlineBtn = document.getElementById("radiant-regen-inline");
   var stageEl = document.getElementById("radiant-stage");
   var roundEl = document.getElementById("radiant-round");
+  var eventTierEl = document.getElementById("radiant-event-tier");
+  var eventSizeEl = document.getElementById("radiant-event-march-size");
+  var eventTroopsApplyBtn = document.getElementById("radiant-event-troops-apply");
   var applyBtn = document.getElementById("opponent-apply");
   var copyOtherBtn = document.getElementById("opponent-copy-other");
-  var playerBonusApplyBtn = document.getElementById("player-bonus-apply");
-  var playerBonusCopyBtn = document.getElementById("player-bonus-copy-opp");
 
   var TROOPS = ["infantry", "cavalry", "archers"];
   var TROOP_LABEL = { infantry: "Infantry", cavalry: "Cavalry", archers: "Archers" };
@@ -38,9 +38,27 @@
   ];
 
   var fillingEditors = false;
-  var chosenKey = "you-0";
+  var chosenKey = "opp-0";
   var catalogNames = [];
+  var catalogByTroop = { infantry: [], cavalry: [], archers: [] };
+  var classHeroPicker = null;
+  var lastOptimizeData = null;
+  var opponentLoadSeq = 0;
+  var generating = false;
   var gearSheet = B.bindGearSheet();
+
+  function syncGenerateEnabled() {
+    var ok = !!selectedStageRound() && !generating;
+    [regenBtn, regenInlineBtn].forEach(function (btn) {
+      if (!btn) return;
+      btn.disabled = !ok;
+      btn.title = ok
+        ? "Generate marches for this stage · round"
+        : generating
+          ? "Solving…"
+          : "Set stage and round first, then Generate";
+    });
+  }
 
   function parsePositiveInt(el) {
     if (!el) return null;
@@ -79,39 +97,138 @@
     errorEl.textContent = "";
   }
 
-  function fillHeroSelect(sel, selected) {
-    var keep = String(selected || "");
-    sel.innerHTML = "";
-    var blank = document.createElement("option");
-    blank.value = "";
-    blank.textContent = "— hero —";
-    sel.appendChild(blank);
-    catalogNames.forEach(function (name) {
-      var opt = document.createElement("option");
-      opt.value = name;
-      opt.textContent = name;
-      sel.appendChild(opt);
-    });
-    if (keep && catalogNames.indexOf(keep) < 0) {
-      var extra = document.createElement("option");
-      extra.value = keep;
-      extra.textContent = keep;
-      sel.appendChild(extra);
+  function emptyMarch() {
+    return {
+      hero_names: ["", "", ""],
+      hero_level: null,
+      gear_enhancement: null,
+      levels: { infantry: 6, cavalry: 6, archers: 6 },
+      counts: { infantry: 0, cavalry: 0, archers: 0 },
+      bonuses: {
+        infantry: {
+          attack_pct: 0,
+          defense_pct: 0,
+          lethality_pct: 0,
+          health_pct: 0,
+        },
+        cavalry: {
+          attack_pct: 0,
+          defense_pct: 0,
+          lethality_pct: 0,
+          health_pct: 0,
+        },
+        archers: {
+          attack_pct: 0,
+          defense_pct: 0,
+          lethality_pct: 0,
+          health_pct: 0,
+        },
+      },
+    };
+  }
+
+  function normalizeMarches(marches) {
+    var out = [emptyMarch(), emptyMarch()];
+    if (!Array.isArray(marches)) return out;
+    for (var i = 0; i < 2; i++) {
+      if (marches[i]) out[i] = marches[i];
     }
-    sel.value = keep;
+    return out;
+  }
+
+
+  function fillEventTroops(data) {
+    var pet = (data && data.player_event_troops) || {};
+    if (eventTierEl && pet.tier != null) eventTierEl.value = String(pet.tier);
+    if (eventSizeEl && pet.march_size != null) {
+      eventSizeEl.value = String(pet.march_size);
+    }
+  }
+
+  function readEventTroopsBody() {
+    var tier = Number(eventTierEl && eventTierEl.value);
+    var size = Number(eventSizeEl && eventSizeEl.value);
+    if (!Number.isFinite(tier) || tier < 1 || tier > 11 || Math.floor(tier) !== tier) {
+      return { error: "Troop tier must be an integer 1–11." };
+    }
+    if (!Number.isFinite(size) || size < 1 || Math.floor(size) !== size) {
+      return { error: "March size must be an integer >= 1." };
+    }
+    return { body: { tier: tier, march_size: size } };
+  }
+
+  function eventTroopsPutUrl(sr) {
+    return (
+      "/api/mystic-trial/radiant-event-troops/" +
+      encodeURIComponent(String(sr.stage)) +
+      "/" +
+      encodeURIComponent(String(sr.round))
+    );
+  }
+
+  async function putEventTroops(sr, body) {
+    var res = await fetch(eventTroopsPutUrl(sr), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    var payload = await res.json().catch(function () {
+      return {};
+    });
+    if (!res.ok) {
+      throw new Error(payload.detail || "Save event troops failed: " + res.status);
+    }
+    fillEventTroops(payload);
+    return payload;
+  }
+
+  async function saveEventTroops() {
+    var sr = selectedStageRound();
+    if (!sr) {
+      showError("Enter stage and round before saving event troops.");
+      return;
+    }
+    var checked = readEventTroopsBody();
+    if (checked.error) {
+      showError(checked.error);
+      return;
+    }
+    statusEl.textContent = "Saving event troops…";
+    try {
+      await putEventTroops(sr, checked.body);
+      statusEl.textContent =
+        "Event troops saved (T" +
+        checked.body.tier +
+        " · " +
+        checked.body.march_size +
+        "). Press Generate when ready.";
+      clearError();
+    } catch (err) {
+      showError(String(err && err.message ? err.message : err));
+    }
+  }
+
+  function ingestCatalog(data) {
+    if (Array.isArray(data.catalog_hero_names) && data.catalog_hero_names.length) {
+      catalogNames = data.catalog_hero_names.slice();
+    }
+    if (data.catalog_by_troop && typeof data.catalog_by_troop === "object") {
+      catalogByTroop = {
+        infantry: (data.catalog_by_troop.infantry || []).slice(),
+        cavalry: (data.catalog_by_troop.cavalry || []).slice(),
+        archers: (data.catalog_by_troop.archers || []).slice(),
+      };
+    }
   }
 
   function ensureHeroEditors() {
     if (!heroEditEl) return;
-    if (!heroEditEl.childNodes.length) {
-      for (var i = 0; i < 3; i++) {
-        var lab = document.createElement("label");
-        lab.appendChild(document.createTextNode("Hero " + (i + 1)));
-        var sel = document.createElement("select");
-        sel.dataset.heroSlot = String(i);
-        lab.appendChild(sel);
-        heroEditEl.appendChild(lab);
-      }
+    var pickerHost = heroEditEl.querySelector(".class-hero-picker-host");
+    if (!pickerHost) {
+      heroEditEl.innerHTML = "";
+      pickerHost = document.createElement("div");
+      pickerHost.className = "class-hero-picker-host";
+      heroEditEl.appendChild(pickerHost);
       var shared = document.createElement("div");
       shared.className = "opponent-heroes-shared";
       var levelLab = document.createElement("label");
@@ -134,23 +251,21 @@
       shared.appendChild(gearLab);
       heroEditEl.appendChild(shared);
     }
-    for (var s = 0; s < 3; s++) {
-      var existing = heroEditEl.querySelector(
-        'select[data-hero-slot="' + s + '"]'
-      );
-      if (existing) fillHeroSelect(existing, existing.value);
+    if (!classHeroPicker) {
+      classHeroPicker = B.mountClassHeroPicker(pickerHost, {
+        byTroop: catalogByTroop,
+        selected: ["", "", ""],
+      });
+    } else {
+      classHeroPicker.refresh(catalogByTroop);
     }
   }
 
   function readHeroEdits() {
     ensureHeroEditors();
-    var names = [];
-    for (var i = 0; i < 3; i++) {
-      var sel = heroEditEl.querySelector(
-        'select[data-hero-slot="' + i + '"]'
-      );
-      names.push(String((sel && sel.value) || "").trim());
-    }
+    var names = classHeroPicker
+      ? classHeroPicker.getSelection()
+      : ["", "", ""];
     var levelInp = heroEditEl.querySelector('input[data-field="hero_level"]');
     var gearInp = heroEditEl.querySelector(
       'input[data-field="gear_enhancement"]'
@@ -217,7 +332,8 @@
         inp.min = "0";
         inp.dataset.troop = troop;
         inp.dataset.bonus = spec.key;
-        inp.title = "Bonus only (additive on top of 1); shown as entered";
+        inp.title =
+          "Percent-points or game total (e.g. 160.2 / 60.2 / 0.602); shown as entered";
         lab.appendChild(inp);
         box.appendChild(lab);
       });
@@ -286,11 +402,8 @@
     ensureBonusEditors();
 
     var names = (march && march.hero_names) || ["", "", ""];
-    for (var i = 0; i < 3; i++) {
-      var sel = heroEditEl.querySelector(
-        'select[data-hero-slot="' + i + '"]'
-      );
-      if (sel) fillHeroSelect(sel, names[i] || "");
+    if (classHeroPicker) {
+      classHeroPicker.setSelection(names);
     }
     var levelInp = heroEditEl.querySelector('input[data-field="hero_level"]');
     var gearInp = heroEditEl.querySelector(
@@ -336,7 +449,7 @@
         opponentNoteEl.textContent =
           "Editing " +
           entry.label +
-          " — 3 heroes, shared levels, troops, bonus-only Atk/Def/Leth/HP. Apply saves.";
+          " — pick one Inf / Cav / Arch hero (portrait grid), shared level & gold gear +, troops, bonuses. Apply saves.";
       }
       var slot = opponentSlotFromKey(chosenKey);
       if (copyOtherBtn && slot != null) {
@@ -347,7 +460,7 @@
     } else {
       if (opponentNoteEl) {
         opponentNoteEl.textContent =
-          "Select an opponent march below. Pick 3 heroes, hero level, gold gear +, troop counts, and bonuses.";
+          "Select an opponent march below. Pick Infantry / Cavalry / Archers from the portrait grid, then hero level, gold gear +, troop counts, and bonuses.";
       }
       if (copyOtherBtn) copyOtherBtn.hidden = true;
     }
@@ -394,7 +507,6 @@
   function fmtBonus(n) {
     var x = Number(n);
     if (!Number.isFinite(x)) return "—";
-    // Bonus additive on top of 1 — show the stored value as-is (no ×100 / % suffix).
     if (Math.abs(x - Math.round(x)) < 1e-9) return String(Math.round(x));
     var s = x.toFixed(6).replace(/\.?0+$/, "");
     return s || "0";
@@ -506,79 +618,91 @@
     });
   }
 
-  function render(data) {
+  function render(data, opts) {
+    opts = opts || {};
     clearError();
-    catalogNames = Array.isArray(data.catalog_hero_names)
-      ? data.catalog_hero_names.slice()
-      : [];
-    if (data.proxy_banner) {
+    ingestCatalog(data);
+    if (data.proxy_banner && bannerEl) {
       bannerEl.textContent = data.proxy_banner;
     }
 
-    var engine = data.engine || "proxy";
+    var engine = data.engine || (opts.draft ? "input" : "proxy");
     if (scoreEl) {
-      scoreEl.hidden = false;
-      if (engine === "mc") {
-        scoreEl.textContent =
-          "Lineup win-rate score: " + Number(data.lineup_score || 0).toFixed(3);
+      if (opts.draft) {
+        scoreEl.hidden = true;
       } else {
-        scoreEl.textContent =
-          "Lineup proxy score: " + Number(data.lineup_score || 0).toFixed(0);
+        scoreEl.hidden = false;
+        if (engine === "mc") {
+          scoreEl.textContent =
+            "Lineup win-rate score: " + Number(data.lineup_score || 0).toFixed(3);
+        } else {
+          scoreEl.textContent =
+            "Lineup proxy score: " + Number(data.lineup_score || 0).toFixed(0);
+        }
       }
     }
     if (engineEl) {
-      var bits = ["Engine: " + engine];
-      var sr = selectedStageRound();
-      if (sr) {
-        bits.push("stage " + sr.stage + " · round " + sr.round);
+      if (opts.draft) {
+        var srDraft = selectedStageRound();
+        engineEl.hidden = false;
+        engineEl.textContent = srDraft
+          ? "Input · stage " + srDraft.stage + " · round " + srDraft.round
+          : "Input";
+      } else {
+        var bits = ["Engine: " + engine];
+        var sr = selectedStageRound();
+        if (sr) {
+          bits.push("stage " + sr.stage + " · round " + sr.round);
+        }
+        if (data.floor && data.floor.floor != null) {
+          bits.push(
+            "enemy scale ×" + Number(data.floor.enemy_power_scale || 0).toFixed(2)
+          );
+          if (data.floor.overrides_applied) bits.push("overrides on");
+        }
+        if (data.opponent && data.opponent.saved) bits.push("saved opponents");
+        if (data.floor && data.floor.enemy_proxy) bits.push("enemy proxy");
+        if (data.warnings && data.warnings.length) {
+          bits.push(data.warnings.join("; "));
+        }
+        engineEl.hidden = false;
+        engineEl.textContent = bits.join(" · ");
       }
-      if (data.floor && data.floor.floor != null) {
-        bits.push(
-          "enemy scale ×" + Number(data.floor.enemy_power_scale || 0).toFixed(2)
-        );
-        if (data.floor.overrides_applied) bits.push("overrides on");
-      }
-      if (data.opponent && data.opponent.saved) bits.push("saved opponents");
-      if (data.floor && data.floor.enemy_proxy) bits.push("enemy proxy");
-      if (data.warnings && data.warnings.length) {
-        bits.push(data.warnings.join("; "));
-      }
-      engineEl.hidden = false;
-      engineEl.textContent = bits.join(" · ");
     }
 
     var gov = data.governor || {};
     chipsEl.innerHTML = "";
-    B.appendChip(
-      chipsEl,
-      "Set " +
-        (gov.set_tier || "—") +
-        " · Def +" +
-        B.fmtPct(gov.set_defense_pct) +
-        " · Atk +" +
-        B.fmtPct(gov.set_attack_pct)
-    );
-    TROOPS.forEach(function (troop) {
-      var atk = (gov.attack_pct || {})[troop] || 0;
-      var defn = (gov.defense_pct || {})[troop] || 0;
+    if (!opts.draft) {
       B.appendChip(
         chipsEl,
-        troop + " gov Atk " + B.fmtPct(atk) + " / Def " + B.fmtPct(defn)
+        "Set " +
+          (gov.set_tier || "—") +
+          " · Def +" +
+          B.fmtPct(gov.set_defense_pct) +
+          " · Atk +" +
+          B.fmtPct(gov.set_attack_pct)
       );
-    });
+      TROOPS.forEach(function (troop) {
+        var atk = (gov.attack_pct || {})[troop] || 0;
+        var defn = (gov.defense_pct || {})[troop] || 0;
+        B.appendChip(
+          chipsEl,
+          troop + " gov Atk " + B.fmtPct(atk) + " / Def " + B.fmtPct(defn)
+        );
+      });
+    }
 
-    var hasOpp = !!(data.opponent && data.opponent.marches && data.opponent.marches.length);
+    var hasOpp = !!(
+      data.opponent &&
+      data.opponent.marches &&
+      data.opponent.marches.length
+    );
     if (opponentEditEl) {
       opponentEditEl.hidden = !hasOpp;
       if (hasOpp) {
         ensureTroopEditors();
         ensureBonusEditors();
-      }
-    }
-    if (playerBonusesEl) {
-      playerBonusesEl.hidden = !selectedStageRound();
-      if (!playerBonusesEl.hidden) {
-        fillBonusesInto(playerBonusEditEl, data.player_bonuses || {});
+        ensureHeroEditors();
       }
     }
 
@@ -586,7 +710,9 @@
     var keys = entries.map(function (e) {
       return e.key;
     });
-    if (keys.indexOf(chosenKey) === -1) chosenKey = keys[0] || "you-0";
+    if (keys.indexOf(chosenKey) === -1) {
+      chosenKey = keys.filter(isOpponentKey)[0] || keys[0] || "opp-0";
+    }
 
     function chooseMarch(key) {
       chosenKey = key;
@@ -600,11 +726,16 @@
     renderSelectedBoard(entries);
     syncEditorsToSelection(entries);
 
-    statusEl.textContent =
-      "Ready · " +
-      (data.active_marches || (data.marches || []).filter(Boolean).length) +
-      " active marches · " +
-      engine;
+    if (opts.draft) {
+      statusEl.textContent =
+        "Edit opponent overrides, Apply to save, then press Generate.";
+    } else {
+      statusEl.textContent =
+        "Ready · " +
+        (data.active_marches || (data.marches || []).filter(Boolean).length) +
+        " active marches · " +
+        engine;
+    }
   }
 
   function buildUrl() {
@@ -620,27 +751,112 @@
     );
   }
 
-  async function load() {
-    statusEl.textContent = "Solving marches…";
+  function opponentsGetUrl(sr) {
+    return (
+      "/api/mystic-trial/radiant-opponents/" +
+      encodeURIComponent(String(sr.stage)) +
+      "/" +
+      encodeURIComponent(String(sr.round))
+    );
+  }
+
+  async function loadOpponentDraft() {
+    var sr = selectedStageRound();
+    lastOptimizeData = null;
+    if (!sr) {
+      if (opponentEditEl) opponentEditEl.hidden = true;
+      modeChipsEl.innerHTML = "";
+      boardEl.innerHTML = "";
+      if (scoreEl) scoreEl.hidden = true;
+      if (engineEl) engineEl.hidden = true;
+      chipsEl.innerHTML = "";
+      statusEl.textContent =
+        "Enter stage & round, set opponent overrides, then press Generate.";
+      return;
+    }
+    var seq = ++opponentLoadSeq;
+    statusEl.textContent =
+      "Loading opponent overrides for stage " +
+      sr.stage +
+      " · round " +
+      sr.round +
+      "…";
+    if (scoreEl) scoreEl.hidden = true;
+    clearError();
+    try {
+      var res = await fetch(opponentsGetUrl(sr), { cache: "no-store" });
+      var body = await res.json().catch(function () {
+        return {};
+      });
+      if (seq !== opponentLoadSeq) return;
+      if (!res.ok) {
+        showError(body.detail || "Load opponents failed: " + res.status);
+        return;
+      }
+      ingestCatalog(body);
+      fillEventTroops(body);
+      chosenKey = "opp-0";
+      render(
+        {
+          catalog_hero_names: catalogNames,
+          catalog_by_troop: catalogByTroop,
+          marches: [],
+          opponent: {
+            saved: true,
+            marches: normalizeMarches(body.marches),
+          },
+          engine: "input",
+          governor: {},
+        },
+        { draft: true }
+      );
+    } catch (err) {
+      if (seq !== opponentLoadSeq) return;
+      showError(String(err));
+    }
+  }
+
+  async function generate() {
+    var sr = selectedStageRound();
+    if (!sr) {
+      showError("Set stage and round before Generate.");
+      syncGenerateEnabled();
+      return;
+    }
+    if (generating) return;
+    var troopsCheck = readEventTroopsBody();
+    if (troopsCheck.error) {
+      showError(troopsCheck.error);
+      syncGenerateEnabled();
+      return;
+    }
+    generating = true;
+    syncGenerateEnabled();
+    statusEl.textContent = "Saving event troops & solving…";
     if (scoreEl) scoreEl.hidden = true;
     if (engineEl) engineEl.hidden = true;
     modeChipsEl.innerHTML = "";
     boardEl.innerHTML = "";
-    if (opponentEditEl && !selectedStageRound()) opponentEditEl.hidden = true;
-    if (playerBonusesEl && !selectedStageRound()) playerBonusesEl.hidden = true;
     clearError();
     try {
+      await putEventTroops(sr, troopsCheck.body);
+      statusEl.textContent = "Solving marches…";
       var res = await fetch(buildUrl(), { cache: "no-store" });
       var body = await res.json().catch(function () {
         return {};
       });
       if (!res.ok) {
-        showError(body.detail || ("Optimize failed: " + res.status));
+        showError(body.detail || "Optimize failed: " + res.status);
         return;
       }
+      lastOptimizeData = body;
+      if (!isOpponentKey(chosenKey)) chosenKey = "you-0";
       render(body);
     } catch (err) {
       showError(String(err));
+    } finally {
+      generating = false;
+      syncGenerateEnabled();
     }
   }
 
@@ -663,9 +879,18 @@
     TROOPS.forEach(function (troop) {
       var level = troops.levels[troop];
       var count = troops.counts[troop];
-      if (!Number.isFinite(level) || level < 1 || level > 11 || Math.floor(level) !== level) {
+      if (
+        !Number.isFinite(level) ||
+        level < 1 ||
+        level > 11 ||
+        Math.floor(level) !== level
+      ) {
         bad = "Troop level must be an integer 1–11 (" + troop + ").";
-      } else if (!Number.isFinite(count) || count < 0 || Math.floor(count) !== count) {
+      } else if (
+        !Number.isFinite(count) ||
+        count < 0 ||
+        Math.floor(count) !== count
+      ) {
         bad = "Troop count must be a non-negative whole number (" + troop + ").";
       }
     });
@@ -704,9 +929,32 @@
       return {};
     });
     if (!res.ok) {
-      throw new Error(payload.detail || ("Save failed: " + res.status));
+      throw new Error(payload.detail || "Save failed: " + res.status);
     }
     return payload;
+  }
+
+  function refreshAfterOpponentSave(payload) {
+    var marches = normalizeMarches(payload.marches);
+    if (lastOptimizeData) {
+      lastOptimizeData.opponent = { saved: true, marches: marches };
+      render(lastOptimizeData);
+      statusEl.textContent =
+        "Opponent saved. Press Generate again to rescore with the new overrides.";
+      return;
+    }
+    render(
+      {
+        catalog_hero_names: catalogNames,
+        marches: [],
+        opponent: { saved: true, marches: marches },
+        engine: "input",
+        governor: {},
+      },
+      { draft: true }
+    );
+    statusEl.textContent =
+      "Opponent saved. Press Generate when ready.";
   }
 
   async function applyOpponentEdits() {
@@ -734,8 +982,8 @@
 
     statusEl.textContent = "Saving opponent…";
     try {
-      await putOpponentSlot(sr, slot, checked.body);
-      await load();
+      var payload = await putOpponentSlot(sr, slot, checked.body);
+      refreshAfterOpponentSave(payload);
     } catch (err) {
       showError(String(err && err.message ? err.message : err));
     }
@@ -766,70 +1014,32 @@
 
     statusEl.textContent = "Copying to Opponent " + (other + 1) + "…";
     try {
-      // Persist the source slot as shown, then the destination with the same data.
       await putOpponentSlot(sr, slot, checked.body);
-      await putOpponentSlot(sr, other, checked.body);
+      var payload = await putOpponentSlot(sr, other, checked.body);
       chosenKey = "opp-" + other;
-      await load();
+      refreshAfterOpponentSave(payload);
     } catch (err) {
       showError(String(err && err.message ? err.message : err));
     }
-  }
-
-  async function applyPlayerBonuses() {
-    if (fillingEditors) return;
-    var sr = selectedStageRound();
-    if (!sr) {
-      showError("Enter stage and round before saving your bonuses.");
-      return;
-    }
-    statusEl.textContent = "Saving your bonuses…";
-    try {
-      var putUrl =
-        "/api/mystic-trial/radiant-player-bonuses/" +
-        encodeURIComponent(String(sr.stage)) +
-        "/" +
-        encodeURIComponent(String(sr.round));
-      var res = await fetch(putUrl, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bonuses: readBonusesFrom(playerBonusEditEl) }),
-      });
-      var payload = await res.json().catch(function () {
-        return {};
-      });
-      if (!res.ok) {
-        throw new Error(payload.detail || ("Save failed: " + res.status));
-      }
-      await load();
-    } catch (err) {
-      showError(String(err && err.message ? err.message : err));
-    }
-  }
-
-  function copyPlayerBonusesFromOpponent() {
-    var entries = [];
-    // Prefer live opponent editor values if an opp is selected; else opp-0 from last fill.
-    if (isOpponentKey(chosenKey) && bonusEditEl) {
-      fillBonusesInto(playerBonusEditEl, readBonusesFrom(bonusEditEl));
-      return;
-    }
-    fillBonusesInto(playerBonusEditEl, readBonusesFrom(bonusEditEl));
   }
 
   function onStageRoundChange() {
-    chosenKey = "you-0";
-    load();
+    chosenKey = "opp-0";
+    syncGenerateEnabled();
+    loadOpponentDraft();
   }
 
-  if (regenBtn) regenBtn.addEventListener("click", load);
+  if (regenBtn) regenBtn.addEventListener("click", generate);
+  if (regenInlineBtn) regenInlineBtn.addEventListener("click", generate);
   if (stageEl) stageEl.addEventListener("change", onStageRoundChange);
   if (roundEl) roundEl.addEventListener("change", onStageRoundChange);
+  if (stageEl) stageEl.addEventListener("input", onStageRoundChange);
+  if (roundEl) roundEl.addEventListener("input", onStageRoundChange);
+  if (eventTroopsApplyBtn) eventTroopsApplyBtn.addEventListener("click", saveEventTroops);
   if (applyBtn) applyBtn.addEventListener("click", applyOpponentEdits);
   if (copyOtherBtn) copyOtherBtn.addEventListener("click", copyOpponentToOther);
-  if (playerBonusApplyBtn) playerBonusApplyBtn.addEventListener("click", applyPlayerBonuses);
-  if (playerBonusCopyBtn) {
-    playerBonusCopyBtn.addEventListener("click", copyPlayerBonusesFromOpponent);
-  }
-  load();
+
+  syncGenerateEnabled();
+  statusEl.textContent =
+    "Enter stage & round, set opponent overrides, then press Generate.";
 })();

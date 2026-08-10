@@ -12,6 +12,36 @@ from ks.heroes.optimize.mystic_trial.ratios import TROOP_TYPES, normalize_ratio
 
 STORE_VERSION = 1
 MARCH_SLOTS = 2
+DEFAULT_EVENT_TROOP_TIER = 10
+DEFAULT_EVENT_MARCH_SIZE = 250_000
+
+
+def default_player_event_troops(
+    *,
+    tier: int | None = None,
+    march_size: int | None = None,
+) -> dict[str, int]:
+    """UI / solver defaults when stage·round has no saved override."""
+    t = DEFAULT_EVENT_TROOP_TIER if tier is None else int(tier)
+    size = DEFAULT_EVENT_MARCH_SIZE if march_size is None else int(march_size)
+    return parse_player_event_troops({"tier": t, "march_size": size})
+
+
+def parse_player_event_troops(raw: Any) -> dict[str, int]:
+    """Validate ``{tier, march_size}`` for event-borrowed player troops."""
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"player_event_troops must be a mapping; got {type(raw).__name__}"
+        )
+    tier = _as_int(raw.get("tier"), field="player_event_troops.tier")
+    if tier < 1 or tier > 11:
+        raise ValueError(f"player_event_troops.tier must be 1–11; got {tier}")
+    march_size = _as_int(raw.get("march_size"), field="player_event_troops.march_size")
+    if march_size < 1:
+        raise ValueError(
+            f"player_event_troops.march_size must be >= 1; got {march_size}"
+        )
+    return {"tier": tier, "march_size": march_size}
 
 
 def default_levels() -> dict[str, int]:
@@ -35,8 +65,20 @@ def empty_march() -> dict[str, Any]:
     }
 
 
-def opponents_path(governor_dir: Path) -> Path:
-    return Path(governor_dir).expanduser().resolve() / "mystic_trial" / "radiant_opponents.yaml"
+def opponents_path(governor_dir: Path, room: str = "radiant") -> Path:
+    """YAML under governor ``mystic_trial/``; ``room`` is radiant or coliseum."""
+    key = str(room or "radiant").strip().lower().replace(" ", "_")
+    if key in ("radiant_spire", "radiant"):
+        key = "radiant"
+    elif key in ("coliseum",):
+        key = "coliseum"
+    else:
+        raise ValueError(f"unsupported mystic opponents room {room!r}")
+    return (
+        Path(governor_dir).expanduser().resolve()
+        / "mystic_trial"
+        / f"{key}_opponents.yaml"
+    )
 
 
 def _as_int(value: Any, *, field: str) -> int:
@@ -154,6 +196,11 @@ def load_store(path: Path) -> dict[str, Any]:
                     if entry.get("player_bonuses") is not None
                     else None
                 ),
+                "player_event_troops": (
+                    parse_player_event_troops(entry.get("player_event_troops"))
+                    if entry.get("player_event_troops") is not None
+                    else None
+                ),
             }
         stages[str(stage_key)] = rounds
     return {"version": int(raw.get("version", STORE_VERSION)), "stages": stages}
@@ -201,6 +248,53 @@ def get_player_bonuses(
     return parse_enemy_bonuses(raw)
 
 
+def get_player_event_troops(
+    store: dict[str, Any], stage: int, round_no: int
+) -> dict[str, int] | None:
+    """Event-borrowed tier + march size for a stage·round, if saved."""
+    stages = store.get("stages") or {}
+    rounds = stages.get(str(int(stage)))
+    if not isinstance(rounds, dict):
+        return None
+    entry = rounds.get(str(int(round_no)))
+    if not isinstance(entry, dict):
+        return None
+    raw = entry.get("player_event_troops")
+    if raw is None:
+        return None
+    return parse_player_event_troops(raw)
+
+
+def _entry_preserving(
+    existing: Any,
+    *,
+    marches: list[dict[str, Any]] | None = None,
+    player_bonuses: Any = ...,
+    player_event_troops: Any = ...,
+) -> dict[str, Any]:
+    """Build a stage·round entry while preserving sibling fields."""
+    base = existing if isinstance(existing, dict) else {}
+    out: dict[str, Any] = {
+        "marches": (
+            marches
+            if marches is not None
+            else _two_marches(base.get("marches"))
+        ),
+    }
+    bonuses = player_bonuses
+    if bonuses is ...:
+        bonuses = base.get("player_bonuses")
+    if bonuses is not None:
+        out["player_bonuses"] = parse_enemy_bonuses(bonuses)
+
+    event_troops = player_event_troops
+    if event_troops is ...:
+        event_troops = base.get("player_event_troops")
+    if event_troops is not None:
+        out["player_event_troops"] = parse_player_event_troops(event_troops)
+    return out
+
+
 def upsert_player_bonuses(
     store: dict[str, Any],
     *,
@@ -214,11 +308,30 @@ def upsert_player_bonuses(
     stages = dict(store.get("stages") or {})
     rounds = dict(stages.get(stage_s) or {})
     existing = rounds.get(round_s) or {}
-    marches = _two_marches(existing.get("marches") if isinstance(existing, dict) else None)
-    rounds[round_s] = {
-        "marches": marches,
-        "player_bonuses": parse_enemy_bonuses(bonuses),
-    }
+    rounds[round_s] = _entry_preserving(
+        existing, player_bonuses=parse_enemy_bonuses(bonuses)
+    )
+    stages[stage_s] = rounds
+    return {"version": STORE_VERSION, "stages": stages}
+
+
+def upsert_player_event_troops(
+    store: dict[str, Any],
+    *,
+    stage: int,
+    round_no: int,
+    event_troops: dict[str, int],
+) -> dict[str, Any]:
+    """Save event-borrowed tier + march size for a stage·round."""
+    stage_s = str(int(stage))
+    round_s = str(int(round_no))
+    stages = dict(store.get("stages") or {})
+    rounds = dict(stages.get(stage_s) or {})
+    existing = rounds.get(round_s) or {}
+    rounds[round_s] = _entry_preserving(
+        existing,
+        player_event_troops=parse_player_event_troops(event_troops),
+    )
     stages[stage_s] = rounds
     return {"version": STORE_VERSION, "stages": stages}
 
@@ -241,13 +354,7 @@ def upsert_march(
     existing = rounds.get(round_s) or {}
     marches = _two_marches(existing.get("marches") if isinstance(existing, dict) else None)
     marches[slot] = parse_march(march)
-    player_bonuses = None
-    if isinstance(existing, dict) and existing.get("player_bonuses") is not None:
-        player_bonuses = parse_enemy_bonuses(existing.get("player_bonuses"))
-    entry: dict[str, Any] = {"marches": marches}
-    if player_bonuses is not None:
-        entry["player_bonuses"] = player_bonuses
-    rounds[round_s] = entry
+    rounds[round_s] = _entry_preserving(existing, marches=marches)
     stages[stage_s] = rounds
     return {"version": STORE_VERSION, "stages": stages}
 
@@ -263,15 +370,19 @@ def merge_saved_into_opponent(
     opponent: dict[str, Any] | None,
     saved_marches: list[dict[str, Any]] | None,
 ) -> dict[str, Any] | None:
-    """Overlay saved levels/counts/bonuses onto built opponent panel marches."""
-    if opponent is None or not saved_marches:
+    """Overlay saved levels/counts/bonuses onto built opponent panel marches.
+
+    When ``opponent`` is None (Coliseum / no floor stub), builds a panel from
+    saved marches alone so the UI still has Opponent 1/2 chips to edit.
+    """
+    if not saved_marches:
         return opponent
-    out = dict(opponent)
+    out = dict(opponent) if opponent is not None else {}
     built = list(out.get("marches") or [])
     merged: list[dict[str, Any]] = []
     for i in range(MARCH_SLOTS):
         base = dict(built[i]) if i < len(built) and isinstance(built[i], dict) else {
-            "hero_names": ["AI", "AI", "AI"],
+            "hero_names": ["", "", ""],
             "capacity": 0,
         }
         saved = saved_marches[i] if i < len(saved_marches) else empty_march()
@@ -303,19 +414,25 @@ def merge_saved_into_opponent(
 
 
 __all__ = [
+    "DEFAULT_EVENT_MARCH_SIZE",
+    "DEFAULT_EVENT_TROOP_TIER",
     "MARCH_SLOTS",
     "STORE_VERSION",
     "default_counts",
     "default_levels",
+    "default_player_event_troops",
     "empty_march",
     "get_player_bonuses",
+    "get_player_event_troops",
     "get_stage_round",
     "load_store",
     "merge_saved_into_opponent",
     "opponents_path",
     "parse_march",
+    "parse_player_event_troops",
     "ratio_from_counts",
     "save_store",
     "upsert_march",
     "upsert_player_bonuses",
+    "upsert_player_event_troops",
 ]

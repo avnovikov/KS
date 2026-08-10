@@ -3,7 +3,8 @@
 
 {% block actions %}
 <button type="button" id="radiant-regen"
-        title="Recompute dual marches from current inventory">Regenerate</button>
+        title="Set stage and round first, then Generate"
+        disabled>Generate</button>
 {% endblock %}
 
 {% block content %}
@@ -21,36 +22,40 @@
       <input id="radiant-round" type="number" min="1" step="1" placeholder="—"
              title="Round within the stage" />
     </label>
+    <label for="radiant-event-tier">
+      <span>Troop tier</span>
+      <input id="radiant-event-tier" type="number" min="1" max="11" step="1"
+             value="10" title="Event-borrowed top troop tier" />
+    </label>
+    <label for="radiant-event-march-size">
+      <span>March size</span>
+      <input id="radiant-event-march-size" type="number" min="1" step="1"
+             value="150000" title="Event march capacity (borrowed troops)" />
+    </label>
+    <button type="button" id="radiant-event-troops-apply"
+            title="Save event troop tier and march size for this stage · round">
+      Save troops
+    </button>
+    <button type="button" id="radiant-regen-inline"
+            class="btn-generate"
+            title="Set stage and round first, then Generate"
+            disabled>Generate</button>
   </div>
 </div>
 <p class="page-meta">Event lineups · Mystic Trial · {{ heroes_dir }} · governor {{ governor_dir }}</p>
 <p class="banner-warn" id="proxy-banner" role="status">
   Proxy score — not in-game clear prediction.
 </p>
-<p class="status-line" id="radiant-status" role="status">Solving marches…</p>
+<p class="status-line" id="radiant-status" role="status">
+  Enter stage &amp; round, set opponent overrides, then press Generate.
+</p>
 <p class="banner-err" id="radiant-error" role="alert" hidden></p>
-
-<section id="radiant-player-bonuses" hidden>
-  <h2 class="section-title">Your battle-report bonuses</h2>
-  <p class="hint">
-    Paste formation totals from <em>your</em> report the way the game shows them
-    (e.g. Infantry Attack <strong>160.2</strong>), or as +fraction on top of 1
-    (<strong>0.602</strong>), or as percent-points (<strong>60.2</strong>).
-    When set, fight math uses these instead of heroes+governor only.
-  </p>
-  <div class="opponent-edit panel">
-    <div class="bonus-edit" id="player-bonus-edit"></div>
-    <div class="opponent-apply-row">
-      <button type="button" id="player-bonus-copy-opp">Copy from Opponent 1</button>
-      <button type="button" id="player-bonus-apply">Apply my bonuses</button>
-    </div>
-  </div>
-</section>
 
 <section id="radiant-opponent-edit" hidden>
   <h2 class="section-title">Opponent overrides</h2>
   <p id="opponent-note" class="hint">
-    Select an opponent march below. Enter Atk/Def/Leth/HP as the game shows them
+    Select an opponent march below. Pick one Infantry / Cavalry / Archers hero
+    from the portrait grid. Enter Atk/Def/Leth/HP as the game shows them
     (e.g. <strong>160.2</strong> for 160.2%), or 0.602 / 60.2 — not 1.47 unless the
     screen really means +147%.
   </p>

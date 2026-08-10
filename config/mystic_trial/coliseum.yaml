@@ -1,8 +1,11 @@
 id: coliseum
 label: Coliseum
 focus: heroes_gear
-active_marches: 1
-schema_marches: 1
+active_marches: 2
+schema_marches: 2
+# Event-borrowed troops (inventory troops.yaml is not used for mystic fill/stats).
+event_march_capacity: 250000
+event_troop_tier: 10
 seed_ratio:
   infantry: 0.50
   cavalry: 0.10

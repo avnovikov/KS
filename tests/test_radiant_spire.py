@@ -32,7 +32,7 @@ def _table() -> TroopStatsTable:
         source="test",
         default_truegold=0,
         stats={
-            typ: {6: {0: u}}
+            typ: {tier: {0: u} for tier in range(1, 12)}
             for typ in ("infantry", "cavalry", "archers")
         },
     )
@@ -318,12 +318,15 @@ def test_optimize_radiant_uses_event_march_capacity_not_inventory() -> None:
         troops=troops,
         troop_stats=_table(),
         active_marches=2,
-        event_march_capacity=150_000,
+        player_event_troops={"tier": 10, "march_size": 150_000},
     )
     assert len(result.marches) == 2
     for march in result.marches:
         assert march.capacity == 150_000
         assert sum(march.counts.values()) == 150_000
+    assert result.floor is not None
+    assert result.floor.get("event_troop_tier") == 10
+    assert result.floor.get("player_event_troops", {}).get("march_size") == 150_000
 
 
 def test_optimize_radiant_schema_allows_three_marches() -> None:
