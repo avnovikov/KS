@@ -164,8 +164,8 @@ def test_coliseum_fills_two_marches_with_six_heroes() -> None:
     assert names0.isdisjoint(names1)
 
 
-def test_coliseum_reuses_same_faceplate_on_both_marches() -> None:
-    """Coliseum marches use fungible class sets — one Inf helmet equips both."""
+def test_coliseum_faceplate_is_exclusive_across_marches() -> None:
+    """One physical Inf helmet can equip only one Coliseum march."""
     catalog = load_catalog(None, ROOT / "config" / "hero_catalog.yaml")
     names = [
         ("Helga", "infantry"),
@@ -180,7 +180,7 @@ def test_coliseum_reuses_same_faceplate_on_both_marches() -> None:
         pytest.skip(f"catalog missing fixtures: {missing}")
     heroes = [_hero(n, t, attack=20.0 + i) for i, (n, t) in enumerate(names)]
     faceplate = GearRecord(
-        piece_id="fp-shared",
+        piece_id="fp-once",
         name="Judicator Faceplate",
         troop_type="infantry",
         slot="helmet",
@@ -200,17 +200,13 @@ def test_coliseum_reuses_same_faceplate_on_both_marches() -> None:
     )
     filled = [m for m in result.to_dict()["marches"] if m]
     assert len(filled) == 2
-    inf_ids: list[str] = []
+    wears = 0
     for march in filled:
         for name in march["hero_names"]:
-            troop = catalog[name].troop
-            if troop != "infantry":
-                continue
             pieces = (march.get("gear_assignment") or {}).get(name) or []
-            ids = [p.get("piece_id") for p in pieces if p.get("piece_id")]
-            assert "fp-shared" in ids, f"{name} missing shared faceplate"
-            inf_ids.extend(ids)
-    assert inf_ids.count("fp-shared") == 2
+            if any(p.get("piece_id") == "fp-once" for p in pieces):
+                wears += 1
+    assert wears == 1
 
 
 def test_coliseum_uses_player_event_troops_not_inventory_mix() -> None:

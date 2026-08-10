@@ -1,8 +1,8 @@
 """Coliseum dual-march mystic-trial optimiser (heroes + gear primary).
 
 Uses the Radiant Spire search pipeline (exclusive dual hero marches + layered
-ratio search) with Coliseum room ratios and ``governor_weight=0``. Gear is
-fungible across marches (same faceplate may equip on both).
+ratio search) with Coliseum room ratios and ``governor_weight=0``. Physical gear
+is exclusive across marches (one faceplate cannot equip on both).
 """
 
 from __future__ import annotations
