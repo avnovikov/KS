@@ -229,6 +229,7 @@ _SLOT_ALIASES = {
 #: picker must never offer a value the PATCH it feeds would reject with a 400.
 UI_RARITY_CHOICES: tuple[str, ...] = ("grey", "green", "blue", "epic", "mythic", "red")
 UI_SLOT_CHOICES: tuple[str, ...] = ("helmet", "chest", "gloves", "boots")
+UI_TROOP_CHOICES: tuple[str, ...] = ("infantry", "cavalry", "archers")
 
 
 def ui_select_value(
@@ -287,6 +288,68 @@ def normalize_ui_slot(slot: str | None) -> str | None:
             f"slot must be one of {sorted(_CANONICAL_SLOTS)}; got {slot!r}"
         )
     return key
+
+
+def normalize_ui_troop(troop: str | None) -> str | None:
+    """Map UI troop labels to inventory store values (infantry/cavalry/archers)."""
+    if troop is None:
+        return None
+    from ks.heroes.gear_names import normalize_troop
+
+    key = normalize_troop(str(troop).strip())
+    if key is None or key not in UI_TROOP_CHOICES:
+        raise ValueError(
+            f"troop_type must be one of {list(UI_TROOP_CHOICES)}; got {troop!r}"
+        )
+    return key
+
+
+def next_manual_piece_id(existing_ids: list[str] | tuple[str, ...] | set[str]) -> str:
+    """Allocate ``manual-{n}`` with n = 1 + max existing manual index."""
+    best = 0
+    for raw in existing_ids:
+        text = str(raw)
+        if not text.startswith("manual-"):
+            continue
+        suffix = text[len("manual-") :]
+        if not suffix.isdigit():
+            continue
+        best = max(best, int(suffix))
+    return f"manual-{best + 1}"
+
+
+def create_manual_piece(
+    store: GearStore,
+    *,
+    troop_type: str,
+    slot: str,
+    rarity: str,
+) -> GearRecord:
+    """Create a new inventory piece; name from ``gear_names.yaml``; persist SQL+JSON."""
+    from ks.heroes.gear_names import canonical_gear_name
+
+    troop = normalize_ui_troop(troop_type)
+    slot_n = normalize_ui_slot(slot)
+    rarity_n = normalize_ui_rarity(rarity)
+    if troop is None or slot_n is None or rarity_n is None:
+        raise ValueError("troop_type, slot, and rarity are required")
+    name = canonical_gear_name(troop=troop, slot=slot_n, rarity=rarity_n)
+    if not name:
+        raise ValueError(
+            f"unknown gear name for troop={troop!r} slot={slot_n!r} rarity={rarity_n!r}"
+        )
+    piece_id = next_manual_piece_id([p.piece_id for p in store.all_pieces()])
+    record = GearRecord(
+        piece_id=piece_id,
+        name=name,
+        troop_type=troop,
+        slot=slot_n,
+        rarity=rarity_n,
+        enhancement_level=None,
+        mastery_level=None,
+        power=None,
+    )
+    return store.upsert(record)
 
 
 def update_piece_levels(
@@ -1141,6 +1204,35 @@ def create_app(
                 }
                 for p in pieces
             ],
+        }
+
+    @app.post("/api/gear")
+    async def api_create_gear(request: Request) -> dict[str, Any]:
+        """Manually add a piece (troop × slot × rarity); name from gear_names.yaml."""
+        gear_path, store = _require_gear()
+        try:
+            raw = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="JSON body required") from exc
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="JSON object required")
+        try:
+            piece = create_manual_piece(
+                store,
+                troop_type=str(raw.get("troop_type") or ""),
+                slot=str(raw.get("slot") or ""),
+                rarity=str(raw.get("rarity") or ""),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        bust = inventory_revision(gear_path, "gear.json")
+        icon_map = ensure_all_icons([piece], gear_path)
+        return {
+            "ok": True,
+            "piece": {
+                **piece.to_dict(),
+                "icon_url": with_cache_bust(icon_map.get(piece.piece_id), bust),
+            },
         }
 
     @app.post("/api/gear/rescan")

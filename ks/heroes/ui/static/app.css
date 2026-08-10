@@ -1197,6 +1197,26 @@ select.rarity-select.green,
   margin-top: 1rem;
 }
 
+.add-gear-fields {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.add-gear-fields label {
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.9rem;
+}
+
+.add-gear-fields select {
+  padding: 0.4rem 0.55rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border, #555);
+  background: var(--panel, #111);
+  color: inherit;
+}
+
 /* A confirmation is a sentence and a button, not a data sheet — the 720px
    `.modal` width would leave it stranded in whitespace on a laptop. */
 .modal.modal-confirm {
