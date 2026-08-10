@@ -12,7 +12,7 @@ from ks.heroes.gear_models import GearRecord
 from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.arena import load_arena_roles, optimize_arena
-from ks.heroes.optimize.catalog import load_catalog
+from ks.heroes.optimize.catalog import heroes_by_troop, load_catalog
 from ks.heroes.optimize.combat_formation import load_combat_roles
 from ks.heroes.optimize.conquest import optimize_conquest
 from ks.heroes.optimize.events import load_event_profile
@@ -316,6 +316,88 @@ def attach_gear_icon_urls(
         _patch_assignment(conquest.get("gear_assignment"))
 
 
+def attach_mystic_gear_icon_urls(
+    payload: dict[str, Any],
+    icon_by_piece_id: dict[str, str | None],
+) -> None:
+    """Patch gear_assignment on mystic-trial march payloads (Radiant/Coliseum/Molten)."""
+    if not icon_by_piece_id:
+        return
+
+    def _patch(assignment: dict[str, list[dict[str, Any]]] | None) -> None:
+        if not assignment:
+            return
+        for pieces in assignment.values():
+            for piece in pieces:
+                pid = piece.get("piece_id")
+                if pid and pid in icon_by_piece_id:
+                    piece["icon_url"] = icon_by_piece_id[pid]
+
+    for march in payload.get("marches") or []:
+        if isinstance(march, dict):
+            _patch(march.get("gear_assignment"))
+
+
+def resolve_mystic_player_event_troops(
+    *,
+    governor_dir: Path,
+    stage: int,
+    round_no: int,
+    room: str,
+    room_path: Path,
+) -> dict[str, int]:
+    """Saved stage·round event troops, else room YAML, else 10 / 250000."""
+    from ks.heroes.optimize.mystic_trial.radiant_opponents import (
+        default_player_event_troops,
+        get_player_event_troops,
+        load_store,
+        opponents_path,
+    )
+    from ks.heroes.optimize.mystic_trial.rooms import load_room
+
+    store = load_store(opponents_path(governor_dir, room=room))
+    saved = get_player_event_troops(store, stage, round_no)
+    if saved is not None:
+        return saved
+    room_cfg = load_room(room_path)
+    return default_player_event_troops(
+        tier=room_cfg.event_troop_tier,
+        march_size=room_cfg.event_march_capacity,
+    )
+
+
+def apply_saved_radiant_opponents(
+    payload: dict[str, Any],
+    *,
+    governor_dir: Path,
+    stage: int,
+    round_no: int,
+    room: str = "radiant",
+) -> dict[str, Any]:
+    """Merge persisted stage·round opponent marches into an optimize payload."""
+    from ks.heroes.optimize.mystic_trial.radiant_opponents import (
+        get_player_bonuses,
+        get_stage_round,
+        load_store,
+        merge_saved_into_opponent,
+        opponents_path,
+    )
+
+    store = load_store(opponents_path(governor_dir, room=room))
+    saved = get_stage_round(store, stage, round_no)
+    if not saved:
+        payload["stage"] = stage
+        payload["round"] = round_no
+        return payload
+    payload["opponent"] = merge_saved_into_opponent(payload.get("opponent"), saved)
+    player_bonuses = get_player_bonuses(store, stage, round_no)
+    if player_bonuses is not None:
+        payload["player_bonuses"] = player_bonuses
+    payload["stage"] = stage
+    payload["round"] = round_no
+    return payload
+
+
 def run_radiant_optimize(
     heroes: list[HeroRecord],
     *,
@@ -326,6 +408,11 @@ def run_radiant_optimize(
     research_bonuses: Any | None = None,
     active_marches: int = 2,
     floor: int | None = None,
+    enemy_ratio: dict[str, float] | None = None,
+    enemy_bonuses: dict[str, dict[str, float]] | None = None,
+    saved_opponents: list[dict[str, Any]] | None = None,
+    player_report_bonuses: dict[str, dict[str, float]] | None = None,
+    player_event_troops: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Dual-march Radiant Spire proxy from current inventory + governor gear."""
     from ks.heroes.optimize.radiant_spire import optimize_radiant
@@ -359,8 +446,22 @@ def run_radiant_optimize(
         truegold=truegold,
         floor=floor,
         floors_path=root / "config" / "mystic_trial" / "radiant_spire_floors.yaml",
+        room_path=root / "config" / "mystic_trial" / "radiant_spire.yaml",
+        enemy_ratio=enemy_ratio,
+        enemy_bonuses=enemy_bonuses,
+        saved_opponents=saved_opponents,
+        player_report_bonuses=player_report_bonuses,
+        player_event_troops=player_event_troops,
     )
-    return result.to_dict()
+    out = result.to_dict()
+    out["catalog_hero_names"] = sorted(catalog.keys())
+    roster_troop = {
+        h.name: h.troop_type or ""
+        for h in heroes
+        if getattr(h, "name", None)
+    }
+    out["catalog_by_troop"] = heroes_by_troop(catalog, roster_troop=roster_troop)
+    return out
 
 
 def run_coliseum_optimize(
@@ -370,8 +471,10 @@ def run_coliseum_optimize(
     gear: list[GearRecord] | None = None,
     config_root: Path | None = None,
     troops_path: Path | None = None,
+    saved_opponents: list[dict[str, Any]] | None = None,
+    player_event_troops: dict[str, int] | None = None,
 ) -> dict[str, Any]:
-    """Single-march Coliseum proxy from heroes + gear (governor weight 0)."""
+    """Dual-march Coliseum proxy from heroes + gear (governor weight 0)."""
     from ks.heroes.optimize.mystic_trial.coliseum import optimize_coliseum
 
     root = (config_root or REPO_ROOT).expanduser().resolve()
@@ -394,8 +497,18 @@ def run_coliseum_optimize(
         troop_stats=troop_stats,
         truegold=truegold,
         room_path=root / "config" / "mystic_trial" / "coliseum.yaml",
+        saved_opponents=saved_opponents,
+        player_event_troops=player_event_troops,
     )
-    return result.to_dict()
+    out = result.to_dict()
+    out["catalog_hero_names"] = sorted(catalog.keys())
+    roster_troop = {
+        h.name: h.troop_type or ""
+        for h in heroes
+        if getattr(h, "name", None)
+    }
+    out["catalog_by_troop"] = heroes_by_troop(catalog, roster_troop=roster_troop)
+    return out
 
 
 def run_molten_optimize(

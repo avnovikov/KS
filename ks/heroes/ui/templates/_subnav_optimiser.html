@@ -1,5 +1,6 @@
 {# Optimiser segmented subtabs. Expects: subtab. Reachable only when heroes
-   are configured, so every tool is linked. #}
+   are configured, so every tool is linked. Mystic Trial rooms live under
+   Event lineups (/optimiser/events/mystic-trial/…), not as top-level tools. #}
 {% macro seg(href, label, key) -%}
 {% if subtab == key %}<a class="seg on" href="{{ href }}" aria-current="page">{{ label }}</a>
 {%- else %}<a class="seg" href="{{ href }}">{{ label }}</a>{% endif %}
@@ -8,9 +9,6 @@
   <div class="segmented">
     {{ seg("/optimiser/events", "Event lineups", "events") }}
     {{ seg("/optimiser/gear-xp", "Gear XP", "gear-xp") }}
-    {{ seg("/optimiser/radiant-spire", "Radiant Spire", "radiant") }}
-    {{ seg("/optimiser/coliseum", "Coliseum", "coliseum") }}
-    {{ seg("/optimiser/molten-fort", "Molten Fort", "molten") }}
     {{ seg("/optimiser/hero-levels", "Hero levels", "hero-levels") }}
   </div>
 </nav>

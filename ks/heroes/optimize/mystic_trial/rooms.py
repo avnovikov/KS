@@ -22,6 +22,8 @@ class RoomConfig:
     published_ratios: tuple[dict[str, float], ...]
     active_marches: int = 1
     schema_marches: int = 1
+    event_march_capacity: int | None = None
+    event_troop_tier: int | None = None
 
 
 def _ratio_map(raw: Any, *, field: str) -> dict[str, float]:
@@ -53,6 +55,22 @@ def load_room(path: Path | str) -> RoomConfig:
         raise ValueError(f"active_marches must be 1–3; got {active}")
     if schema < active:
         raise ValueError(f"schema_marches must be >= active_marches; got {schema} < {active}")
+    event_cap_raw = raw.get("event_march_capacity")
+    event_cap: int | None
+    if event_cap_raw is None:
+        event_cap = None
+    else:
+        event_cap = int(event_cap_raw)
+        if event_cap < 1:
+            raise ValueError(f"event_march_capacity must be >= 1; got {event_cap}")
+    event_tier_raw = raw.get("event_troop_tier")
+    event_tier: int | None
+    if event_tier_raw is None:
+        event_tier = None
+    else:
+        event_tier = int(event_tier_raw)
+        if event_tier < 1 or event_tier > 11:
+            raise ValueError(f"event_troop_tier must be 1–11; got {event_tier}")
     for t in TROOP_TYPES:
         assert t in seed, f"seed_ratio missing {t}"
     return RoomConfig(
@@ -63,4 +81,6 @@ def load_room(path: Path | str) -> RoomConfig:
         published_ratios=published,
         active_marches=active,
         schema_marches=schema,
+        event_march_capacity=event_cap,
+        event_troop_tier=event_tier,
     )

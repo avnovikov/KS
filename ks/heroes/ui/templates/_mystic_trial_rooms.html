@@ -1,0 +1,13 @@
+{# Room chips under Event lineups → Mystic Trial. Expects: mystic_room.
+   aria-current stays on the Optimiser "Event lineups" subtab only. #}
+{% macro room(href, label, key) -%}
+{% if mystic_room == key %}<a class="seg on" href="{{ href }}">{{ label }}</a>
+{%- else %}<a class="seg" href="{{ href }}">{{ label }}</a>{% endif %}
+{%- endmacro %}
+<div class="seg-scroll mystic-rooms">
+  <div class="segmented" role="group" aria-label="Mystic Trial room">
+    {{ room("/optimiser/events/mystic-trial/radiant-spire", "Radiant Spire", "radiant") }}
+    {{ room("/optimiser/events/mystic-trial/coliseum", "Coliseum", "coliseum") }}
+    {{ room("/optimiser/events/mystic-trial/molten-fort", "Molten Fort", "molten") }}
+  </div>
+</div>

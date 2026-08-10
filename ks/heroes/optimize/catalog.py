@@ -9,7 +9,11 @@ import yaml
 from ks.heroes.optimize.types import CatalogEntry, CatalogSkill, EffectTag
 
 # Re-export for callers that import arena helpers from catalog.
-__all__ = ["load_catalog", "arena_heroes_from_catalog"]
+__all__ = [
+    "load_catalog",
+    "arena_heroes_from_catalog",
+    "heroes_by_troop",
+]
 
 
 def _parse_effects(effects_raw: list[Any]) -> list[EffectTag]:
@@ -246,6 +250,34 @@ def load_catalog(
     by_name = _merge_yaml_heroes(by_name, yaml_heroes)
 
     return {name: _build_catalog_entry(name, data) for name, data in by_name.items()}
+
+
+def heroes_by_troop(
+    catalog: dict[str, CatalogEntry],
+    *,
+    roster_troop: dict[str, str] | None = None,
+) -> dict[str, list[str]]:
+    """Group catalog hero names by troop class for UI pickers.
+
+    Troop comes from the catalog when set; otherwise from ``roster_troop``
+    (scraped inventory). ``archer`` normalizes to ``archers``. Heroes with no
+    resolvable troop are omitted.
+    """
+    from ks.heroes.optimize.scoring import normalize_troop
+
+    out: dict[str, list[str]] = {
+        "infantry": [],
+        "cavalry": [],
+        "archers": [],
+    }
+    roster = roster_troop or {}
+    for name, entry in catalog.items():
+        troop = normalize_troop(entry.troop) or normalize_troop(roster.get(name))
+        if troop in out:
+            out[troop].append(name)
+    for names in out.values():
+        names.sort()
+    return out
 
 
 def arena_heroes_from_catalog(
