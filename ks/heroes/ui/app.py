@@ -140,6 +140,24 @@ except ImportError:  # pragma: no cover - exercised when ui extras missing
     Jinja2Templates = None  # type: ignore[assignment,misc]
 
 
+def _safe_under(root: Path, relative: str) -> Path | None:
+    """Return the resolved path only when it sits inside *root*.
+
+    Returns ``None`` when the candidate would escape the allowed root (e.g.
+    via ``../`` segments) or when it refers to something that is not a regular
+    file.  Used by every dynamic icon route to prevent cross-user traversal.
+    """
+    try:
+        candidate = (root / relative).resolve()
+    except (ValueError, OSError):
+        return None
+    if not candidate.is_relative_to(root.resolve()):
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
+
+
 def _resolve_gear_dir(gear: Path) -> Path:
     path = gear.expanduser().resolve()
     if path.is_file() and path.name == "gear.json":
@@ -509,13 +527,22 @@ def create_app(
     serial: str | None = None,
     rescan_fn: Callable[..., list[GearRecord]] | None = None,
     heroes_rescan_fn: Callable[..., list[HeroRecord]] | None = None,
+    auth_config: Any = None,
+    users_root: Path | None = None,
+    http_client_factory: Any = None,
 ) -> Any:
-    """Build FastAPI app bound to gear and/or heroes inventory directories."""
+    """Build FastAPI app bound to gear and/or heroes inventory directories.
+
+    When ``auth_config`` (an ``AuthConfig``) is provided the auth shell is
+    installed: SessionMiddleware + protect middleware + ``/auth/*`` routes.
+    Inventory directories become optional in auth mode — per-request binding
+    arrives in Task 5; endpoints that need stores return 503 until then.
+    """
     if FastAPI is None:
         raise ImportError(
             "UI dependencies missing; install with: pip install 'ks[ui]'"
         )
-    if gear_dir is None and heroes_dir is None:
+    if auth_config is None and gear_dir is None and heroes_dir is None:
         raise ValueError("gear_dir or heroes_dir is required")
 
     resolved_gear = _resolve_gear_dir(gear_dir) if gear_dir is not None else None
@@ -528,18 +555,20 @@ def create_app(
     )
     # Troops live alongside heroes when both halves are configured — heroes
     # is what the optimisers actually consume troops for — else alongside
-    # gear. One of the two is always set (checked above), so this is never
-    # None; /inventory/troops and /api/troops stay ungated for the same
-    # reason. `troops_path` (CLI `--troops`) overrides the location outright,
-    # which is how a caller points the UI at an existing troops document.
+    # gear. `troops_path` (CLI `--troops`) overrides the location outright.
+    # In auth mode without any inventory dir the store is deferred to Task 5;
+    # endpoints that need it return 503 until per-request binding lands.
     troops_dir = resolved_heroes if resolved_heroes is not None else resolved_gear
-    troop_store = TroopStore(
-        troops_path.expanduser().resolve()
-        if troops_path is not None
-        else troops_dir / "troops.yaml",
-        seed_from=REPO_ROOT / "config" / "troops.yaml",
-    )
-    troop_store.ensure_exists()
+    if troops_dir is None and troops_path is None:
+        troop_store = None
+    else:
+        troop_store = TroopStore(
+            troops_path.expanduser().resolve()
+            if troops_path is not None
+            else troops_dir / "troops.yaml",  # type: ignore[operator]
+            seed_from=REPO_ROOT / "config" / "troops.yaml",
+        )
+        troop_store.ensure_exists()
     from ks.heroes.governor_store import GovernorGearStore
     from ks.heroes.research_store import ResearchStore
 
@@ -583,7 +612,7 @@ def create_app(
     app.state.gear_config = gear_config_path
     app.state.heroes_config = heroes_config_path
     app.state.serial = serial
-    app.state.troops_path = troop_store.path
+    app.state.troops_path = troop_store.path if troop_store is not None else None
     static_dir = Path(__file__).resolve().parent / "static"
     if static_dir.is_dir():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
@@ -603,18 +632,108 @@ def create_app(
             StaticFiles(directory=str(hero_icons_path)),
             name="hero_icons",
         )
+    # In auth mode there is no single icons dir at startup; serve per-user icons
+    # dynamically via FileResponse so user A's icons never leak to user B.
+    if auth_config is not None:
+        from fastapi.responses import FileResponse as _FileResponse
+
+        @app.get("/icons/{path:path}", include_in_schema=False)
+        def serve_user_icons(path: str) -> Any:
+            from ks.auth.request_inventory import get_current_inventory
+            inv = get_current_inventory()
+            if inv is None:
+                raise HTTPException(status_code=404, detail="no inventory")
+            icons_root = (inv.gear_dir / "icons").resolve()
+            safe = _safe_under(icons_root, path)
+            if safe is None:
+                raise HTTPException(status_code=404, detail=f"icon not found: {path}")
+            return _FileResponse(str(safe))
+
+        @app.get("/hero-icons/{path:path}", include_in_schema=False)
+        def serve_user_hero_icons(path: str) -> Any:
+            from ks.auth.request_inventory import get_current_inventory
+            inv = get_current_inventory()
+            if inv is None:
+                raise HTTPException(status_code=404, detail="no inventory")
+            icons_root = (inv.heroes_dir / "icons").resolve()
+            safe = _safe_under(icons_root, path)
+            if safe is None:
+                raise HTTPException(status_code=404, detail=f"hero icon not found: {path}")
+            return _FileResponse(str(safe))
 
     def _require_gear() -> tuple[Path, GearStore]:
+        from ks.auth.request_inventory import get_current_inventory
+        inv = get_current_inventory()
+        if inv is not None:
+            return inv.gear_dir, inv.store
         if resolved_gear is None or gear_store is None:
             raise HTTPException(status_code=404, detail="gear UI not configured")
         return resolved_gear, gear_store
 
     def _require_heroes() -> tuple[Path, HeroStore]:
+        from ks.auth.request_inventory import get_current_inventory
+        inv = get_current_inventory()
+        if inv is not None:
+            return inv.heroes_dir, inv.hero_store
         if resolved_heroes is None or hero_store is None:
             raise HTTPException(
                 status_code=404, detail="heroes UI not configured"
             )
         return resolved_heroes, hero_store
+
+    def _require_troop_store():
+        from ks.auth.request_inventory import get_current_inventory
+        inv = get_current_inventory()
+        if inv is not None:
+            return inv.troop_store
+        if troop_store is None:
+            raise HTTPException(
+                status_code=503,
+                detail="troops store not configured",
+            )
+        return troop_store
+
+    def _require_governor_store():
+        from ks.auth.request_inventory import get_current_inventory
+        inv = get_current_inventory()
+        return inv.governor_store if inv is not None else governor_store
+
+    def _require_research_store():
+        from ks.auth.request_inventory import get_current_inventory
+        inv = get_current_inventory()
+        return inv.research_store if inv is not None else research_store
+
+    def _current_troops_path() -> Path | None:
+        from ks.auth.request_inventory import get_current_inventory
+        inv = get_current_inventory()
+        if inv is not None:
+            return inv.troops_path
+        return troop_store.path if troop_store is not None else None
+
+    def _current_gear_store() -> GearStore | None:
+        from ks.auth.request_inventory import get_current_inventory
+        inv = get_current_inventory()
+        return inv.store if inv is not None else gear_store
+
+    def _current_gear_dir() -> Path | None:
+        from ks.auth.request_inventory import get_current_inventory
+        inv = get_current_inventory()
+        return inv.gear_dir if inv is not None else resolved_gear
+
+    def _current_governor_dir() -> Path:
+        from ks.auth.request_inventory import get_current_inventory
+        inv = get_current_inventory()
+        return inv.governor_dir if inv is not None else resolved_governor
+
+    def _current_research_dir() -> Path:
+        from ks.auth.request_inventory import get_current_inventory
+        inv = get_current_inventory()
+        return inv.research_dir if inv is not None else resolved_research
+
+    def _current_hero_store() -> HeroStore | None:
+        from ks.auth.request_inventory import get_current_inventory
+        inv = get_current_inventory()
+        return inv.hero_store if inv is not None else hero_store
 
     def _shell_page(
         request: Request,
@@ -625,11 +744,13 @@ def create_app(
         **extra: Any,
     ) -> HTMLResponse:
         """Render a page inside the Inventory/Optimiser shell (never cached)."""
+        from ks.auth.request_inventory import get_current_inventory
+        _inv = get_current_inventory()
         context: dict[str, Any] = {
             "primary": primary,
             "subtab": subtab,
-            "gear_enabled": resolved_gear is not None,
-            "heroes_enabled": resolved_heroes is not None,
+            "gear_enabled": _inv is not None or resolved_gear is not None,
+            "heroes_enabled": _inv is not None or resolved_heroes is not None,
         }
         context.update(extra)
         response = templates.TemplateResponse(request, template, context)
@@ -638,7 +759,8 @@ def create_app(
 
     @app.get("/", include_in_schema=False)
     def home() -> RedirectResponse:
-        if resolved_gear is not None:
+        from ks.auth.request_inventory import get_current_inventory
+        if resolved_gear is not None or get_current_inventory() is not None:
             return RedirectResponse(url="/inventory/gear", status_code=302)
         return RedirectResponse(url="/inventory/heroes", status_code=302)
 
@@ -755,10 +877,11 @@ def create_app(
         same path the API uses, so page and API never disagree about what
         counts as broken.
         """
+        store = _require_troop_store()
         raw: dict[str, Any] = {}
         load_error: str | None = None
         try:
-            raw = troop_store.load_raw()
+            raw = store.load_raw()
             _troop_totals(raw)
         except (yaml.YAMLError, ValueError, TypeError) as exc:
             load_error = str(exc)
@@ -768,72 +891,77 @@ def create_app(
             primary="inventory",
             subtab="troops",
             form=troops_form_model(raw),
-            troops_path=str(troop_store.path),
+            troops_path=str(store.path),
             load_error=load_error,
         )
 
     @app.get("/inventory/governor-gear", response_class=HTMLResponse)
     def inventory_governor_gear_page(request: Request) -> HTMLResponse:
-        summary = governor_store.summary()
+        gov_store = _require_governor_store()
+        summary = gov_store.summary()
         return _shell_page(
             request,
             "inventory_governor_gear.html",
             primary="inventory",
             subtab="governor",
             summary=summary,
-            governor_dir=str(resolved_governor),
+            governor_dir=str(_current_governor_dir()),
         )
 
     @app.get("/inventory/research", response_class=HTMLResponse)
     def inventory_research_page(request: Request) -> HTMLResponse:
-        summary = research_store.summary()
+        res_store = _require_research_store()
+        summary = res_store.summary()
         return _shell_page(
             request,
             "inventory_research.html",
             primary="inventory",
             subtab="research",
             summary=summary,
-            research_dir=str(resolved_research),
+            research_dir=str(_current_research_dir()),
         )
 
     @app.get("/api/governor-gear")
     def api_governor_gear() -> dict[str, Any]:
-        return governor_store.summary()
+        return _require_governor_store().summary()
 
     @app.get("/api/research")
     def api_research_get() -> dict[str, Any]:
-        return research_store.summary()
+        return _require_research_store().summary()
 
     @app.put("/api/research")
     def api_research_put(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+        res_store = _require_research_store()
         try:
-            research_store.update_from_dict(body)
+            res_store.update_from_dict(body)
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return research_store.summary()
+        return res_store.summary()
 
     @app.post("/api/governor-gear/{slot_id}/upgrade")
     def api_governor_upgrade(slot_id: str) -> dict[str, Any]:
+        gov_store = _require_governor_store()
         try:
-            governor_store.upgrade(slot_id)
+            gov_store.upgrade(slot_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return governor_store.summary()
+        return gov_store.summary()
 
     @app.patch("/api/governor-gear/{slot_id}")
     def api_governor_patch(slot_id: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         from ks.heroes.governor_models import GovernorPiece
 
-        if slot_id not in governor_store.cfg.slots:
+        gov_store = _require_governor_store()
+        if slot_id not in gov_store.cfg.slots:
             raise HTTPException(status_code=404, detail=f"unknown slot {slot_id}")
         tier = body.get("tier")
         stars = body.get("stars")
-        prev = governor_store.get(slot_id)
+        prev = gov_store.get(slot_id)
         assert prev is not None
         try:
-            governor_store.upsert(
+            gov_store.upsert(
                 GovernorPiece(
                     slot_id=slot_id,
                     tier=str(tier if tier is not None else prev.tier),
@@ -842,7 +970,7 @@ def create_app(
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return governor_store.summary()
+        return gov_store.summary()
 
     @app.get("/optimiser/events", response_class=HTMLResponse)
     def optimiser_events_page(request: Request) -> HTMLResponse:
@@ -875,7 +1003,7 @@ def create_app(
             subtab="events",
             mystic_room="radiant",
             heroes_dir=str(heroes_path),
-            governor_dir=str(resolved_governor),
+            governor_dir=str(_current_governor_dir()),
         )
 
     @app.get(
@@ -891,7 +1019,7 @@ def create_app(
             subtab="events",
             mystic_room="coliseum",
             heroes_dir=str(heroes_path),
-            governor_dir=str(resolved_governor),
+            governor_dir=str(_current_governor_dir()),
         )
 
     @app.get(
@@ -907,7 +1035,7 @@ def create_app(
             subtab="events",
             mystic_room="molten",
             heroes_dir=str(heroes_path),
-            governor_dir=str(resolved_governor),
+            governor_dir=str(_current_governor_dir()),
         )
 
     @app.get("/optimiser/radiant-spire", response_class=HTMLResponse)
@@ -1304,8 +1432,9 @@ def create_app(
         message (matching the PUT-side validation error) instead of a
         blank 500, so the user can see what to repair.
         """
+        store = _require_troop_store()
         try:
-            raw = troop_store.load_raw()
+            raw = store.load_raw()
             totals = _troop_totals(raw)
         except (yaml.YAMLError, ValueError, TypeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1322,6 +1451,7 @@ def create_app(
         that whole block rather than being deep-merged tier by tier. Task
         3's editor page is built against this contract.
         """
+        store = _require_troop_store()
         try:
             raw = await request.json()
         except Exception as exc:
@@ -1329,7 +1459,7 @@ def create_app(
         if not isinstance(raw, dict):
             raise HTTPException(status_code=400, detail="JSON object required")
         try:
-            saved = troop_store.save_raw(raw)
+            saved = store.save_raw(raw)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"troops": saved, "totals": _troop_totals(saved)}
@@ -1348,24 +1478,27 @@ def create_app(
         gear_pieces: list[GearRecord] | None = None
         icon_by_id: dict[str, str | None] = {}
         icon_warning: str | None = None
-        if gear_store is not None and resolved_gear is not None:
-            gear_store.reload()
-            gear_pieces = gear_store.all_pieces() or None
+        eff_gear_store = _current_gear_store()
+        eff_gear_dir = _current_gear_dir()
+        if eff_gear_store is not None and eff_gear_dir is not None:
+            eff_gear_store.reload()
+            gear_pieces = eff_gear_store.all_pieces() or None
             if gear_pieces:
                 try:
-                    bust = inventory_revision(resolved_gear, "gear.json")
-                    raw_icons = ensure_all_icons(gear_pieces, resolved_gear)
+                    bust = inventory_revision(eff_gear_dir, "gear.json")
+                    raw_icons = ensure_all_icons(gear_pieces, eff_gear_dir)
                     icon_by_id = {
                         pid: with_cache_bust(url, bust)
                         for pid, url in raw_icons.items()
                     }
                 except Exception as exc:  # noqa: BLE001 — optimize without icons
                     icon_warning = f"gear icons unavailable: {exc}"
+        gov_store = _require_governor_store()
         bundle = run_optimize_bundle(
             heroes,
             gear=gear_pieces,
-            troops_path=app.state.troops_path,
-            governor=governor_store.bonuses() if governor_store is not None else None,
+            troops_path=_current_troops_path(),
+            governor=gov_store.bonuses() if gov_store is not None else None,
         )
         if icon_by_id:
             attach_gear_icon_urls(bundle, icon_by_id)
@@ -1416,14 +1549,16 @@ def create_app(
         hero_store_local.reload()
         heroes = hero_store_local.all_heroes()
         gear_pieces: list[GearRecord] = []
-        if gear_store is not None:
-            gear_store.reload()
-            gear_pieces = gear_store.all_pieces()
+        eff_gear_store = _current_gear_store()
+        if eff_gear_store is not None:
+            eff_gear_store.reload()
+            gear_pieces = eff_gear_store.all_pieces()
 
         # Both stage and round required for opponent panel / stub; floor aliases stage.
         stage_n = stage if stage is not None else floor
         round_n = round
         use_stage_round = stage_n is not None and round_n is not None
+        gov_dir = _current_governor_dir()
         try:
             ratio_override = ratio_from_parts(
                 enemy_infantry, enemy_cavalry, enemy_archers
@@ -1436,7 +1571,7 @@ def create_app(
             player_report_bonuses = None
             player_event_troops = None
             if use_stage_round:
-                store = load_store(opponents_path(resolved_governor))
+                store = load_store(opponents_path(gov_dir))
                 saved_opponents = get_stage_round(
                     store,
                     int(stage_n),
@@ -1446,7 +1581,7 @@ def create_app(
                     store, int(stage_n), int(round_n)
                 )
                 player_event_troops = resolve_mystic_player_event_troops(
-                    governor_dir=resolved_governor,
+                    governor_dir=gov_dir,
                     stage=int(stage_n),
                     round_no=int(round_n),
                     room="radiant",
@@ -1465,10 +1600,10 @@ def create_app(
                         bonuses_override = saved_opponents[0]["bonuses"]
             payload = run_radiant_optimize(
                 heroes,
-                governor_bonuses=governor_store.bonuses(),
-                research_bonuses=research_store.bonuses(),
+                governor_bonuses=_require_governor_store().bonuses(),
+                research_bonuses=_require_research_store().bonuses(),
                 gear=gear_pieces,
-                troops_path=app.state.troops_path,
+                troops_path=_current_troops_path(),
                 active_marches=2,
                 floor=int(stage_n) if use_stage_round else None,
                 enemy_ratio=ratio_override if use_stage_round else None,
@@ -1484,7 +1619,7 @@ def create_app(
             if use_stage_round:
                 apply_saved_radiant_opponents(
                     payload,
-                    governor_dir=resolved_governor,
+                    governor_dir=gov_dir,
                     stage=int(stage_n),
                     round_no=int(round_n),
                 )
@@ -1493,10 +1628,11 @@ def create_app(
                 payload.pop("opponent", None)
         except (ValueError, OSError, FileNotFoundError, KeyError, json.JSONDecodeError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        eff_gear_dir = _current_gear_dir()
         try:
-            if gear_pieces and resolved_gear is not None:
-                bust = inventory_revision(resolved_gear, "gear.json")
-                raw_icons = ensure_all_icons(gear_pieces, resolved_gear)
+            if gear_pieces and eff_gear_dir is not None:
+                bust = inventory_revision(eff_gear_dir, "gear.json")
+                raw_icons = ensure_all_icons(gear_pieces, eff_gear_dir)
                 attach_mystic_gear_icon_urls(
                     payload,
                     {
@@ -1526,8 +1662,8 @@ def create_app(
         except Exception:  # noqa: BLE001
             pass
         payload["heroes_dir"] = str(heroes_path)
-        payload["governor_dir"] = str(resolved_governor)
-        payload["research_dir"] = str(resolved_research)
+        payload["governor_dir"] = str(_current_governor_dir())
+        payload["research_dir"] = str(_current_research_dir())
         return payload
 
     @app.put("/api/mystic-trial/radiant-opponents/{stage}/{round_no}/{slot}")
@@ -1556,7 +1692,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="slot must be 0 or 1")
         try:
             march = parse_march(body)
-            path = opponents_path(resolved_governor)
+            path = opponents_path(_current_governor_dir())
             store = upsert_march(
                 load_store(path),
                 stage=stage,
@@ -1593,17 +1729,18 @@ def create_app(
             raise HTTPException(
                 status_code=400, detail="stage and round must be >= 1"
             )
-        path = opponents_path(resolved_governor)
+        path = opponents_path(_current_governor_dir())
         store = load_store(path)
         marches = get_stage_round(store, stage, round_no)
         if marches is None:
             marches = [empty_march(), empty_march()]
         catalog = load_catalog(None, REPO_ROOT / "config" / "hero_catalog.yaml")
         roster_troop: dict[str, str] = {}
-        if hero_store is not None:
+        eff_hero_store = _current_hero_store()
+        if eff_hero_store is not None:
             roster_troop = {
                 h.name: h.troop_type or ""
-                for h in hero_store.all_heroes()
+                for h in eff_hero_store.all_heroes()
                 if h.name
             }
         from ks.heroes.ui.optimize_run import resolve_mystic_player_event_troops
@@ -1613,7 +1750,7 @@ def create_app(
             "round": round_no,
             "marches": marches,
             "player_event_troops": resolve_mystic_player_event_troops(
-                governor_dir=resolved_governor,
+                governor_dir=_current_governor_dir(),
                 stage=stage,
                 round_no=round_no,
                 room="radiant",
@@ -1651,7 +1788,7 @@ def create_app(
             )
         try:
             event_troops = parse_player_event_troops(body)
-            path = opponents_path(resolved_governor, room="radiant")
+            path = opponents_path(_current_governor_dir(), room="radiant")
             store = upsert_player_event_troops(
                 load_store(path),
                 stage=stage,
@@ -1691,7 +1828,7 @@ def create_app(
             )
         try:
             bonuses = parse_enemy_bonuses(body.get("bonuses", body))
-            path = opponents_path(resolved_governor)
+            path = opponents_path(_current_governor_dir())
             store = upsert_player_bonuses(
                 load_store(path),
                 stage=stage,
@@ -1736,23 +1873,25 @@ def create_app(
         hero_store_local.reload()
         heroes = hero_store_local.all_heroes()
         gear_pieces: list[GearRecord] = []
-        if gear_store is not None:
-            gear_store.reload()
-            gear_pieces = gear_store.all_pieces()
+        eff_gear_store = _current_gear_store()
+        if eff_gear_store is not None:
+            eff_gear_store.reload()
+            gear_pieces = eff_gear_store.all_pieces()
 
         use_stage_round = stage is not None and round is not None
+        gov_dir = _current_governor_dir()
         try:
             saved_opponents = None
             player_event_troops = None
             if use_stage_round:
                 store = load_store(
-                    opponents_path(resolved_governor, room="coliseum")
+                    opponents_path(gov_dir, room="coliseum")
                 )
                 saved_opponents = get_stage_round(
                     store, int(stage), int(round)
                 )
                 player_event_troops = resolve_mystic_player_event_troops(
-                    governor_dir=resolved_governor,
+                    governor_dir=gov_dir,
                     stage=int(stage),
                     round_no=int(round),
                     room="coliseum",
@@ -1777,16 +1916,16 @@ def create_app(
                 )
             payload = run_coliseum_optimize(
                 heroes,
-                governor_bonuses=governor_store.bonuses(),
+                governor_bonuses=_require_governor_store().bonuses(),
                 gear=gear_pieces,
-                troops_path=app.state.troops_path,
+                troops_path=_current_troops_path(),
                 saved_opponents=saved_opponents if use_stage_round else None,
                 player_event_troops=player_event_troops,
             )
             if use_stage_round:
                 apply_saved_radiant_opponents(
                     payload,
-                    governor_dir=resolved_governor,
+                    governor_dir=gov_dir,
                     stage=int(stage),
                     round_no=int(round),
                     room="coliseum",
@@ -1801,10 +1940,11 @@ def create_app(
                 payload.pop("opponent", None)
         except (ValueError, OSError, FileNotFoundError, KeyError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        eff_gear_dir = _current_gear_dir()
         try:
-            if gear_pieces and resolved_gear is not None:
-                bust = inventory_revision(resolved_gear, "gear.json")
-                raw_icons = ensure_all_icons(gear_pieces, resolved_gear)
+            if gear_pieces and eff_gear_dir is not None:
+                bust = inventory_revision(eff_gear_dir, "gear.json")
+                raw_icons = ensure_all_icons(gear_pieces, eff_gear_dir)
                 attach_mystic_gear_icon_urls(
                     payload,
                     {
@@ -1834,7 +1974,7 @@ def create_app(
         except Exception:  # noqa: BLE001
             pass
         payload["heroes_dir"] = str(heroes_path)
-        payload["governor_dir"] = str(resolved_governor)
+        payload["governor_dir"] = str(gov_dir)
         return payload
 
     @app.put("/api/mystic-trial/coliseum-opponents/{stage}/{round_no}/{slot}")
@@ -1863,7 +2003,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="slot must be 0 or 1")
         try:
             march = parse_march(body)
-            path = opponents_path(resolved_governor, room="coliseum")
+            path = opponents_path(_current_governor_dir(), room="coliseum")
             store = upsert_march(
                 load_store(path),
                 stage=stage,
@@ -1900,17 +2040,18 @@ def create_app(
             raise HTTPException(
                 status_code=400, detail="stage and round must be >= 1"
             )
-        path = opponents_path(resolved_governor, room="coliseum")
+        path = opponents_path(_current_governor_dir(), room="coliseum")
         store = load_store(path)
         marches = get_stage_round(store, stage, round_no)
         if marches is None:
             marches = [empty_march(), empty_march()]
         catalog = load_catalog(None, REPO_ROOT / "config" / "hero_catalog.yaml")
         roster_troop: dict[str, str] = {}
-        if hero_store is not None:
+        eff_hero_store = _current_hero_store()
+        if eff_hero_store is not None:
             roster_troop = {
                 h.name: h.troop_type or ""
-                for h in hero_store.all_heroes()
+                for h in eff_hero_store.all_heroes()
                 if h.name
             }
         from ks.heroes.ui.optimize_run import resolve_mystic_player_event_troops
@@ -1920,7 +2061,7 @@ def create_app(
             "round": round_no,
             "marches": marches,
             "player_event_troops": resolve_mystic_player_event_troops(
-                governor_dir=resolved_governor,
+                governor_dir=_current_governor_dir(),
                 stage=stage,
                 round_no=round_no,
                 room="coliseum",
@@ -1955,7 +2096,7 @@ def create_app(
             )
         try:
             event_troops = parse_player_event_troops(body)
-            path = opponents_path(resolved_governor, room="coliseum")
+            path = opponents_path(_current_governor_dir(), room="coliseum")
             store = upsert_player_event_troops(
                 load_store(path),
                 stage=stage,
@@ -1985,22 +2126,24 @@ def create_app(
         hero_store_local.reload()
         heroes = hero_store_local.all_heroes()
         gear_pieces: list[GearRecord] = []
-        if gear_store is not None:
-            gear_store.reload()
-            gear_pieces = gear_store.all_pieces()
+        eff_gear_store = _current_gear_store()
+        if eff_gear_store is not None:
+            eff_gear_store.reload()
+            gear_pieces = eff_gear_store.all_pieces()
         try:
             payload = run_molten_optimize(
                 heroes,
-                governor_bonuses=governor_store.bonuses(),
+                governor_bonuses=_require_governor_store().bonuses(),
                 gear=gear_pieces,
-                troops_path=app.state.troops_path,
+                troops_path=_current_troops_path(),
             )
         except (ValueError, OSError, FileNotFoundError, KeyError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        eff_gear_dir = _current_gear_dir()
         try:
-            if gear_pieces and resolved_gear is not None:
-                bust = inventory_revision(resolved_gear, "gear.json")
-                raw_icons = ensure_all_icons(gear_pieces, resolved_gear)
+            if gear_pieces and eff_gear_dir is not None:
+                bust = inventory_revision(eff_gear_dir, "gear.json")
+                raw_icons = ensure_all_icons(gear_pieces, eff_gear_dir)
                 attach_mystic_gear_icon_urls(
                     payload,
                     {
@@ -2011,7 +2154,7 @@ def create_app(
         except Exception:  # noqa: BLE001
             pass
         payload["heroes_dir"] = str(heroes_path)
-        payload["governor_dir"] = str(resolved_governor)
+        payload["governor_dir"] = str(_current_governor_dir())
         return payload
 
     def _prepare_gear_xp_search(body: dict[str, Any]) -> tuple[str, Any, list[GearRecord], Any]:
@@ -2020,7 +2163,9 @@ def create_app(
         the body asks for, and builds the utility function the search will
         call. Raises HTTPException for anything the client sent wrong."""
         heroes_path, hero_store_local = _require_heroes()
-        if gear_store is None or resolved_gear is None:
+        eff_gear_store = _current_gear_store()
+        eff_gear_dir = _current_gear_dir()
+        if eff_gear_store is None or eff_gear_dir is None:
             raise HTTPException(
                 status_code=400,
                 detail="gear inventory required; start UI with --gear",
@@ -2055,13 +2200,13 @@ def create_app(
         )
         hero_store_local.reload()
         heroes = hero_store_local.all_heroes()
-        gear_store.reload()
-        gear_pieces = gear_store.all_pieces()
+        eff_gear_store.reload()
+        gear_pieces = eff_gear_store.all_pieces()
         if not gear_pieces:
             raise HTTPException(status_code=400, detail="gear inventory is empty")
         try:
             utility_fn = build_event_utility(
-                event, heroes, mode=mode_s, troops_path=app.state.troops_path
+                event, heroes, mode=mode_s, troops_path=_current_troops_path()
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -2113,6 +2258,17 @@ def create_app(
                 yield json.dumps({"type": "error", "detail": str(exc)}) + "\n"
 
         return StreamingResponse(_events(), media_type="application/x-ndjson")
+
+    if auth_config is not None:
+        from ks.auth.middleware import install_auth
+
+        install_auth(
+            app,
+            auth_config,
+            users_root,
+            troops_seed=REPO_ROOT / "config" / "troops.yaml",
+            http_client_factory=http_client_factory,
+        )
 
     return app
 

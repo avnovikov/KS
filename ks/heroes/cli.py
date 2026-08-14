@@ -503,6 +503,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=8765,
         help="Bind port (default: 8765).",
     )
+    ui.add_argument(
+        "--auth",
+        choices=["discord", "off"],
+        default="off",
+        help="Auth mode: 'discord' enables Discord OAuth via config/auth.yaml (default: off).",
+    )
+    ui.add_argument(
+        "--users-root",
+        type=Path,
+        default=None,
+        dest="users_root",
+        help=(
+            "Root dir for per-user inventory data when --auth discord is set. "
+            "Env: KS_USERS_ROOT. Default: data/users."
+        ),
+    )
     return p
 
 
@@ -1182,6 +1198,54 @@ def _cmd_ui(args: argparse.Namespace) -> int:
 
     gear = Path(args.gear) if args.gear is not None else None
     heroes = Path(args.heroes) if args.heroes is not None else None
+
+    auth_mode = getattr(args, "auth", "off") or "off"
+    users_root_arg = getattr(args, "users_root", None)
+
+    if auth_mode == "discord":
+        import os
+        from ks.auth.config import load_auth_config
+        from ks.heroes.ui.app import create_app
+
+        try:
+            auth_cfg = load_auth_config()
+        except (KeyError, ValueError) as exc:
+            print(f"error: auth config invalid: {exc}", file=sys.stderr)
+            return 1
+
+        env_root = os.environ.get("KS_USERS_ROOT")
+        users_root = (
+            Path(users_root_arg).expanduser().resolve()
+            if users_root_arg is not None
+            else Path(env_root).expanduser().resolve()
+            if env_root
+            else ROOT / "data" / "users"
+        )
+        users_root.mkdir(parents=True, exist_ok=True)
+
+        try:
+            import uvicorn
+        except ImportError as exc:
+            raise ImportError(
+                "UI dependencies missing; install with: pip install 'ks[ui]'"
+            ) from exc
+
+        app = create_app(
+            gear,
+            heroes_dir=heroes,
+            troops_path=Path(args.troops) if args.troops is not None else None,
+            governor_dir=Path(args.governor) if args.governor is not None else None,
+            gear_config=Path(args.config),
+            heroes_config=Path(args.heroes_config),
+            serial=args.serial,
+            auth_config=auth_cfg,
+            users_root=users_root,
+        )
+        print(f"Auth: Discord OAuth (users_root={users_root})")
+        print(f"UI: http://{args.host}:{args.port}/")
+        uvicorn.run(app, host=str(args.host), port=int(args.port), log_level="info")
+        return 0
+
     if gear is None and heroes is None:
         # Keep prior default when neither flag is passed.
         gear = ROOT / "artifacts" / "gear" / "full-run"
