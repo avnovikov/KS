@@ -109,10 +109,18 @@ def install_auth(
     """
     from starlette.middleware.sessions import SessionMiddleware
 
+    # https_only=True secures the session cookie over HTTPS; keep False for
+    # local/dev so TestClient and plain http:// UIs still work.
+    https_only = cfg.public_base_url.startswith("https://")
+
     # Inner → runs second on request (after session is available)
     app.add_middleware(ProtectRoutesMiddleware)  # type: ignore[union-attr]
     # Outer → runs first on request, populates request.session
-    app.add_middleware(SessionMiddleware, secret_key=cfg.session_secret)  # type: ignore[union-attr]
+    app.add_middleware(  # type: ignore[union-attr]
+        SessionMiddleware,
+        secret_key=cfg.session_secret,
+        https_only=https_only,
+    )
 
     auth_router = build_auth_router(cfg, http_client_factory=http_client_factory)
     app.include_router(auth_router)  # type: ignore[union-attr]

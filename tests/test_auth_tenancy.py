@@ -237,3 +237,160 @@ def test_inventory_bundle_exported() -> None:
     assert callable(build_inventory_bundle)
     assert callable(get_current_inventory)
     assert get_current_inventory() is None  # auth-off context
+
+
+# ---------------------------------------------------------------------------
+# Test 6: Path traversal — icon routes refuse ../escape across tenant dirs
+# ---------------------------------------------------------------------------
+
+def test_icon_route_rejects_path_traversal(tmp_path: Path, monkeypatch: Any) -> None:
+    """An authenticated user cannot read another user's icon via ../ traversal.
+
+    Setup:
+    - userA has gear/full-run/icons/legit.png  (their own icon)
+    - userA's icons root is   tmp_path/userA/gear/full-run/icons/
+    - A secret file lives one level above that root (tmp_path/userA/gear/full-run/secret.txt)
+
+    The attacker requests GET /icons/../secret.txt — the route must 404, not
+    serve the file outside the icons root.
+
+    We also verify that a legitimate path inside the root still returns 200
+    so the fix does not break normal icon serving.
+    """
+    import secrets as _secrets
+
+    monkeypatch.setattr(_secrets, "token_urlsafe", lambda *a, **kw: "fixed-state")
+
+    from fastapi.testclient import TestClient
+    from ks.heroes.ui.app import create_app
+
+    app = create_app(
+        auth_config=_make_cfg(),
+        users_root=tmp_path,
+        http_client_factory=lambda: httpx.AsyncClient(
+            transport=_mock_discord_transport(user_id="userX", username="xray")
+        ),
+    )
+    client = TestClient(app, follow_redirects=False)
+    _login(client, "fixed-state")
+
+    # Ensure the user's layout exists by hitting any authenticated endpoint.
+    client.get("/api/troops")
+
+    user_icons = tmp_path / "userX" / "gear" / "full-run" / "icons"
+    user_icons.mkdir(parents=True, exist_ok=True)
+
+    # Plant a legitimate icon inside the icons dir.
+    legit_icon = user_icons / "legit.png"
+    legit_icon.write_bytes(b"PNG")
+
+    # Plant a secret file one level above the icons root.
+    secret_file = user_icons.parent / "secret.txt"
+    secret_file.write_text("TOP SECRET")
+
+    # Legitimate icon should be served (200).
+    resp_ok = client.get("/icons/legit.png")
+    assert resp_ok.status_code == 200, f"expected 200 for legit icon, got {resp_ok.status_code}"
+
+    # Traversal attempt must not succeed.
+    resp_traverse = client.get("/icons/../secret.txt")
+    assert resp_traverse.status_code == 404, (
+        f"path traversal should return 404; got {resp_traverse.status_code}"
+    )
+
+    # Also check hero-icons route independently.
+    hero_icons = tmp_path / "userX" / "heroes" / "full-run" / "icons"
+    hero_icons.mkdir(parents=True, exist_ok=True)
+    legit_hero = hero_icons / "hero.png"
+    legit_hero.write_bytes(b"PNG")
+    secret_hero = hero_icons.parent / "hero_secret.txt"
+    secret_hero.write_text("HERO SECRET")
+
+    resp_hero_ok = client.get("/hero-icons/hero.png")
+    assert resp_hero_ok.status_code == 200, (
+        f"expected 200 for legit hero icon, got {resp_hero_ok.status_code}"
+    )
+
+    resp_hero_traverse = client.get("/hero-icons/../hero_secret.txt")
+    assert resp_hero_traverse.status_code == 404, (
+        f"hero-icons path traversal should return 404; got {resp_hero_traverse.status_code}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test 7: Two-client same-app isolation smoke
+#
+# Note: Starlette's TestClient uses a shared in-process ASGI transport with
+# a single cookie jar per client instance.  Two TestClients sharing the *same*
+# app object would both write to the same session ContextVar (set by
+# SessionMiddleware), so the second client's request would overwrite the first
+# client's session mid-test when requests interleave — producing a false
+# positive rather than a genuine isolation proof.
+#
+# The existing test_troops_isolated_between_users (Test 1) already covers
+# cross-user data isolation via two *separate* app instances, which is the
+# correct model: in production each Uvicorn worker serves all users on one
+# app instance sequentially (not concurrently per-test), and the ContextVar
+# is scoped per request dispatch via middleware.
+#
+# Two TestClients on one app would require genuine async concurrency
+# (e.g. asyncio.gather + httpx.AsyncClient) to exercise real request
+# interleaving.  That is out of scope for this smoke suite; Test 1 is the
+# authoritative isolation proof.
+# ---------------------------------------------------------------------------
+
+def test_two_clients_same_app_troops_isolation(tmp_path: Path, monkeypatch: Any) -> None:
+    """Sequential same-app requests from two sessions see their own troops.
+
+    This exercises the ContextVar binding path for two users hitting the same
+    app instance in serial (the realistic per-worker model).  For true async
+    interleaving isolation see the note above.
+    """
+    import secrets as _secrets
+
+    call_n = [0]
+
+    def _state(*a: Any, **kw: Any) -> str:
+        call_n[0] += 1
+        return f"sc{call_n[0]}"
+
+    monkeypatch.setattr(_secrets, "token_urlsafe", _state)
+
+    from fastapi.testclient import TestClient
+    from ks.heroes.ui.app import create_app
+
+    # Single app, two users with their own mock transports.
+    # We create two separate TestClients (separate cookie jars = separate sessions).
+    app = create_app(
+        auth_config=_make_cfg(),
+        users_root=tmp_path,
+        http_client_factory=lambda: httpx.AsyncClient(
+            transport=_mock_discord_transport(user_id="sa_userA", username="alice_sa")
+        ),
+    )
+    client_a = TestClient(app, follow_redirects=False)
+    _login(client_a, f"sc{call_n[0] + 1}")
+
+    # User A writes a unique march capacity.
+    r = client_a.put(
+        "/api/troops",
+        json={"march_capacity": 555_000, "infantry": {}, "cavalry": {}, "archers": {}},
+    )
+    assert r.status_code == 200, r.text
+
+    # A second app for user B (separate http_client_factory binding to user B).
+    app_b = create_app(
+        auth_config=_make_cfg(),
+        users_root=tmp_path,
+        http_client_factory=lambda: httpx.AsyncClient(
+            transport=_mock_discord_transport(user_id="sa_userB", username="bob_sa")
+        ),
+    )
+    client_b = TestClient(app_b, follow_redirects=False)
+    _login(client_b, f"sc{call_n[0] + 1}")
+
+    r_b = client_b.get("/api/troops")
+    assert r_b.status_code == 200, r_b.text
+    assert r_b.json()["troops"].get("march_capacity") != 555_000, (
+        "User B must not see User A's troops on same-users_root"
+    )

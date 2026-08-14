@@ -140,6 +140,24 @@ except ImportError:  # pragma: no cover - exercised when ui extras missing
     Jinja2Templates = None  # type: ignore[assignment,misc]
 
 
+def _safe_under(root: Path, relative: str) -> Path | None:
+    """Return the resolved path only when it sits inside *root*.
+
+    Returns ``None`` when the candidate would escape the allowed root (e.g.
+    via ``../`` segments) or when it refers to something that is not a regular
+    file.  Used by every dynamic icon route to prevent cross-user traversal.
+    """
+    try:
+        candidate = (root / relative).resolve()
+    except (ValueError, OSError):
+        return None
+    if not candidate.is_relative_to(root.resolve()):
+        return None
+    if not candidate.is_file():
+        return None
+    return candidate
+
+
 def _resolve_gear_dir(gear: Path) -> Path:
     path = gear.expanduser().resolve()
     if path.is_file() and path.name == "gear.json":
@@ -625,10 +643,11 @@ def create_app(
             inv = get_current_inventory()
             if inv is None:
                 raise HTTPException(status_code=404, detail="no inventory")
-            file_path = inv.gear_dir / "icons" / path
-            if not file_path.is_file():
+            icons_root = (inv.gear_dir / "icons").resolve()
+            safe = _safe_under(icons_root, path)
+            if safe is None:
                 raise HTTPException(status_code=404, detail=f"icon not found: {path}")
-            return _FileResponse(str(file_path))
+            return _FileResponse(str(safe))
 
         @app.get("/hero-icons/{path:path}", include_in_schema=False)
         def serve_user_hero_icons(path: str) -> Any:
@@ -636,10 +655,11 @@ def create_app(
             inv = get_current_inventory()
             if inv is None:
                 raise HTTPException(status_code=404, detail="no inventory")
-            file_path = inv.heroes_dir / "icons" / path
-            if not file_path.is_file():
+            icons_root = (inv.heroes_dir / "icons").resolve()
+            safe = _safe_under(icons_root, path)
+            if safe is None:
                 raise HTTPException(status_code=404, detail=f"hero icon not found: {path}")
-            return _FileResponse(str(file_path))
+            return _FileResponse(str(safe))
 
     def _require_gear() -> tuple[Path, GearStore]:
         from ks.auth.request_inventory import get_current_inventory
@@ -1473,11 +1493,12 @@ def create_app(
                     }
                 except Exception as exc:  # noqa: BLE001 — optimize without icons
                     icon_warning = f"gear icons unavailable: {exc}"
+        gov_store = _require_governor_store()
         bundle = run_optimize_bundle(
             heroes,
             gear=gear_pieces,
             troops_path=_current_troops_path(),
-            governor=_require_governor_store().bonuses() if _require_governor_store() is not None else None,
+            governor=gov_store.bonuses() if gov_store is not None else None,
         )
         if icon_by_id:
             attach_gear_icon_urls(bundle, icon_by_id)

@@ -310,9 +310,9 @@ def test_logout_clears_session(tmp_path: Path, monkeypatch: Any) -> None:
     resp = client.get("/api/troops")
     assert resp.status_code != 401
 
-    # Logout
-    resp = client.get("/auth/logout")
-    assert resp.status_code == 302
+    # Logout via POST (CSRF-safe)
+    resp = client.post("/auth/logout")
+    assert resp.status_code in (302, 303)
 
     # Should be blocked again
     resp = client.get("/api/troops")
@@ -331,3 +331,87 @@ def test_auth_on_create_app_allows_no_inventory_dirs(tmp_path: Path) -> None:
     # Should not raise
     app = create_app(auth_config=_make_cfg(), users_root=tmp_path)
     assert app is not None
+
+
+# ---------------------------------------------------------------------------
+# Test: GET /auth/logout redirects to login (does not clear session)
+# ---------------------------------------------------------------------------
+
+
+def test_logout_get_redirects_to_login(tmp_path: Path, monkeypatch: Any) -> None:
+    """GET /auth/logout must redirect to login (not error), and not clear session.
+
+    The true logout action requires a POST to prevent CSRF; the GET handler
+    is a safe fallback for users who type the URL directly.
+    """
+    import secrets as _secrets
+
+    monkeypatch.setattr(_secrets, "token_urlsafe", lambda *a, **kw: "fixed-state")
+
+    transport = _mock_discord_transport()
+    factory = _mock_http_factory(transport)
+
+    from fastapi.testclient import TestClient
+    from ks.heroes.ui.app import create_app
+
+    app = create_app(
+        auth_config=_make_cfg(),
+        users_root=tmp_path,
+        http_client_factory=factory,
+    )
+    client = TestClient(app, follow_redirects=False)
+
+    # Log in first
+    client.get("/auth/login")
+    client.get("/auth/callback?code=test-code&state=fixed-state")
+    resp = client.get("/api/troops")
+    assert resp.status_code not in (401, 302)
+
+    # GET /auth/logout must redirect to login (harmless)
+    resp = client.get("/auth/logout")
+    assert resp.status_code == 302
+    assert "/auth/login" in resp.headers["location"]
+
+
+# ---------------------------------------------------------------------------
+# Test: Session secure flag is set for https:// base URLs
+# ---------------------------------------------------------------------------
+
+
+def test_session_https_only_flag_set_for_https_base_url(tmp_path: Path) -> None:
+    """install_auth sets https_only=True when public_base_url is https://."""
+    from ks.auth import AuthConfig
+    from ks.heroes.ui.app import create_app
+
+    https_cfg = AuthConfig(
+        client_id="test-client-id",
+        client_secret="test-client-secret",
+        session_secret="test-session-secret-that-is-32-byt",
+        public_base_url="https://example.com",
+        guild_id="guild-999",
+        ui_role="ks-ui",
+        bot_token="bot-test-token",
+    )
+    app = create_app(auth_config=https_cfg, users_root=tmp_path)
+
+    # Inspect middleware stack: SessionMiddleware must have https_only=True.
+    from starlette.middleware.sessions import SessionMiddleware
+
+    found = False
+    for layer in app.middleware_stack.__dict__.values() if hasattr(app.middleware_stack, "__dict__") else []:
+        if isinstance(layer, SessionMiddleware) and getattr(layer, "https_only", False):
+            found = True
+            break
+
+    # Fallback: check via the user_middleware list on the app itself.
+    if not found:
+        for m in getattr(app, "user_middleware", []):
+            cls = getattr(m, "cls", None)
+            kwargs = getattr(m, "kwargs", {})
+            if cls is SessionMiddleware and kwargs.get("https_only") is True:
+                found = True
+                break
+
+    assert found, (
+        "SessionMiddleware should be installed with https_only=True for https:// base URLs"
+    )

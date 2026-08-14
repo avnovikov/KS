@@ -15,13 +15,14 @@ from ks.auth.session_user import clear_session_user, set_session_user
 
 try:
     from fastapi import APIRouter, Request
-    from fastapi.responses import HTMLResponse, RedirectResponse
+    from fastapi.responses import HTMLResponse, RedirectResponse, Response
     from fastapi.templating import Jinja2Templates
 except ImportError:  # pragma: no cover
     APIRouter = None  # type: ignore[assignment,misc]
     Request = None  # type: ignore[assignment,misc]
     HTMLResponse = None  # type: ignore[assignment,misc]
     RedirectResponse = None  # type: ignore[assignment,misc]
+    Response = None  # type: ignore[assignment,misc]
     Jinja2Templates = None  # type: ignore[assignment,misc]
 
 
@@ -91,9 +92,15 @@ def build_auth_router(
         set_session_user(request.session, user)
         return RedirectResponse(url="/", status_code=302)
 
-    @router.get("/logout")
+    @router.post("/logout")
     def logout(request: Request) -> "RedirectResponse":
+        """Clear session and redirect to login (POST-only to prevent CSRF)."""
         clear_session_user(request.session)
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    @router.get("/logout")
+    def logout_get(request: Request) -> "Response":
+        """GET /auth/logout is not allowed; redirect to login instead."""
         return RedirectResponse(url="/auth/login", status_code=302)
 
     return router
