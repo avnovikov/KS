@@ -16,3 +16,7 @@ data/
 
 # agent scratch
 .tmp/
+
+# local deploy secrets / Lightsail private keys
+deploy-secrets/
+deploy/aws/.secrets/
