@@ -26,6 +26,7 @@ id -u "$SERVICE_USER" >/dev/null 2>&1 || useradd --system --home /var/lib/ks --s
 mkdir -p /var/lib/ks "$USERS_ROOT" /etc/ks
 chown -R "$SERVICE_USER:$SERVICE_USER" /var/lib/ks
 
+git config --global --add safe.directory "$REPO_DIR" || true
 if [[ ! -d "$REPO_DIR/.git" ]]; then
   git clone "$REPO_URL" "$REPO_DIR"
 else
