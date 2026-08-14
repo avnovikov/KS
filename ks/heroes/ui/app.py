@@ -352,6 +352,59 @@ def create_manual_piece(
     return store.upsert(record)
 
 
+def resolve_catalog_hero_name(name: str) -> str:
+    """Return canonical catalog hero name (case-insensitive); raise if unknown."""
+    from ks.heroes.name_ocr import load_name_catalog
+
+    raw = (name or "").strip()
+    if not raw:
+        raise ValueError("name is required")
+    catalog = load_name_catalog()
+    for key in catalog:
+        if key.lower() == raw.lower():
+            return key
+    raise ValueError(f"unknown hero in catalog: {raw!r}")
+
+
+def catalog_heroes_available_to_add(store: HeroStore) -> list[dict[str, str]]:
+    """Catalog entries not already in the roster, sorted by name."""
+    from ks.heroes.name_ocr import load_name_catalog
+
+    owned = {h.name.lower() for h in store.all_heroes()}
+    rows: list[dict[str, str]] = []
+    for key, entry in sorted(load_name_catalog().items(), key=lambda kv: kv[0].lower()):
+        if key.lower() in owned:
+            continue
+        rows.append(
+            {
+                "name": key,
+                "troop": str(entry.troop or ""),
+                "rarity": str(entry.rarity or ""),
+            }
+        )
+    return rows
+
+
+def create_manual_hero(store: HeroStore, *, name: str) -> HeroRecord:
+    """Add a catalog hero to the roster; levels/power left empty for manual edit."""
+    from ks.heroes.name_ocr import load_name_catalog
+
+    key = resolve_catalog_hero_name(name)
+    if any(h.name.lower() == key.lower() for h in store.all_heroes()):
+        raise ValueError(f"hero already in roster: {key}")
+    entry = load_name_catalog()[key]
+    existing = store.all_heroes()
+    next_index = max((h.roster_index for h in existing), default=-1) + 1
+    record = HeroRecord(
+        name=key,
+        troop_type=entry.troop,
+        rarity=entry.rarity,
+        roster_page=0,
+        roster_index=next_index,
+    )
+    return store.upsert(record)
+
+
 def update_piece_levels(
     store: GearStore,
     piece_id: str,
@@ -926,6 +979,7 @@ def create_app(
             troop_types=sorted(
                 {h.troop_type.lower() for h in heroes if h.troop_type}
             ),
+            catalog_add_heroes=catalog_heroes_available_to_add(store),
         )
 
     @app.get("/inventory/troops", response_class=HTMLResponse)
@@ -1365,7 +1419,24 @@ def create_app(
             ],
         }
 
+    @app.post("/api/heroes")
+    async def api_create_hero(request: Request) -> dict[str, Any]:
+        """Manually add a catalog hero to the roster."""
+        _heroes_path, store = _require_heroes()
+        try:
+            raw = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="JSON body required") from exc
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="JSON object required")
+        try:
+            hero = create_manual_hero(store, name=str(raw.get("name") or ""))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "hero": hero.to_dict()}
+
     @app.get("/api/heroes/{name}")
+
     def api_get_hero(name: str) -> dict[str, Any]:
         heroes_path, store = _require_heroes()
         store.reload()

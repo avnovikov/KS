@@ -887,6 +887,95 @@
     });
   }
 
+  function wireAddHero() {
+    var openBtn = document.getElementById("add-hero-btn");
+    var dialog = document.getElementById("add-hero-dialog");
+    var confirmBtn = document.getElementById("add-hero-confirm");
+    var cancelBtn = document.getElementById("add-hero-cancel");
+    var nameEl = document.getElementById("add-hero-name");
+    var metaEl = document.getElementById("add-hero-meta");
+    var errEl = document.getElementById("add-hero-error");
+    if (!openBtn || !dialog || !confirmBtn || !nameEl) {
+      return;
+    }
+
+    function syncMeta() {
+      if (!metaEl) return;
+      var opt = nameEl.options[nameEl.selectedIndex];
+      if (!opt) {
+        metaEl.textContent = "No catalog heroes left to add.";
+        return;
+      }
+      var troop = opt.getAttribute("data-troop") || "—";
+      var rarity = opt.getAttribute("data-rarity") || "—";
+      metaEl.textContent = troop + " · " + rarity;
+    }
+
+    function close() {
+      dialog.classList.remove("open");
+      dialog.setAttribute("aria-hidden", "true");
+      if (!confirmBtn.disabled || nameEl.options.length) {
+        confirmBtn.disabled = nameEl.options.length === 0;
+      }
+      if (errEl) {
+        errEl.hidden = true;
+        errEl.textContent = "";
+      }
+    }
+
+    function open() {
+      if (errEl) {
+        errEl.hidden = true;
+        errEl.textContent = "";
+      }
+      syncMeta();
+      dialog.classList.add("open");
+      dialog.setAttribute("aria-hidden", "false");
+    }
+
+    nameEl.addEventListener("change", syncMeta);
+    openBtn.addEventListener("click", open);
+    window.bindDialogDismiss(dialog, cancelBtn, close);
+
+    confirmBtn.addEventListener("click", async function () {
+      if (confirmBtn.disabled) return;
+      confirmBtn.disabled = true;
+      if (errEl) {
+        errEl.hidden = true;
+        errEl.textContent = "";
+      }
+      try {
+        var res = await fetch("/api/heroes", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({ name: nameEl.value }),
+        });
+        var data = await res.json().catch(function () {
+          return {};
+        });
+        if (!res.ok) {
+          var detail = data.detail || res.statusText;
+          throw new Error(
+            typeof detail === "string" ? detail : JSON.stringify(detail)
+          );
+        }
+        var name = (data.hero && data.hero.name) || "hero";
+        close();
+        toast("Added " + name, true);
+        window.location.reload();
+      } catch (err) {
+        confirmBtn.disabled = false;
+        var msg = String((err && err.message) || err);
+        if (errEl) {
+          errEl.hidden = false;
+          errEl.textContent = msg;
+        }
+        toast(msg, false);
+      }
+    });
+  }
+
   /* --- wiring --------------------------------------------------------------- */
 
   rows.forEach(function (state) {
@@ -977,6 +1066,7 @@
   wireRescan();
   wireRemoval();
   wireAddGear();
+  wireAddHero();
 
   loadTrust();
   paintTrustRows();
