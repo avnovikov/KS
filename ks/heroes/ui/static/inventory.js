@@ -808,6 +808,85 @@
     });
   }
 
+  function wireAddGear() {
+    var openBtn = document.getElementById("add-gear-btn");
+    var dialog = document.getElementById("add-gear-dialog");
+    var confirmBtn = document.getElementById("add-gear-confirm");
+    var cancelBtn = document.getElementById("add-gear-cancel");
+    var troopEl = document.getElementById("add-gear-troop");
+    var slotEl = document.getElementById("add-gear-slot");
+    var rarityEl = document.getElementById("add-gear-rarity");
+    var errEl = document.getElementById("add-gear-error");
+    if (!openBtn || !dialog || !confirmBtn || !troopEl || !slotEl || !rarityEl) {
+      return;
+    }
+
+    function close() {
+      dialog.classList.remove("open");
+      dialog.setAttribute("aria-hidden", "true");
+      confirmBtn.disabled = false;
+      if (errEl) {
+        errEl.hidden = true;
+        errEl.textContent = "";
+      }
+    }
+
+    function open() {
+      confirmBtn.disabled = false;
+      if (errEl) {
+        errEl.hidden = true;
+        errEl.textContent = "";
+      }
+      dialog.classList.add("open");
+      dialog.setAttribute("aria-hidden", "false");
+    }
+
+    openBtn.addEventListener("click", open);
+    window.bindDialogDismiss(dialog, cancelBtn, close);
+
+    confirmBtn.addEventListener("click", async function () {
+      if (confirmBtn.disabled) return;
+      confirmBtn.disabled = true;
+      if (errEl) {
+        errEl.hidden = true;
+        errEl.textContent = "";
+      }
+      try {
+        var res = await fetch("/api/gear", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({
+            troop_type: troopEl.value,
+            slot: slotEl.value,
+            rarity: rarityEl.value,
+          }),
+        });
+        var data = await res.json().catch(function () {
+          return {};
+        });
+        if (!res.ok) {
+          var detail = data.detail || res.statusText;
+          throw new Error(
+            typeof detail === "string" ? detail : JSON.stringify(detail)
+          );
+        }
+        var name = (data.piece && data.piece.name) || "piece";
+        close();
+        toast("Added " + name, true);
+        window.location.reload();
+      } catch (err) {
+        confirmBtn.disabled = false;
+        var msg = String((err && err.message) || err);
+        if (errEl) {
+          errEl.hidden = false;
+          errEl.textContent = msg;
+        }
+        toast(msg, false);
+      }
+    });
+  }
+
   /* --- wiring --------------------------------------------------------------- */
 
   rows.forEach(function (state) {
@@ -897,6 +976,7 @@
 
   wireRescan();
   wireRemoval();
+  wireAddGear();
 
   loadTrust();
   paintTrustRows();
