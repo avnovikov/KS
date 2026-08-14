@@ -869,6 +869,9 @@ def create_app(
             "heroes_enabled": _inv is not None or resolved_heroes is not None,
         }
         context.update(extra)
+        from ks.heroes.ui.path_display import mask_path_fields
+
+        context = mask_path_fields(context)
         response = templates.TemplateResponse(request, template, context)
         response.headers["Cache-Control"] = "no-store"
         return response
