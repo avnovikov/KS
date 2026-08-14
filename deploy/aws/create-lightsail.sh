@@ -24,11 +24,20 @@ if ! aws lightsail get-key-pair --region "$REGION" --key-pair-name "$KEY_NAME" >
   echo "Creating Lightsail key pair $KEY_NAME (private key saved under ./deploy/aws/.secrets/ — gitignored)"
   mkdir -p "$(dirname "$0")/.secrets"
   chmod 700 "$(dirname "$0")/.secrets"
+  # Note: Lightsail field is named privateKeyBase64 but returns PEM text already.
   aws lightsail create-key-pair \
     --region "$REGION" \
     --key-pair-name "$KEY_NAME" \
-    --query 'privateKeyBase64' \
-    --output text | base64 --decode > "$(dirname "$0")/.secrets/${KEY_NAME}.pem"
+    --output json >"/tmp/${KEY_NAME}-keypair.json"
+  python3 - "$KEY_NAME" "$(dirname "$0")/.secrets/${KEY_NAME}.pem" <<'PY2'
+import json, sys
+from pathlib import Path
+name, out = sys.argv[1], Path(sys.argv[2])
+pem = json.load(open(f"/tmp/{name}-keypair.json"))["privateKeyBase64"]
+if not pem.startswith("-----BEGIN"):
+    raise SystemExit("unexpected key format")
+out.write_text(pem if pem.endswith("\n") else pem + "\n")
+PY2
   chmod 600 "$(dirname "$0")/.secrets/${KEY_NAME}.pem"
 fi
 
