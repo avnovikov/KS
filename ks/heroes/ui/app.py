@@ -509,13 +509,22 @@ def create_app(
     serial: str | None = None,
     rescan_fn: Callable[..., list[GearRecord]] | None = None,
     heroes_rescan_fn: Callable[..., list[HeroRecord]] | None = None,
+    auth_config: Any = None,
+    users_root: Path | None = None,
+    http_client_factory: Any = None,
 ) -> Any:
-    """Build FastAPI app bound to gear and/or heroes inventory directories."""
+    """Build FastAPI app bound to gear and/or heroes inventory directories.
+
+    When ``auth_config`` (an ``AuthConfig``) is provided the auth shell is
+    installed: SessionMiddleware + protect middleware + ``/auth/*`` routes.
+    Inventory directories become optional in auth mode — per-request binding
+    arrives in Task 5; endpoints that need stores return 503 until then.
+    """
     if FastAPI is None:
         raise ImportError(
             "UI dependencies missing; install with: pip install 'ks[ui]'"
         )
-    if gear_dir is None and heroes_dir is None:
+    if auth_config is None and gear_dir is None and heroes_dir is None:
         raise ValueError("gear_dir or heroes_dir is required")
 
     resolved_gear = _resolve_gear_dir(gear_dir) if gear_dir is not None else None
@@ -528,18 +537,20 @@ def create_app(
     )
     # Troops live alongside heroes when both halves are configured — heroes
     # is what the optimisers actually consume troops for — else alongside
-    # gear. One of the two is always set (checked above), so this is never
-    # None; /inventory/troops and /api/troops stay ungated for the same
-    # reason. `troops_path` (CLI `--troops`) overrides the location outright,
-    # which is how a caller points the UI at an existing troops document.
+    # gear. `troops_path` (CLI `--troops`) overrides the location outright.
+    # In auth mode without any inventory dir the store is deferred to Task 5;
+    # endpoints that need it return 503 until per-request binding lands.
     troops_dir = resolved_heroes if resolved_heroes is not None else resolved_gear
-    troop_store = TroopStore(
-        troops_path.expanduser().resolve()
-        if troops_path is not None
-        else troops_dir / "troops.yaml",
-        seed_from=REPO_ROOT / "config" / "troops.yaml",
-    )
-    troop_store.ensure_exists()
+    if troops_dir is None and troops_path is None:
+        troop_store = None
+    else:
+        troop_store = TroopStore(
+            troops_path.expanduser().resolve()
+            if troops_path is not None
+            else troops_dir / "troops.yaml",  # type: ignore[operator]
+            seed_from=REPO_ROOT / "config" / "troops.yaml",
+        )
+        troop_store.ensure_exists()
     from ks.heroes.governor_store import GovernorGearStore
     from ks.heroes.research_store import ResearchStore
 
@@ -583,7 +594,7 @@ def create_app(
     app.state.gear_config = gear_config_path
     app.state.heroes_config = heroes_config_path
     app.state.serial = serial
-    app.state.troops_path = troop_store.path
+    app.state.troops_path = troop_store.path if troop_store is not None else None
     static_dir = Path(__file__).resolve().parent / "static"
     if static_dir.is_dir():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
@@ -615,6 +626,14 @@ def create_app(
                 status_code=404, detail="heroes UI not configured"
             )
         return resolved_heroes, hero_store
+
+    def _require_troop_store():
+        if troop_store is None:
+            raise HTTPException(
+                status_code=503,
+                detail="multi-user inventory pending (Task 5)",
+            )
+        return troop_store
 
     def _shell_page(
         request: Request,
@@ -755,10 +774,11 @@ def create_app(
         same path the API uses, so page and API never disagree about what
         counts as broken.
         """
+        store = _require_troop_store()
         raw: dict[str, Any] = {}
         load_error: str | None = None
         try:
-            raw = troop_store.load_raw()
+            raw = store.load_raw()
             _troop_totals(raw)
         except (yaml.YAMLError, ValueError, TypeError) as exc:
             load_error = str(exc)
@@ -768,7 +788,7 @@ def create_app(
             primary="inventory",
             subtab="troops",
             form=troops_form_model(raw),
-            troops_path=str(troop_store.path),
+            troops_path=str(store.path),
             load_error=load_error,
         )
 
@@ -1304,8 +1324,9 @@ def create_app(
         message (matching the PUT-side validation error) instead of a
         blank 500, so the user can see what to repair.
         """
+        store = _require_troop_store()
         try:
-            raw = troop_store.load_raw()
+            raw = store.load_raw()
             totals = _troop_totals(raw)
         except (yaml.YAMLError, ValueError, TypeError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1322,6 +1343,7 @@ def create_app(
         that whole block rather than being deep-merged tier by tier. Task
         3's editor page is built against this contract.
         """
+        store = _require_troop_store()
         try:
             raw = await request.json()
         except Exception as exc:
@@ -1329,7 +1351,7 @@ def create_app(
         if not isinstance(raw, dict):
             raise HTTPException(status_code=400, detail="JSON object required")
         try:
-            saved = troop_store.save_raw(raw)
+            saved = store.save_raw(raw)
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return {"troops": saved, "totals": _troop_totals(saved)}
@@ -2113,6 +2135,16 @@ def create_app(
                 yield json.dumps({"type": "error", "detail": str(exc)}) + "\n"
 
         return StreamingResponse(_events(), media_type="application/x-ndjson")
+
+    if auth_config is not None:
+        from ks.auth.middleware import install_auth
+
+        install_auth(
+            app,
+            auth_config,
+            users_root,
+            http_client_factory=http_client_factory,
+        )
 
     return app
 
