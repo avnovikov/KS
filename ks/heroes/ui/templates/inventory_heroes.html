@@ -2,6 +2,9 @@
 {% block title %}Heroes · Inventory · KS{% endblock %}
 
 {% block actions %}
+<button type="button" id="add-hero-btn" title="Add a catalog hero without OCR">
+  Add hero
+</button>
 {# No confirm dialog: unlike the gear rescan this upserts into the roster
    rather than wiping and replacing it. #}
 <button type="button" class="rescan" id="rescan-btn"
@@ -139,6 +142,47 @@
       <button type="button" class="modal-close" id="hero-detail-close">Close</button>
     </div>
     <div class="modal-body" id="hero-detail-body"></div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="add-hero-dialog" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true"
+       aria-labelledby="add-hero-title" aria-describedby="add-hero-explain">
+    <div class="modal-header">
+      <div>
+        <h2 id="add-hero-title">Add hero</h2>
+      </div>
+      <button type="button" class="modal-close" id="add-hero-cancel">Cancel</button>
+    </div>
+    <div class="modal-body">
+      <p id="add-hero-explain">
+        Pick a catalog hero not already on your roster. Set level / stars /
+        pellets / power on the row after it appears.
+      </p>
+      <div class="add-gear-fields">
+        <label>Hero
+          <select id="add-hero-name" aria-label="Hero name">
+            {% for c in catalog_add_heroes %}
+            <option value="{{ c.name }}"
+                    data-troop="{{ c.troop }}"
+                    data-rarity="{{ c.rarity }}">{{ c.name }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <p class="hint" id="add-hero-meta">
+          {% if catalog_add_heroes %}
+          {{ catalog_add_heroes[0].troop or "—" }} · {{ catalog_add_heroes[0].rarity or "—" }}
+          {% else %}
+          No catalog heroes left to add.
+          {% endif %}
+        </p>
+      </div>
+      <p class="hint" id="add-hero-error" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" id="add-hero-confirm"
+                {% if not catalog_add_heroes %}disabled{% endif %}>Add hero</button>
+      </div>
+    </div>
   </div>
 </div>
 {% endblock %}

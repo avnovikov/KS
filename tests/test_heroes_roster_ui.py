@@ -293,3 +293,99 @@ def test_inventory_tabs_link_both_screens(tmp_path: Path) -> None:
     assert b'href="/inventory/gear"' in heroes_page.content
     assert b'href="/optimiser/events"' in heroes_page.content
     assert b'href="/optimiser/events"' in gear_page.content
+
+
+def test_create_manual_hero_persists_json_and_sql(tmp_path: Path) -> None:
+    from ks.heroes.ui.app import create_manual_hero
+
+    store = HeroStore(tmp_path)
+    hero = create_manual_hero(store, name="Helga")
+    assert hero.name == "Helga"
+    assert hero.troop_type == "infantry"
+    assert hero.rarity == "legendary"
+    assert hero.level is None
+    assert hero.stars is None
+    assert hero.pellets is None
+    assert hero.power is None
+
+    raw = json.loads((tmp_path / "heroes.json").read_text(encoding="utf-8"))
+    assert any(h["name"] == "Helga" for h in raw["heroes"])
+
+    reloaded = HeroStore(tmp_path)
+    found = next(h for h in reloaded.all_heroes() if h.name == "Helga")
+    assert found.troop_type == "infantry"
+
+
+def test_create_manual_hero_rejects_duplicate(tmp_path: Path) -> None:
+    from ks.heroes.ui.app import create_manual_hero
+
+    store = _seed(tmp_path)
+    with pytest.raises(ValueError, match="already"):
+        create_manual_hero(store, name="Helga")
+
+
+def test_create_manual_hero_rejects_unknown(tmp_path: Path) -> None:
+    from ks.heroes.ui.app import create_manual_hero
+
+    store = HeroStore(tmp_path)
+    with pytest.raises(ValueError, match="unknown"):
+        create_manual_hero(store, name="NotARealHeroXYZ")
+
+
+def test_create_manual_hero_case_insensitive_catalog_name(tmp_path: Path) -> None:
+    from ks.heroes.ui.app import create_manual_hero
+
+    store = HeroStore(tmp_path)
+    hero = create_manual_hero(store, name="helga")
+    assert hero.name == "Helga"
+
+
+def test_fastapi_post_heroes_creates_hero(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.ui.app import create_app
+
+    store = HeroStore(tmp_path)
+    client = TestClient(create_app(heroes_dir=tmp_path))
+    res = client.post("/api/heroes", json={"name": "Saul"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["hero"]["name"] == "Saul"
+    assert body["hero"]["troop_type"] in {"archer", "archers"}
+    assert body["hero"]["rarity"] == "legendary"
+
+    listed = client.get("/api/heroes").json()["heroes"]
+    assert any(h["name"] == "Saul" for h in listed)
+    assert store  # keep lint calm if unused — reload from disk
+    reloaded = HeroStore(tmp_path)
+    assert any(h.name == "Saul" for h in reloaded.all_heroes())
+
+
+def test_fastapi_post_heroes_rejects_duplicate(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.ui.app import create_app
+
+    _seed(tmp_path)
+    client = TestClient(create_app(heroes_dir=tmp_path))
+    res = client.post("/api/heroes", json={"name": "Helga"})
+    assert res.status_code == 400
+
+
+def test_inventory_heroes_page_has_add_control(tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from ks.heroes.ui.app import create_app
+
+    _seed(tmp_path)
+    client = TestClient(create_app(heroes_dir=tmp_path))
+    page = client.get("/inventory/heroes")
+    assert page.status_code == 200
+    assert 'id="add-hero-btn"' in page.text
+    assert 'id="add-hero-dialog"' in page.text
+    assert 'id="add-hero-name"' in page.text
+    assert 'value="Helga"' not in page.text  # already owned
