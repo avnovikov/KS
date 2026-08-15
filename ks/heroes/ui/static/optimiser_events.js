@@ -561,6 +561,52 @@
     return '<div class="contrib-strip">' + chips + "</div>" + note;
   }
 
+  /** First-expedition Attack/Lethality DamageUp SkillMod for Bear (and similar). */
+  function renderSkillmodDetail(row) {
+    var detail = row && row.skillmod_detail;
+    if (!detail || !(detail.by_hero || []).length) return "";
+    var factor = Number(detail.damage_up);
+    var factorText = Number.isFinite(factor)
+      ? "×" + factor.toFixed(3)
+      : "—";
+    var scope = detail.joiner_only
+      ? "first-expedition Attack/Lethality only"
+      : "expedition Attack/Lethality (incl. non-first)";
+    var facts = [
+      ["SkillMod DamageUp", factorText],
+      ["scope", scope]
+    ];
+    (detail.by_hero || []).forEach(function (rowHero) {
+      var label =
+        (rowHero.name || "?") +
+        " " +
+        String(rowHero.kind || "").replace(/_/g, " ");
+      var pct = Number(rowHero.pct);
+      var op = rowHero.effect_op != null ? " · op " + rowHero.effect_op : "";
+      facts.push([
+        label,
+        (Number.isFinite(pct) ? "+" + pct.toFixed(1) + "%" : "—") + op
+      ]);
+    });
+    var chips = facts
+      .map(function (pair) {
+        return (
+          '<div class="fact"><div class="fact-k">' +
+          esc(pair[0]) +
+          '</div><div class="fact-v">' +
+          esc(pair[1]) +
+          "</div></div>"
+        );
+      })
+      .join("");
+    return (
+      '<div class="contrib-strip skillmod-strip">' +
+      chips +
+      "</div>" +
+      '<p class="contrib-note">joiner SkillMod stacks same effect_op additively, different ops multiply</p>'
+    );
+  }
+
   function contribSplit(share, fam) {
     if (!share) return "—";
     return (
@@ -829,6 +875,13 @@
       var stripEl = document.createElement("div");
       stripEl.innerHTML = strip;
       boardEl.appendChild(stripEl);
+    }
+
+    var skillmodHtml = renderSkillmodDetail(row);
+    if (skillmodHtml) {
+      var skillmodEl = document.createElement("div");
+      skillmodEl.innerHTML = skillmodHtml;
+      boardEl.appendChild(skillmodEl);
     }
 
     if (hasFormation(row)) {

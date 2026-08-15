@@ -181,6 +181,7 @@ class RecommendResult:
     gear_assignment: dict[str, list[dict[str, Any]]] | None = None
     stat_family: str = "expedition"
     formation_totals: dict[str, Any] | None = None
+    skillmod_detail: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out = {
@@ -202,4 +203,6 @@ class RecommendResult:
             }
         if self.gear_assignment is not None:
             out["gear_assignment"] = self.gear_assignment
+        if self.skillmod_detail is not None:
+            out["skillmod_detail"] = self.skillmod_detail
         return out
