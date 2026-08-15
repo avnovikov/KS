@@ -38,6 +38,11 @@
 <p class="status-line" id="lineup-status" role="status">Solving lineups…</p>
 
 <div class="mode-chips" id="mode-chips" role="group" aria-label="Modes"></div>
+<div class="mode-chips" id="joiner-pool-bar" hidden>
+  <button type="button" id="joiner-pool-btn" title="Pick heroes available for Joiner after Rally Lead">
+    Joiner pool
+  </button>
+</div>
 {# The two regions optimiser_events.js rewrites at runtime. Both are
    un-hidden before their text is written, exactly as app.js's toast is — but
    without a role that ceremony announces nothing, so they carry one: polite
@@ -47,6 +52,29 @@
 <p class="banner-err" id="section-error" role="alert" hidden></p>
 
 <section class="panel board" id="board"></section>
+
+<div class="modal-backdrop" id="joiner-pool-dialog" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true"
+       aria-labelledby="joiner-pool-title">
+    <div class="modal-header">
+      <div>
+        <h2 id="joiner-pool-title">Joiner pool</h2>
+      </div>
+      <button type="button" class="modal-close" id="joiner-pool-cancel">Cancel</button>
+    </div>
+    <div class="modal-body">
+      <p id="joiner-pool-explain">
+        Heroes on Rally Lead stay locked out. Tick who may be used for Joiner,
+        then confirm to re-solve Joiner only.
+      </p>
+      <div class="add-gear-fields" id="joiner-pool-list"></div>
+      <p class="hint" id="joiner-pool-error" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" id="joiner-pool-confirm">Solve Joiner</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 {% include "_gear_detail_modal.html" %}
 {% endblock %}
