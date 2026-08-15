@@ -14,7 +14,14 @@ from __future__ import annotations
 import httpx
 import pytest
 from pathlib import Path
+import re
 from typing import Any
+
+def _state_from_login_html(html: str) -> str:
+    match = re.search(r"(?:[?&]|&amp;)state=([^&\"\s]+)", html)
+    assert match, "login HTML must include Discord authorize state"
+    return match.group(1)
+
 
 
 # ---------------------------------------------------------------------------
@@ -184,20 +191,11 @@ def test_auth_login_page_returns_html(tmp_path: Path) -> None:
 
 def test_auth_on_callback_success_sets_session(tmp_path: Path, monkeypatch: Any) -> None:
     """Successful callback → session cookie; subsequent API call is not 401."""
-    import secrets as _secrets
     from fastapi.testclient import TestClient
-    from ks.auth import routes as routes_mod
-
-    monkeypatch.setattr(_secrets, "token_urlsafe", lambda *a, **kw: "fixed-state")
+    from ks.heroes.ui.app import create_app
 
     transport = _mock_discord_transport()
     factory = _mock_http_factory(transport)
-
-    app = _make_auth_app(tmp_path)
-    # Inject mock HTTP factory into the router via build_auth_router factory arg.
-    # We rebuild the app with the factory injected.
-    from ks.auth.routes import build_auth_router
-    from ks.heroes.ui.app import create_app
 
     app = create_app(
         auth_config=_make_cfg(),
@@ -207,12 +205,13 @@ def test_auth_on_callback_success_sets_session(tmp_path: Path, monkeypatch: Any)
 
     client = TestClient(app, follow_redirects=False)
 
-    # Step 1: Visit /auth/login — sets oauth_state = "fixed-state" in session
+    # Step 1: Visit /auth/login — signed state embedded in Discord URL
     resp = client.get("/auth/login")
     assert resp.status_code == 200
+    state = _state_from_login_html(resp.text)
 
     # Step 2: Simulate Discord redirecting back with code + matching state
-    resp = client.get("/auth/callback?code=test-code&state=fixed-state")
+    resp = client.get(f"/auth/callback?code=test-code&state={state}")
     # Should redirect to / on success
     assert resp.status_code == 302
     assert resp.headers["location"] in ("/", "http://testserver/")
@@ -232,10 +231,6 @@ def test_auth_on_callback_denied_role_returns_403_no_session(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
     """When user_has_ui_access returns False, callback is 403 (no session set)."""
-    import secrets as _secrets
-
-    monkeypatch.setattr(_secrets, "token_urlsafe", lambda *a, **kw: "fixed-state")
-
     # Guild roles do not include "ks-ui"
     transport = _mock_discord_transport(
         guild_roles=[{"id": "role-other-id", "name": "other-role"}]
@@ -254,12 +249,12 @@ def test_auth_on_callback_denied_role_returns_403_no_session(
 
     client = TestClient(app, follow_redirects=False)
 
-    # Set oauth_state
     resp = client.get("/auth/login")
     assert resp.status_code == 200
+    state = _state_from_login_html(resp.text)
 
     # Callback — denied
-    resp = client.get("/auth/callback?code=test-code&state=fixed-state")
+    resp = client.get(f"/auth/callback?code=test-code&state={state}")
     assert resp.status_code == 403
 
     # No session → subsequent request still blocked
@@ -283,10 +278,6 @@ def test_auth_routes_are_public_without_session(tmp_path: Path) -> None:
 
 
 def test_logout_clears_session(tmp_path: Path, monkeypatch: Any) -> None:
-    import secrets as _secrets
-
-    monkeypatch.setattr(_secrets, "token_urlsafe", lambda *a, **kw: "fixed-state")
-
     transport = _mock_discord_transport()
     factory = _mock_http_factory(transport)
 
@@ -303,8 +294,9 @@ def test_logout_clears_session(tmp_path: Path, monkeypatch: Any) -> None:
     client = TestClient(app, follow_redirects=False)
 
     # Log in
-    client.get("/auth/login")
-    client.get("/auth/callback?code=test-code&state=fixed-state")
+    login = client.get("/auth/login")
+    state = _state_from_login_html(login.text)
+    client.get(f"/auth/callback?code=test-code&state={state}")
 
     # Verify logged in
     resp = client.get("/api/troops")
@@ -344,10 +336,6 @@ def test_logout_get_redirects_to_login(tmp_path: Path, monkeypatch: Any) -> None
     The true logout action requires a POST to prevent CSRF; the GET handler
     is a safe fallback for users who type the URL directly.
     """
-    import secrets as _secrets
-
-    monkeypatch.setattr(_secrets, "token_urlsafe", lambda *a, **kw: "fixed-state")
-
     transport = _mock_discord_transport()
     factory = _mock_http_factory(transport)
 
@@ -362,8 +350,9 @@ def test_logout_get_redirects_to_login(tmp_path: Path, monkeypatch: Any) -> None
     client = TestClient(app, follow_redirects=False)
 
     # Log in first
-    client.get("/auth/login")
-    client.get("/auth/callback?code=test-code&state=fixed-state")
+    login = client.get("/auth/login")
+    state = _state_from_login_html(login.text)
+    client.get(f"/auth/callback?code=test-code&state={state}")
     resp = client.get("/api/troops")
     assert resp.status_code not in (401, 302)
 

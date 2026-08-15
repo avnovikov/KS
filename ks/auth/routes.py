@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable
 
 import httpx
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from ks.auth.config import AuthConfig
 from ks.auth.discord_oauth import discord_authorize_url, exchange_code, fetch_discord_user
@@ -27,7 +28,27 @@ except ImportError:  # pragma: no cover
 
 
 _TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "heroes" / "ui" / "templates"
-_SESSION_STATE_KEY = "oauth_state"
+_OAUTH_STATE_SALT = "ks-oauth-state"
+_OAUTH_STATE_MAX_AGE_S = 600
+
+
+def _state_serializer(cfg: AuthConfig) -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(cfg.session_secret, salt=_OAUTH_STATE_SALT)
+
+
+def make_oauth_state(cfg: AuthConfig) -> str:
+    """Signed OAuth state (stateless — survives Discord's in-app browser)."""
+    return _state_serializer(cfg).dumps({"n": secrets.token_urlsafe(8)})
+
+
+def verify_oauth_state(cfg: AuthConfig, state: str) -> bool:
+    if not state:
+        return False
+    try:
+        _state_serializer(cfg).loads(state, max_age=_OAUTH_STATE_MAX_AGE_S)
+        return True
+    except (BadSignature, SignatureExpired):
+        return False
 
 
 def build_auth_router(
@@ -50,8 +71,9 @@ def build_auth_router(
 
     @router.get("/login", response_class=HTMLResponse)
     async def login(request: Request) -> HTMLResponse:
-        state = secrets.token_urlsafe(16)
-        request.session[_SESSION_STATE_KEY] = state
+        # State is signed into the Discord URL; no session cookie required for
+        # CSRF (Discord often completes OAuth in a different browser context).
+        state = make_oauth_state(cfg)
         auth_url = discord_authorize_url(cfg, state)
         return templates.TemplateResponse(
             request, "login.html", {"auth_url": auth_url}
@@ -63,10 +85,8 @@ def build_auth_router(
         code: str = "",
         state: str = "",
     ) -> "HTMLResponse | RedirectResponse":
-        expected = request.session.get(_SESSION_STATE_KEY)
-        if not expected or state != expected:
+        if not verify_oauth_state(cfg, state):
             return RedirectResponse(url="/auth/login?error=state", status_code=302)
-        request.session.pop(_SESSION_STATE_KEY, None)
 
         async with _client_factory() as http:
             try:
@@ -85,7 +105,9 @@ def build_auth_router(
 
         if not has_access:
             return HTMLResponse(
-                "<h1>Access denied</h1><p>You do not have the required role.</p>",
+                "<h1>Access denied</h1>"
+                "<p>You need the <code>ks-ui</code> Discord role, and the "
+                "server must have <code>guild_id</code> configured.</p>",
                 status_code=403,
             )
 
