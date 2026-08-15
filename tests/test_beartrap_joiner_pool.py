@@ -94,7 +94,9 @@ def test_run_beartrap_joiner_excludes_locked_out_heroes(tmp_path: Path) -> None:
         config_root=root,
         troops_path=root / "config" / "troops.yaml",
     )
-    assert result["status"] == "ok"
+    # Mode rows must not use section-level status="ok" — the Event lineups
+    # board only draws when status is missing or "Optimal".
+    assert result.get("status") in (None, "Optimal")
     names = {h["name"] for h in result["heroes"]}
     assert locked not in names
     assert names <= set(pool)
