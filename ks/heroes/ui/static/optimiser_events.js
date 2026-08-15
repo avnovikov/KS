@@ -231,7 +231,9 @@
   }
 
   function rowIsOk(row) {
-    return !row.status || row.status === "Optimal";
+    // Mode rows usually omit status; section errors use "Error". Accept
+    // "ok" too so a mistaken section-level status on a mode still draws.
+    return !row.status || row.status === "Optimal" || row.status === "ok";
   }
 
   function hasFormation(row) {

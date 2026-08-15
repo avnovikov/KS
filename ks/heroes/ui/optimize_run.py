@@ -92,7 +92,9 @@ def run_beartrap_joiner(
         for row in payload.get("heroes") or []
         if row.get("name") and row.get("contributions")
     } or None
-    payload["status"] = "ok"
+    # Do not set status="ok" on the mode row. Event lineups UI treats a mode
+    # as drawable only when status is missing or "Optimal" (section-level
+    # bundles use "ok"; mode rows from recommend leave status unset).
     payload["mode"] = "joiner"
     payload["allow_heroes"] = [h.name for h in pool]
     payload["stat_family"] = family_for_event(event.name)
