@@ -253,6 +253,17 @@ def recommend(
         if contributions
         else None
     )
+    skillmod_detail = None
+    event_name = (event.name if event else "") or ""
+    if event_name == "beartrap" or best.mode in {"joiner", "rally_lead"}:
+        from ks.heroes.optimize.skillmod import lineup_skillmod_detail
+
+        skillmod_detail = lineup_skillmod_detail(
+            best.hero_names,
+            catalog,
+            joiner_only=(best.mode == "joiner"),
+            heroes_by_name=hero_by_name,
+        )
     return RecommendResult(
         recommended_mode=best.mode,
         heroes=hero_rows,
@@ -266,6 +277,7 @@ def recommend(
         gear_assignment=gear_assignment,
         stat_family=stat_family,
         formation_totals=formation_totals,
+        skillmod_detail=skillmod_detail,
     )
 
 
