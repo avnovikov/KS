@@ -1675,6 +1675,64 @@ def create_app(
         bundle["heroes_dir"] = str(heroes_path)
         return bundle
 
+    @app.post("/api/optimize/beartrap/joiner")
+    async def api_optimize_beartrap_joiner(request: Request) -> dict[str, Any]:
+        """Re-solve Bear Trap joiner using an explicit hero allow-list."""
+        from ks.heroes.ui.optimize_run import (
+            attach_gear_icon_urls,
+            run_beartrap_joiner,
+        )
+
+        try:
+            raw = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="JSON body required") from exc
+        if not isinstance(raw, dict):
+            raise HTTPException(status_code=400, detail="JSON object required")
+        allow = raw.get("allow_heroes")
+        if not isinstance(allow, list) or not allow:
+            raise HTTPException(
+                status_code=400, detail="allow_heroes must be a non-empty list"
+            )
+
+        _heroes_path, hero_store_local = _require_heroes()
+        hero_store_local.reload()
+        heroes = hero_store_local.all_heroes()
+        gear_pieces: list[GearRecord] | None = None
+        icon_by_id: dict[str, str | None] = {}
+        eff_gear_store = _current_gear_store()
+        eff_gear_dir = _current_gear_dir()
+        if eff_gear_store is not None and eff_gear_dir is not None:
+            eff_gear_store.reload()
+            gear_pieces = eff_gear_store.all_pieces() or None
+            if gear_pieces:
+                try:
+                    bust = inventory_revision(eff_gear_dir, "gear.json")
+                    raw_icons = ensure_all_icons(gear_pieces, eff_gear_dir)
+                    icon_by_id = {
+                        pid: with_cache_bust(url, bust)
+                        for pid, url in raw_icons.items()
+                    }
+                except Exception:  # noqa: BLE001
+                    icon_by_id = {}
+        gov_store = _require_governor_store()
+        try:
+            payload = run_beartrap_joiner(
+                heroes,
+                allow_heroes=[str(n) for n in allow],
+                gear=gear_pieces,
+                troops_path=_current_troops_path(),
+                governor=gov_store.bonuses() if gov_store is not None else None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if icon_by_id:
+            # attach expects a full optimize bundle; wrap joiner row shape
+            mini = {"bear": {"modes": {"joiner": payload}}}
+            attach_gear_icon_urls(mini, icon_by_id)
+            payload = mini["bear"]["modes"]["joiner"]
+        return payload
+
     @app.get("/api/optimize/radiant-spire")
     def api_optimize_radiant(
         stage: int | None = None,

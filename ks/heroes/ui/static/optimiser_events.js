@@ -1002,5 +1002,161 @@
   // triggers hero_detail.js wires, previously spelled out in both files.
   window.bindDialogDismiss(modal, modalClose, closeHeroSheet);
 
+  var joinerBar = document.getElementById("joiner-pool-bar");
+  var joinerBtn = document.getElementById("joiner-pool-btn");
+  var joinerDialog = document.getElementById("joiner-pool-dialog");
+  var joinerList = document.getElementById("joiner-pool-list");
+  var joinerConfirm = document.getElementById("joiner-pool-confirm");
+  var joinerCancel = document.getElementById("joiner-pool-cancel");
+  var joinerErr = document.getElementById("joiner-pool-error");
+
+  function rallyLeadNames() {
+    var modes = ((bundle || {}).bear || {}).modes || {};
+    var lead = modes.rally_lead;
+    if (!lead || !lead.heroes) return [];
+    return lead.heroes
+      .map(function (h) {
+        return h && h.name;
+      })
+      .filter(Boolean);
+  }
+
+  function updateJoinerPoolBar() {
+    if (!joinerBar) return;
+    var show =
+      activeEvent === "bear" &&
+      bundle &&
+      bundle.bear &&
+      bundle.bear.modes &&
+      bundle.bear.modes.rally_lead &&
+      rallyLeadNames().length > 0;
+    joinerBar.hidden = !show;
+  }
+
+  var _origRender = render;
+  render = function () {
+    _origRender();
+    updateJoinerPoolBar();
+  };
+
+  function closeJoinerDialog() {
+    if (!joinerDialog) return;
+    joinerDialog.classList.remove("open");
+    joinerDialog.setAttribute("aria-hidden", "true");
+    if (joinerConfirm) joinerConfirm.disabled = false;
+    if (joinerErr) {
+      joinerErr.hidden = true;
+      joinerErr.textContent = "";
+    }
+  }
+
+  async function openJoinerDialog() {
+    if (!joinerDialog || !joinerList) return;
+    if (joinerErr) {
+      joinerErr.hidden = true;
+      joinerErr.textContent = "";
+    }
+    var locked = {};
+    rallyLeadNames().forEach(function (n) {
+      locked[String(n).toLowerCase()] = true;
+    });
+    joinerList.innerHTML = "<p class=\"hint\">Loading roster…</p>";
+    joinerDialog.classList.add("open");
+    joinerDialog.setAttribute("aria-hidden", "false");
+    try {
+      var res = await fetch("/api/heroes", { cache: "no-store" });
+      var data = await res.json().catch(function () {
+        return {};
+      });
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      var heroes = data.heroes || [];
+      var html = heroes
+        .map(function (h) {
+          var name = h.name;
+          var isLocked = locked[String(name).toLowerCase()];
+          // locked heroes are Rally Lead — omit from pool (not just disabled)
+          if (isLocked) return "";
+          return (
+            '<label><input type="checkbox" class="joiner-pool-check" value="' +
+            esc(name) +
+            '" checked> ' +
+            esc(name) +
+            (h.troop_type ? " · " + esc(h.troop_type) : "") +
+            "</label>"
+          );
+        })
+        .join("");
+      joinerList.innerHTML =
+        html || '<p class="hint">No remaining heroes after Rally Lead.</p>';
+    } catch (err) {
+      joinerList.innerHTML = "";
+      if (joinerErr) {
+        joinerErr.hidden = false;
+        joinerErr.textContent = String((err && err.message) || err);
+      }
+    }
+  }
+
+  if (joinerBtn) {
+    joinerBtn.addEventListener("click", function () {
+      openJoinerDialog();
+    });
+  }
+  if (joinerDialog && joinerCancel) {
+    window.bindDialogDismiss(joinerDialog, joinerCancel, closeJoinerDialog);
+  }
+  if (joinerConfirm) {
+    joinerConfirm.addEventListener("click", async function () {
+      if (joinerConfirm.disabled) return;
+      var checks = joinerList
+        ? slice(joinerList.querySelectorAll(".joiner-pool-check:checked"))
+        : [];
+      var allow = checks.map(function (el) {
+        return el.value;
+      });
+      if (!allow.length) {
+        if (joinerErr) {
+          joinerErr.hidden = false;
+          joinerErr.textContent = "Select at least one hero for the Joiner pool.";
+        }
+        return;
+      }
+      joinerConfirm.disabled = true;
+      if (joinerErr) {
+        joinerErr.hidden = true;
+        joinerErr.textContent = "";
+      }
+      try {
+        var res = await fetch("/api/optimize/beartrap/joiner", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          cache: "no-store",
+          body: JSON.stringify({ allow_heroes: allow }),
+        });
+        var data = await res.json().catch(function () {
+          return {};
+        });
+        if (!res.ok) {
+          throw new Error(window.detailOf(data, res.statusText));
+        }
+        if (!bundle.bear) bundle.bear = { modes: {} };
+        if (!bundle.bear.modes) bundle.bear.modes = {};
+        bundle.bear.modes.joiner = data;
+        chosen.bear = "joiner";
+        closeJoinerDialog();
+        render();
+        setStatus("Joiner re-solved from the selected pool.", "ok");
+      } catch (err) {
+        joinerConfirm.disabled = false;
+        var msg = String((err && err.message) || err);
+        if (joinerErr) {
+          joinerErr.hidden = false;
+          joinerErr.textContent = msg;
+        }
+        setStatus(msg, "err");
+      }
+    });
+  }
+
   loadOptimize();
 })();

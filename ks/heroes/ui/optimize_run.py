@@ -28,6 +28,77 @@ logger = logging.getLogger(__name__)
 _DOMAIN_ERRORS = (ValueError, OSError, FileNotFoundError, yaml.YAMLError, KeyError)
 
 
+def filter_heroes_by_allowlist(
+    heroes: list[HeroRecord],
+    allow_heroes: list[str] | tuple[str, ...] | set[str],
+) -> list[HeroRecord]:
+    """Return roster heroes whose names appear in ``allow_heroes`` (case-insensitive).
+
+    Preserves roster order. Raises if the allow-list is empty or names an
+    unknown hero.
+    """
+    raw = [str(n).strip() for n in allow_heroes if str(n).strip()]
+    if not raw:
+        raise ValueError("allow_heroes must not be empty")
+    by_lower = {h.name.lower(): h for h in heroes}
+    unknown = [n for n in raw if n.lower() not in by_lower]
+    if unknown:
+        raise ValueError(f"unknown heroes in allow_heroes: {unknown}")
+    wanted = {n.lower() for n in raw}
+    return [h for h in heroes if h.name.lower() in wanted]
+
+
+def run_beartrap_joiner(
+    heroes: list[HeroRecord],
+    *,
+    allow_heroes: list[str] | tuple[str, ...] | set[str],
+    gear: list[GearRecord] | None = None,
+    config_root: Path | None = None,
+    troops_path: Path | None = None,
+    gear_profile: str = "early_game_growth",
+    governor: GovernorTroopBonuses | None = None,
+) -> dict[str, Any]:
+    """Solve Bear Trap joiner using only ``allow_heroes`` from the roster."""
+    root = (config_root or REPO_ROOT).expanduser().resolve()
+    pool = filter_heroes_by_allowlist(heroes, allow_heroes)
+    catalog = load_catalog(None, root / "config" / "hero_catalog.yaml")
+    resolved_troops = (
+        Path(troops_path).expanduser().resolve()
+        if troops_path is not None
+        else root / "config" / "troops.yaml"
+    )
+    troops = load_troops_config(resolved_troops)
+    scenarios = load_scenarios(root / "config" / "point_scenarios_beartrap.yaml")
+    event = load_event_profile(root / "config" / "events" / "beartrap.yaml")
+    troop_stats = load_troop_stats(root / "config" / "troop_stats.yaml")
+    raw_troops = yaml.safe_load(resolved_troops.read_text(encoding="utf-8")) or {}
+    truegold = int(raw_troops.get("truegold", troop_stats.default_truegold))
+    result = recommend(
+        pool,
+        catalog,
+        troops,
+        scenarios,
+        force_mode="joiner",
+        event=event,
+        troop_stats=troop_stats,
+        truegold=truegold,
+        gear=gear,
+        gear_profile=gear_profile,
+        governor=governor,
+    )
+    payload = result.to_dict()
+    payload["contributions"] = {
+        row["name"]: row["contributions"]
+        for row in payload.get("heroes") or []
+        if row.get("name") and row.get("contributions")
+    } or None
+    payload["status"] = "ok"
+    payload["mode"] = "joiner"
+    payload["allow_heroes"] = [h.name for h in pool]
+    payload["stat_family"] = family_for_event(event.name)
+    return payload
+
+
 def _event_bundle(
     label: str,
     heroes: list[HeroRecord],
