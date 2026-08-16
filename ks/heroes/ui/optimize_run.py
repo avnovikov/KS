@@ -101,6 +101,50 @@ def run_beartrap_joiner(
     return payload
 
 
+def _recommend_mode_payload(
+    heroes: list[HeroRecord],
+    catalog: dict[str, Any],
+    *,
+    troops: Any,
+    scenarios: Any,
+    mode: str,
+    event: Any,
+    troop_stats: Any,
+    truegold: int,
+    gear: list[GearRecord] | None,
+    gear_profile: str,
+    governor: GovernorTroopBonuses | None,
+) -> dict[str, Any]:
+    result = recommend(
+        heroes,
+        catalog,
+        troops,
+        scenarios,
+        force_mode=mode,
+        event=event,
+        troop_stats=troop_stats,
+        truegold=truegold,
+        gear=gear,
+        gear_profile=gear_profile,
+        governor=governor,
+    )
+    payload = result.to_dict()
+    payload["contributions"] = {
+        row["name"]: row["contributions"]
+        for row in payload.get("heroes") or []
+        if row.get("name") and row.get("contributions")
+    } or None
+    return payload
+
+
+def _mode_hero_names(payload: dict[str, Any]) -> set[str]:
+    return {
+        str(h["name"])
+        for h in (payload.get("heroes") or [])
+        if isinstance(h, dict) and h.get("name")
+    }
+
+
 def _event_bundle(
     label: str,
     heroes: list[HeroRecord],
@@ -124,12 +168,12 @@ def _event_bundle(
     mode_errors: dict[str, str] = {}
     for mode in scenarios:
         try:
-            result = recommend(
+            modes[mode] = _recommend_mode_payload(
                 heroes,
                 catalog,
-                troops,
-                scenarios,
-                force_mode=mode,
+                troops=troops,
+                scenarios=scenarios,
+                mode=mode,
                 event=event,
                 troop_stats=troop_stats,
                 truegold=truegold,
@@ -137,15 +181,36 @@ def _event_bundle(
                 gear_profile=gear_profile,
                 governor=governor,
             )
-            payload = result.to_dict()
-            payload["contributions"] = {
-                row["name"]: row["contributions"]
-                for row in payload.get("heroes") or []
-                if row.get("name") and row.get("contributions")
-            } or None
-            modes[mode] = payload
         except ValueError as exc:
             mode_errors[mode] = str(exc)
+
+    # Swordland: Garrison is the leftover squad after Rally Lead (exclusive).
+    if (
+        event.name == "swordland"
+        and "rally_lead" in modes
+        and "garrison" in scenarios
+    ):
+        lead_names = _mode_hero_names(modes["rally_lead"])
+        remaining = [h for h in heroes if h.name not in lead_names]
+        try:
+            modes["garrison"] = _recommend_mode_payload(
+                remaining,
+                catalog,
+                troops=troops,
+                scenarios=scenarios,
+                mode="garrison",
+                event=event,
+                troop_stats=troop_stats,
+                truegold=truegold,
+                gear=gear,
+                gear_profile=gear_profile,
+                governor=governor,
+            )
+            mode_errors.pop("garrison", None)
+        except ValueError as exc:
+            modes.pop("garrison", None)
+            mode_errors["garrison"] = str(exc)
+
     if not modes and mode_errors:
         raise ValueError(
             "; ".join(f"{m}: {err}" for m, err in mode_errors.items())

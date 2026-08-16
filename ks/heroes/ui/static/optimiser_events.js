@@ -158,12 +158,17 @@
 
   function troopsLine(row) {
     var t = row.troops || {};
-    function n(v) {
-      return v == null ? "—" : fmtPoints(v);
+    var cap = Number(row.effective_capacity);
+    function pct(v) {
+      if (!(cap > 0) || v == null) return "—";
+      return Math.round((100 * Number(v)) / cap) + "%";
+    }
+    function nCap(v) {
+      return v == null || !(Number(v) >= 0) ? "—" : fmtPoints(v);
     }
     return (
-      "I " + n(t.infantry) + " · C " + n(t.cavalry) + " · A " + n(t.archers) +
-      " · cap " + n(row.effective_capacity)
+      "I " + pct(t.infantry) + " · C " + pct(t.cavalry) + " · A " + pct(t.archers) +
+      " · cap " + nCap(row.effective_capacity)
     );
   }
 
@@ -1059,6 +1064,7 @@
 
   var joinerBar = document.getElementById("joiner-pool-bar");
   var joinerBtn = document.getElementById("joiner-pool-btn");
+  var joinerWithoutLeadBtn = document.getElementById("joiner-without-lead-btn");
   var joinerDialog = document.getElementById("joiner-pool-dialog");
   var joinerList = document.getElementById("joiner-pool-list");
   var joinerConfirm = document.getElementById("joiner-pool-confirm");
@@ -1103,6 +1109,28 @@
       joinerErr.hidden = true;
       joinerErr.textContent = "";
     }
+  }
+
+  async function applyJoinerAllowList(allow, okMessage) {
+    var res = await fetch("/api/optimize/beartrap/joiner", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ allow_heroes: allow }),
+    });
+    var data = await res.json().catch(function () {
+      return {};
+    });
+    if (!res.ok) {
+      throw new Error(window.detailOf(data, res.statusText));
+    }
+    if (!bundle.bear) bundle.bear = { modes: {} };
+    if (!bundle.bear.modes) bundle.bear.modes = {};
+    bundle.bear.modes.joiner = data;
+    chosen.bear = "joiner";
+    closeJoinerDialog();
+    render();
+    setStatus(okMessage || "Joiner re-solved.", "ok");
   }
 
   async function openJoinerDialog() {
@@ -1152,9 +1180,45 @@
     }
   }
 
+  async function solveJoinerWithoutLead() {
+    if (joinerWithoutLeadBtn) joinerWithoutLeadBtn.disabled = true;
+    try {
+      var locked = {};
+      rallyLeadNames().forEach(function (n) {
+        locked[String(n).toLowerCase()] = true;
+      });
+      var res = await fetch("/api/heroes", { cache: "no-store" });
+      var data = await res.json().catch(function () {
+        return {};
+      });
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      var allow = (data.heroes || [])
+        .map(function (h) {
+          return h && h.name;
+        })
+        .filter(function (name) {
+          return name && !locked[String(name).toLowerCase()];
+        });
+      if (!allow.length) {
+        throw new Error("No remaining heroes after Rally Lead.");
+      }
+      await applyJoinerAllowList(allow, "Joiner re-solved without Rally Lead.");
+    } catch (err) {
+      var msg = String((err && err.message) || err);
+      setStatus(msg, "err");
+    } finally {
+      if (joinerWithoutLeadBtn) joinerWithoutLeadBtn.disabled = false;
+    }
+  }
+
   if (joinerBtn) {
     joinerBtn.addEventListener("click", function () {
       openJoinerDialog();
+    });
+  }
+  if (joinerWithoutLeadBtn) {
+    joinerWithoutLeadBtn.addEventListener("click", function () {
+      solveJoinerWithoutLead();
     });
   }
   if (joinerDialog && joinerCancel) {
@@ -1182,25 +1246,7 @@
         joinerErr.textContent = "";
       }
       try {
-        var res = await fetch("/api/optimize/beartrap/joiner", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          cache: "no-store",
-          body: JSON.stringify({ allow_heroes: allow }),
-        });
-        var data = await res.json().catch(function () {
-          return {};
-        });
-        if (!res.ok) {
-          throw new Error(window.detailOf(data, res.statusText));
-        }
-        if (!bundle.bear) bundle.bear = { modes: {} };
-        if (!bundle.bear.modes) bundle.bear.modes = {};
-        bundle.bear.modes.joiner = data;
-        chosen.bear = "joiner";
-        closeJoinerDialog();
-        render();
-        setStatus("Joiner re-solved from the selected pool.", "ok");
+        await applyJoinerAllowList(allow, "Joiner re-solved from the selected pool.");
       } catch (err) {
         joinerConfirm.disabled = false;
         var msg = String((err && err.message) || err);
