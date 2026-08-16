@@ -145,6 +145,111 @@ def _mode_hero_names(payload: dict[str, Any]) -> set[str]:
     }
 
 
+def _reserve_defense_widget_for_garrison(
+    heroes: list[HeroRecord],
+    catalog: dict[str, Any],
+) -> str | None:
+    """Pick one defense-widget hero to keep available for Swordland Garrison.
+
+    Rally Lead requires an attack widget and often fills the other two slots
+    with the strongest remaining heroes — which can be both defense widgets
+    (Jabel + Saul). Garrison then has nobody left to satisfy
+    ``require_widget: defense`` and becomes infeasible.
+    """
+    candidates: list[tuple[int, str]] = []
+    for hero in heroes:
+        entry = catalog.get(hero.name)
+        if entry is None or entry.widget_type != "defense":
+            continue
+        priority = int(getattr(entry, "garrison_widget_priority", 0) or 0)
+        candidates.append((priority, hero.name))
+    if not candidates:
+        return None
+    # Prefer the catalog's best garrison defense widget for the hold squad.
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    return candidates[0][1]
+
+
+def _apply_swordland_exclusive_squads(
+    *,
+    heroes: list[HeroRecord],
+    catalog: dict[str, Any],
+    modes: dict[str, Any],
+    mode_errors: dict[str, str],
+    troops: Any,
+    scenarios: Any,
+    event: Any,
+    troop_stats: Any,
+    truegold: int,
+    gear: list[GearRecord] | None,
+    gear_profile: str,
+    governor: GovernorTroopBonuses | None,
+) -> None:
+    """Re-solve Rally Lead + Garrison so they don't share heroes.
+
+    Reserves one defense-widget hero out of the Rally Lead pool first so
+    Garrison can always satisfy its defense-widget requirement when the
+    roster has one.
+    """
+    if "rally_lead" not in scenarios or "garrison" not in scenarios:
+        return
+
+    reserved = _reserve_defense_widget_for_garrison(heroes, catalog)
+    lead_pool = (
+        [h for h in heroes if h.name != reserved] if reserved else list(heroes)
+    )
+    try:
+        modes["rally_lead"] = _recommend_mode_payload(
+            lead_pool,
+            catalog,
+            troops=troops,
+            scenarios=scenarios,
+            mode="rally_lead",
+            event=event,
+            troop_stats=troop_stats,
+            truegold=truegold,
+            gear=gear,
+            gear_profile=gear_profile,
+            governor=governor,
+        )
+        mode_errors.pop("rally_lead", None)
+    except ValueError as exc:
+        modes.pop("rally_lead", None)
+        mode_errors["rally_lead"] = str(exc)
+        return
+
+    lead_names = _mode_hero_names(modes["rally_lead"])
+    garrison_pool = [h for h in heroes if h.name not in lead_names]
+    try:
+        modes["garrison"] = _recommend_mode_payload(
+            garrison_pool,
+            catalog,
+            troops=troops,
+            scenarios=scenarios,
+            mode="garrison",
+            event=event,
+            troop_stats=troop_stats,
+            truegold=truegold,
+            gear=gear,
+            gear_profile=gear_profile,
+            governor=governor,
+        )
+        mode_errors.pop("garrison", None)
+    except ValueError as exc:
+        modes.pop("garrison", None)
+        detail = str(exc)
+        if reserved:
+            detail = (
+                f"{detail} (need a defense-widget hero for Garrison; "
+                f"reserved {reserved} but Rally Lead still left none usable)"
+            )
+        else:
+            detail = (
+                f"{detail} (Garrison requires a defense-widget hero on the roster)"
+            )
+        mode_errors["garrison"] = detail
+
+
 def _event_bundle(
     label: str,
     heroes: list[HeroRecord],
@@ -184,32 +289,22 @@ def _event_bundle(
         except ValueError as exc:
             mode_errors[mode] = str(exc)
 
-    # Swordland: Garrison is the leftover squad after Rally Lead (exclusive).
-    if (
-        event.name == "swordland"
-        and "rally_lead" in modes
-        and "garrison" in scenarios
-    ):
-        lead_names = _mode_hero_names(modes["rally_lead"])
-        remaining = [h for h in heroes if h.name not in lead_names]
-        try:
-            modes["garrison"] = _recommend_mode_payload(
-                remaining,
-                catalog,
-                troops=troops,
-                scenarios=scenarios,
-                mode="garrison",
-                event=event,
-                troop_stats=troop_stats,
-                truegold=truegold,
-                gear=gear,
-                gear_profile=gear_profile,
-                governor=governor,
-            )
-            mode_errors.pop("garrison", None)
-        except ValueError as exc:
-            modes.pop("garrison", None)
-            mode_errors["garrison"] = str(exc)
+    # Swordland: exclusive Rally Lead + Garrison (defense widget reserved).
+    if event.name == "swordland":
+        _apply_swordland_exclusive_squads(
+            heroes=heroes,
+            catalog=catalog,
+            modes=modes,
+            mode_errors=mode_errors,
+            troops=troops,
+            scenarios=scenarios,
+            event=event,
+            troop_stats=troop_stats,
+            truegold=truegold,
+            gear=gear,
+            gear_profile=gear_profile,
+            governor=governor,
+        )
 
     if not modes and mode_errors:
         raise ValueError(
