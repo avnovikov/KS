@@ -116,4 +116,5 @@ def test_optimiser_events_page_has_joiner_pool_control(tmp_path: Path) -> None:
     page = client.get("/optimiser/events")
     assert page.status_code == 200
     assert 'id="joiner-pool-btn"' in page.text
+    assert 'id="joiner-without-lead-btn"' in page.text
     assert 'id="joiner-pool-dialog"' in page.text

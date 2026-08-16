@@ -68,26 +68,33 @@
   /** Same shape as Events `troopsLine` for a mystic march payload. */
   function troopsLine(march) {
     var t = (march && march.counts) || {};
-    function n(v) {
-      return v == null ? "—" : fmtPoints(v);
+    var cap = Number(march && march.capacity);
+    function pct(v) {
+      if (!(cap > 0) || v == null) return "—";
+      return Math.round((100 * Number(v)) / cap) + "%";
+    }
+    function nCap(v) {
+      return v == null || !(Number(v) >= 0) ? "—" : fmtPoints(v);
     }
     return (
       "I " +
-      n(t.infantry) +
+      pct(t.infantry) +
       " · C " +
-      n(t.cavalry) +
+      pct(t.cavalry) +
       " · A " +
-      n(t.archers) +
+      pct(t.archers) +
       " · cap " +
-      n(march && march.capacity)
+      nCap(march && march.capacity)
     );
   }
 
   function fmtCounts(counts) {
-    return troopsLine({ counts: counts || {}, capacity: null }).replace(
-      / · cap —$/,
-      ""
-    );
+    // Absolute counts only when no capacity is known (legacy call sites).
+    var t = counts || {};
+    function n(v) {
+      return v == null ? "—" : fmtPoints(v);
+    }
+    return "I " + n(t.infantry) + " · C " + n(t.cavalry) + " · A " + n(t.archers);
   }
 
   function heroSlotEl(slotLabel, hero, opts) {
