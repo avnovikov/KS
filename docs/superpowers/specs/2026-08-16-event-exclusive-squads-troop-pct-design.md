@@ -14,10 +14,10 @@
 
 ### Swordland
 
-- Solve `rally_lead` on the full roster.
-- Re-solve `garrison` on `roster − {rally_lead heroes}`.
+- Solve `garrison` first (hold one attack-widget hero out of that pool for Rally Lead).
+- Re-solve `rally_lead` on `roster − {garrison heroes}`.
 - Other Sword modes (`joiner`, `solo`) unchanged (full roster).
-- If Garrison is infeasible after exclusion, surface `mode_errors.garrison` as today.
+- If either mode is infeasible after exclusion, surface `mode_errors` as today.
 
 ### Bear Trap
 
