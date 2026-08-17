@@ -488,3 +488,85 @@ def test_optimize_radiant_keeps_cavalry_troops_with_cav_hero() -> None:
             assert march.counts["cavalry"] > 0
             assert march.ratio["cavalry"] >= 0.05 - 1e-9
         assert march.breakdown.get("mc", {}).get("trials") == 32
+
+
+def test_lineup_score_omits_proxy_when_only_some_marches_have_enemies() -> None:
+    """Dual-march Coliseum/Radiant with one complete opponent must not sum
+    MC win rates (~0–1) with large proxy scores into ``lineup_score``.
+    """
+    catalog = load_catalog(None, ROOT / "config" / "hero_catalog.yaml")
+    names = [
+        ("Helga", "infantry"),
+        ("Howard", "infantry"),
+        ("Jabel", "cavalry"),
+        ("Chenko", "cavalry"),
+        ("Diana", "archers"),
+        ("Quinn", "archers"),
+    ]
+    missing = [n for n, _ in names if n not in catalog]
+    if missing:
+        pytest.skip(f"catalog missing fixtures: {missing}")
+    heroes = [_hero(n, t, power=3_000_000 - i * 10_000) for i, (n, t) in enumerate(names)]
+    troops = TroopsConfig(
+        infantry=90_000,
+        cavalry=90_000,
+        archers=90_000,
+        march_capacity=80_000,
+        infantry_levels=((6, 90_000),),
+        cavalry_levels=((6, 90_000),),
+        archers_levels=((6, 90_000),),
+    )
+    complete = {
+        "hero_names": ["Helga", "Jabel", "Diana"],
+        "hero_level": 80,
+        "gear_enhancement": 20,
+        "levels": {"infantry": 6, "cavalry": 6, "archers": 6},
+        "counts": {"infantry": 40000, "cavalry": 40000, "archers": 40000},
+        "bonuses": {
+            t: {
+                "attack_pct": 0.0,
+                "defense_pct": 0.0,
+                "lethality_pct": 0.0,
+                "health_pct": 0.0,
+            }
+            for t in ("infantry", "cavalry", "archers")
+        },
+    }
+    incomplete = {
+        "hero_names": ["", "", ""],
+        "hero_level": None,
+        "gear_enhancement": 0,
+        "levels": {"infantry": 6, "cavalry": 6, "archers": 6},
+        "counts": {"infantry": 0, "cavalry": 0, "archers": 0},
+        "bonuses": {
+            t: {
+                "attack_pct": 0.0,
+                "defense_pct": 0.0,
+                "lethality_pct": 0.0,
+                "health_pct": 0.0,
+            }
+            for t in ("infantry", "cavalry", "archers")
+        },
+    }
+    result = optimize_radiant(
+        heroes,
+        catalog,
+        gear_pieces=[],
+        governor=_gov(),
+        troops=troops,
+        troop_stats=_table(),
+        active_marches=2,
+        # No floor stub — only the complete saved slot yields MC.
+        saved_opponents=[complete, incomplete],
+        event_march_capacity=150_000,
+    )
+    assert len(result.marches) == 2
+    mc_flags = [bool(m.breakdown.get("mc")) for m in result.marches]
+    assert any(mc_flags) and not all(mc_flags)
+    mc_scores = [m.score for m, is_mc in zip(result.marches, mc_flags) if is_mc]
+    proxy_scores = [m.score for m, is_mc in zip(result.marches, mc_flags) if not is_mc]
+    assert all(0.0 <= s <= 1.0 for s in mc_scores)
+    assert all(s > 10.0 for s in proxy_scores)
+    assert result.lineup_score == pytest.approx(sum(mc_scores))
+    assert result.lineup_score != pytest.approx(sum(m.score for m in result.marches))
+    assert any("lineup_score uses MC win rates only" in w for w in result.warnings)

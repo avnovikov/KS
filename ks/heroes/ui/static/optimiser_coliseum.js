@@ -633,8 +633,20 @@
       } else {
         scoreEl.hidden = false;
         if (engine === "mc") {
+          var marches = data.marches || [];
+          var mcCount = 0;
+          var activeCount = 0;
+          marches.forEach(function (m) {
+            if (!m) return;
+            activeCount += 1;
+            if (m.breakdown && m.breakdown.mc) mcCount += 1;
+          });
+          var label =
+            mcCount > 0 && mcCount < activeCount
+              ? "Partial lineup win-rate (MC marches only): "
+              : "Lineup win-rate score: ";
           scoreEl.textContent =
-            "Lineup win-rate score: " + Number(data.lineup_score || 0).toFixed(3);
+            label + Number(data.lineup_score || 0).toFixed(3);
         } else {
           scoreEl.textContent =
             "Lineup proxy score: " + Number(data.lineup_score || 0).toFixed(0);
