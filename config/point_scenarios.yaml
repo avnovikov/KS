@@ -1,5 +1,8 @@
 # Swordland-style personal point scenario priors (tunable).
 # combat_rate: personal points per 10k enemy soldier power (80 attack / 40 defend).
+# survival_fill: infantry wall n_I ≥ β√C (β = 0.5·√80280 ≈ 141.67 so ~50% at
+# that march size), plus a small per-type presence. Leftover follows √n.
+# Bear Trap keeps archer-heavy fill separately.
 
 modes:
   garrison:
@@ -11,6 +14,11 @@ modes:
     loot_expected: 200
     enemy_power_scale: 120000
     require_widget: defense
+    survival_fill:
+      infantry_beta: 141.67
+      infantry_min_frac: 0.6
+      infantry_max_frac: 0.7
+      min_type_frac: 0.2
     formation_weights:
       infantry: 1.2
       cavalry: 0.6
@@ -25,6 +33,10 @@ modes:
     loot_expected: 800
     enemy_power_scale: 150000
     require_widget: attack
+    survival_fill:
+      infantry_beta: 141.67
+      infantry_max_frac: 0.6
+      min_type_frac: 0.05
     formation_weights:
       infantry: 0.3
       cavalry: 0.6
@@ -39,6 +51,10 @@ modes:
     loot_expected: 2500
     enemy_power_scale: 80000
     require_widget: null
+    survival_fill:
+      infantry_beta: 141.67
+      infantry_max_frac: 0.6
+      min_type_frac: 0.05
     formation_weights:
       infantry: 1.0
       cavalry: 1.0
@@ -53,6 +69,10 @@ modes:
     loot_expected: 500
     enemy_power_scale: 100000
     require_widget: null
+    survival_fill:
+      infantry_beta: 141.67
+      infantry_max_frac: 0.6
+      min_type_frac: 0.05
     formation_weights:
       infantry: 0.5
       cavalry: 0.7

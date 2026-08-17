@@ -787,7 +787,12 @@ function goodBundle() {
       label: "Bear Trap",
       status: "ok",
       stat_family: "expedition",
-      modes: { solo: eventMode(["Helga", "Chenko", "Marlin"], 9000.4) },
+      modes: {
+        rally_lead: eventMode(["Chenko", "Diana", "Helga"], 9000.4, {
+          mode: "rally_lead",
+          widgets: { Helga: "attack" },
+        }),
+      },
     },
     arena: {
       attack: arenaSide("attack", {
@@ -1008,6 +1013,28 @@ async function suiteModeAndEventSwitching() {
     d.eventButton("sword").className + " " + d.eventButton("sword").getAttribute("aria-pressed")
   );
   check("its own modes replace the chips", d.chips().length === 1, "chips=" + d.chips().length);
+  check(
+    "Bear Trap keeps Chenko as captain even when Helga has the attack widget",
+    d.rows()[0].slots
+      .map(function (s) {
+        return s.name;
+      })
+      .join(",") === "Chenko,Diana,Helga",
+    d.rows()[0].slots
+      .map(function (s) {
+        return s.name;
+      })
+      .join(",")
+  );
+  check(
+    "and tags that first slot Lead",
+    d.rows()[0].slots[0].slotTag === "Lead",
+    d.rows()[0].slots
+      .map(function (s) {
+        return s.slotTag;
+      })
+      .join(",")
+  );
   check("still without refetching", d.calls.length === 1, "calls=" + d.calls.length);
 
   d.eventButton("sword").fire("click");
@@ -1595,7 +1622,7 @@ async function suitePartialFailure() {
   d.eventButton("bear").fire("click");
   check(
     "the sections that did work are still usable",
-    d.boardTitle() === "Bear Trap · solo" && d.rows().length === 1,
+    d.boardTitle() === "Bear Trap · rally lead" && d.rows().length === 1,
     d.boardTitle()
   );
   check(

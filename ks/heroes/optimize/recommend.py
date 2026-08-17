@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from ks.heroes.gear_models import GearRecord
@@ -43,18 +44,7 @@ def _select_modes(
 
 def _retag_scenario(scenario: Scenario, mode: str) -> Scenario:
     """Copy ``scenario`` with its ``mode`` field set to ``mode``."""
-    return Scenario(
-        mode=mode,
-        combat_rate=scenario.combat_rate,
-        minutes_held=scenario.minutes_held,
-        personal_rate=scenario.personal_rate,
-        p_first=scenario.p_first,
-        first_bonus=scenario.first_bonus,
-        loot_expected=scenario.loot_expected,
-        enemy_power_scale=scenario.enemy_power_scale,
-        formation_weights=scenario.formation_weights,
-        require_widget=scenario.require_widget,
-    )
+    return replace(scenario, mode=mode)
 
 
 def _solve_all_modes(

@@ -277,6 +277,18 @@
     ).map(heroName);
   }
 
+  function isLeadMarchEntry(entry) {
+    if (!entry) return false;
+    var key = entry.key;
+    var mode = entry.row && entry.row.recommended_mode;
+    return (
+      key === "rally_lead" ||
+      key === "joiner" ||
+      mode === "rally_lead" ||
+      mode === "joiner"
+    );
+  }
+
   function isRallyLeadEntry(entry) {
     if (!entry) return false;
     if (entry.key === "rally_lead") return true;
@@ -294,9 +306,14 @@
     return match ? match[1] : "";
   }
 
-  /** In-game march slot 1 is the rally lead (attack widget). */
+  /** Slot 1 is the march captain. Swordland Rally Lead prefers the attack
+   *  widget; Bear Trap (host + joiner) keeps API order (Chenko first-expedition). */
   function orderMarchHeroes(heroes, entry) {
     var list = (heroes || []).slice();
+    var key = entry && entry.key;
+    var mode = entry && entry.row && entry.row.recommended_mode;
+    if (key === "joiner" || mode === "joiner") return list;
+    if (activeEvent === "bear") return list;
     if (!isRallyLeadEntry(entry)) return list;
     var leads = [];
     var rest = [];
@@ -945,7 +962,7 @@
         appendText("p", "empty", "No heroes in this result.");
         return;
       }
-      var slotLabels = isRallyLeadEntry(entry)
+      var slotLabels = isLeadMarchEntry(entry)
         ? heroes.map(function (_hero, i) {
             return i === 0 ? "Lead" : "";
           })

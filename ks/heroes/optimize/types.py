@@ -147,6 +147,20 @@ class EventProfile:
 
 
 @dataclass(frozen=True)
+class SurvivalFill:
+    """PvP troop fill: infantry wall from β√capacity, then √n leftover.
+
+    ``infantry_beta`` is calibrated so 50% infantry at an 80_280 march:
+    β = 0.5 * √80280 ≈ 141.67. Larger marches then want a thinner wall.
+    """
+
+    infantry_beta: float
+    infantry_max_frac: float = 0.6
+    infantry_min_frac: float = 0.0
+    min_type_frac: float = 0.05
+
+
+@dataclass(frozen=True)
 class Scenario:
     mode: str
     combat_rate: float
@@ -157,6 +171,7 @@ class Scenario:
     loot_expected: float = 0.0
     enemy_power_scale: float = 100_000.0
     formation_weights: dict[str, float] | None = None
+    survival_fill: SurvivalFill | None = None
     require_widget: str | None = None  # attack | defense | None
 
 

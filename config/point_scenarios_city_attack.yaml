@@ -1,4 +1,5 @@
 # City attack — your 3-hero march (widgets ON when you lead).
+# Survival infantry wall (β√C) so linear archer weights cannot send 0 infantry.
 modes:
   rally_lead:
     combat_rate: 100
@@ -9,6 +10,10 @@ modes:
     loot_expected: 300
     enemy_power_scale: 180000
     require_widget: attack
+    survival_fill:
+      infantry_beta: 141.67
+      infantry_max_frac: 0.6
+      min_type_frac: 0.05
     formation_weights:
       infantry: 0.4
       cavalry: 0.8
@@ -23,6 +28,10 @@ modes:
     loot_expected: 200
     enemy_power_scale: 150000
     require_widget: null
+    survival_fill:
+      infantry_beta: 141.67
+      infantry_max_frac: 0.6
+      min_type_frac: 0.05
     formation_weights:
       infantry: 0.5
       cavalry: 0.8

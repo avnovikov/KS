@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.governor_bonuses import governor_attack_mult
@@ -9,6 +9,11 @@ from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.bear_damage import (
     BeartrapBuffs,
     greedy_fill_march,
+)
+from ks.heroes.optimize.formation_mix import (
+    TROOP_TYPES,
+    fill_after_floors,
+    survival_floors,
 )
 from ks.heroes.optimize.scoring import hero_strength, max_power_by_troop, normalize_troop
 from ks.heroes.optimize.stat_contributions import (
@@ -23,6 +28,7 @@ from ks.heroes.optimize.types import (
     EventProfile,
     ModeSolution,
     Scenario,
+    SurvivalFill,
     TroopsConfig,
 )
 
@@ -40,6 +46,9 @@ class _HeroFeatures:
 
     troop_of: dict[str, str]
     strengths: dict[str, float]
+    # Slot-1 ranking: Bear Trap uses joiner (first-expedition) scores so Chenko
+    # captains the host march; ILP pick scores stay in ``strengths``.
+    captain_scores: dict[str, float]
     escorts: dict[str, int]
     widget: dict[str, str]
     # This hero's own troop-percentage bonus (Attack+Lethality, or
@@ -184,6 +193,7 @@ def _compute_hero_features(
     class_power = max_power_by_troop(usable, catalog)
     gear = gear_by_troop or {}
     strengths: dict[str, float] = {}
+    contributions: dict[str, StatContribution] = {}
     troop_bonus_pct: dict[str, float] = {}
     for h in usable:
         troop = troop_of[h.name]
@@ -195,6 +205,7 @@ def _compute_hero_features(
             power=class_power.get(troop, h.power),
             catalog=catalog,
         )
+        contributions[h.name] = contribution
         strengths[h.name] = hero_strength(
             h, catalog[h.name], scenario.mode, event=event, contribution=contribution
         )
@@ -205,10 +216,36 @@ def _compute_hero_features(
     return _HeroFeatures(
         troop_of=troop_of,
         strengths=strengths,
+        captain_scores=_captain_scores(
+            usable, catalog, scenario, event, strengths, contributions
+        ),
         escorts=escorts,
         widget=widget,
         troop_bonus_pct=troop_bonus_pct,
     )
+
+
+def _captain_scores(
+    usable: list[HeroRecord],
+    catalog: dict[str, CatalogEntry],
+    scenario: Scenario,
+    event: EventProfile | None,
+    strengths: dict[str, float],
+    contributions: dict[str, StatContribution],
+) -> dict[str, float]:
+    """Bear Trap host: rank slot 1 by first-expedition skill, not attack widget."""
+    if not (event and event.name == "beartrap" and scenario.mode == "rally_lead"):
+        return strengths
+    return {
+        h.name: hero_strength(
+            h,
+            catalog[h.name],
+            "joiner",
+            event=event,
+            contribution=contributions[h.name],
+        )
+        for h in usable
+    }
 
 
 def _build_ilp_variables(
@@ -236,6 +273,46 @@ def _build_ilp_variables(
         prob += t_i + t_c + t_a <= cap
 
     return _TroopVariables(prob=prob, hero_selected=x, infantry=t_i, cavalry=t_c, archers=t_a)
+
+
+def _owned_counts(troops: TroopsConfig) -> dict[str, int]:
+    return {name: troops.owned(name) for name in TROOP_TYPES}
+
+
+def _apply_survival_fill(
+    variables: _TroopVariables,
+    troops: TroopsConfig,
+    policy: SurvivalFill | None,
+) -> None:
+    """Require the infantry wall and per-type presence; leftover stays free."""
+    if policy is None:
+        return
+    floors = survival_floors(_owned_counts(troops), troops.march_capacity, policy)
+    troop_var = {
+        "infantry": variables.infantry,
+        "cavalry": variables.cavalry,
+        "archers": variables.archers,
+    }
+    for name in TROOP_TYPES:
+        floor = floors[name]
+        if floor > 0:
+            variables.prob += troop_var[name] >= floor
+
+
+def _sqrt_n_troop_fill(
+    troops: TroopsConfig,
+    policy: SurvivalFill,
+    troop_weights: tuple[float, float, float],
+    capacity: int,
+) -> dict[str, int]:
+    owned = _owned_counts(troops)
+    floors = survival_floors(owned, capacity, policy)
+    attractiveness = {
+        "infantry": troop_weights[0],
+        "cavalry": troop_weights[1],
+        "archers": troop_weights[2],
+    }
+    return fill_after_floors(owned, capacity, floors, attractiveness)
 
 
 def _apply_widget_requirement(
@@ -451,21 +528,44 @@ def _selected_hero_names(x: dict[str, pulp.LpVariable]) -> list[str]:
     return [n for n in x if pulp.value(x[n]) and pulp.value(x[n]) > 0.5]
 
 
+def _skill_captain(mode: str, event: EventProfile | None) -> bool:
+    """True when slot 1 is the best first-expedition skill, not the widget."""
+    if mode == "joiner":
+        return True
+    return bool(event and event.name == "beartrap" and mode == "rally_lead")
+
+
 def order_march_hero_names(
     names: list[str] | tuple[str, ...],
     widget: dict[str, str],
     mode: str,
+    *,
+    strengths: dict[str, float] | None = None,
+    event: EventProfile | None = None,
 ) -> tuple[str, ...]:
-    """In-game march slot 1 is the rally lead; put the attack-widget hero first.
+    """Put the in-game march captain in slot 1.
 
-    Other modes keep a stable alphabetical order so garrison / joiner / solo
-    boards do not shuffle when the ILP's variable dict order changes.
+    Swordland Rally Lead: attack-widget hero first (widget fires for captain).
+    Bear Trap Rally Lead and Joiner: best first-expedition skill first —
+    Chenko lethality, not Helga's unused DTD / Amane alphabetical.
+    Other modes stay alphabetical.
     """
     selected = list(names)
+    strength = strengths or {}
+
+    def by_strength(n: str) -> tuple[float, str]:
+        return (-float(strength.get(n, 0.0)), n)
+
+    if _skill_captain(mode, event):
+        return tuple(sorted(selected, key=by_strength))
     if mode != "rally_lead":
         return tuple(sorted(selected))
-    leads = sorted(n for n in selected if widget.get(n) == "attack")
-    rest = sorted(n for n in selected if widget.get(n) != "attack")
+    leads = sorted(
+        (n for n in selected if widget.get(n) == "attack"), key=by_strength
+    )
+    rest = sorted(
+        (n for n in selected if widget.get(n) != "attack"), key=by_strength
+    )
     return tuple(leads + rest)
 
 
@@ -475,10 +575,15 @@ def _extract_optimal_solution(
     troops: TroopsConfig,
     terms: _ObjectiveTerms,
     scenario: Scenario,
+    event: EventProfile | None = None,
 ) -> ModeSolution:
     x = variables.hero_selected
     chosen = order_march_hero_names(
-        _selected_hero_names(x), features.widget, scenario.mode
+        _selected_hero_names(x),
+        features.widget,
+        scenario.mode,
+        strengths=features.captain_scores,
+        event=event,
     )
     ti = int(round(pulp.value(variables.infantry) or 0))
     tc = int(round(pulp.value(variables.cavalry) or 0))
@@ -513,12 +618,17 @@ def _extract_bear_damage_solution(
     heroes: list[HeroRecord],
     catalog: dict[str, CatalogEntry],
     governor: GovernorTroopBonuses | None = None,
+    event: EventProfile | None = None,
 ) -> ModeSolution:
     from ks.heroes.optimize.bear_damage import host_skillmod_buckets
 
     x = variables.hero_selected
     chosen = order_march_hero_names(
-        _selected_hero_names(x), features.widget, scenario.mode
+        _selected_hero_names(x),
+        features.widget,
+        scenario.mode,
+        strengths=features.captain_scores,
+        event=event,
     )
     eff_cap = troops.march_capacity + sum(features.escorts[n] for n in chosen)
     buffs = beartrap_buffs or BeartrapBuffs()
@@ -605,6 +715,10 @@ def solve_mode(
     if one_per_troop_type:
         _apply_one_hero_per_troop_type(variables, features.troop_of)
 
+    if not bear_mode:
+        _apply_survival_fill(variables, troops, scenario.survival_fill)
+
+    troop_weights: tuple[float, float, float] | None = None
     if bear_mode:
         _build_bear_hero_objective(variables, features.strengths)
     else:
@@ -638,6 +752,18 @@ def solve_mode(
             heroes=usable,
             catalog=catalog,
             governor=governor,
+            event=event,
         )
 
-    return _extract_optimal_solution(variables, features, troops, terms, scenario)
+    sol = _extract_optimal_solution(
+        variables, features, troops, terms, scenario, event=event
+    )
+    if scenario.survival_fill is None or troop_weights is None:
+        return sol
+    filled = _sqrt_n_troop_fill(
+        troops,
+        scenario.survival_fill,
+        troop_weights,
+        sol.effective_capacity,
+    )
+    return replace(sol, troops=filled)

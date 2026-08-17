@@ -3,7 +3,7 @@ import pytest
 from ks.heroes.gear_models import GearRecord, GearStats
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.recommend import recommend
-from ks.heroes.optimize.types import CatalogEntry, EffectTag, Scenario, TroopsConfig
+from ks.heroes.optimize.types import CatalogEntry, EffectTag, EventProfile, Scenario, TroopsConfig
 
 
 def _hero(name: str, *, power: int = 1000, escorts: int = 5) -> HeroRecord:
@@ -195,6 +195,161 @@ def test_rally_lead_lists_attack_widget_first_even_when_name_sorts_last() -> Non
     assert names[0] == "Helga"
     assert set(names) == {"Helga", "Chenko", "Diana"}
     assert result.heroes[0]["widget_type"] == "attack"
+
+
+def test_joiner_puts_best_first_expedition_hero_in_slot_one() -> None:
+    """Bear Trap joiner only counts slot 1's first expedition skill."""
+    from ks.heroes.optimize.model import order_march_hero_names
+
+    ordered = order_march_hero_names(
+        ["Amane", "Chenko", "Helga"],
+        {"Amane": "none", "Chenko": "none", "Helga": "attack"},
+        "joiner",
+        strengths={"Chenko": 155.0, "Amane": 138.0, "Helga": 24.0},
+    )
+    assert ordered[0] == "Chenko"
+    assert ordered == ("Chenko", "Amane", "Helga")
+
+
+def test_beartrap_rally_lead_puts_chenko_ahead_of_helga_widget() -> None:
+    """Bear Trap host captain is first-expedition lethality, not Helga's widget."""
+    from ks.heroes.optimize.model import order_march_hero_names
+
+    ordered = order_march_hero_names(
+        ["Chenko", "Diana", "Helga"],
+        {"Chenko": "none", "Diana": "none", "Helga": "attack"},
+        "rally_lead",
+        strengths={"Chenko": 155.0, "Diana": 73.0, "Helga": 24.0},
+        event=EventProfile(name="beartrap"),
+    )
+    assert ordered[0] == "Chenko"
+    assert ordered == ("Chenko", "Diana", "Helga")
+
+
+def test_beartrap_joiner_recommend_lists_chenko_before_amane() -> None:
+    """Alphabetical Amane-first would waste Chenko's lethality joiner skill."""
+    from pathlib import Path
+
+    from ks.heroes.optimize.events import load_event_profile
+    from ks.heroes.optimize.scenarios import load_scenarios
+
+    root = Path(__file__).resolve().parents[1]
+    heroes = [
+        _hero("Amane", power=400_000),
+        _hero("Chenko", power=500_000),
+        _hero("Helga", power=300_000),
+    ]
+    catalog = {
+        "Amane": CatalogEntry(
+            name="Amane",
+            troop="archer",
+            widget_type="none",
+            effects=(
+                EffectTag("attack_up", 25.0, "expedition", effect_op=102, first_expedition=True),
+            ),
+        ),
+        "Chenko": CatalogEntry(
+            name="Chenko",
+            troop="cavalry",
+            widget_type="none",
+            effects=(
+                EffectTag("lethality_up", 25.0, "expedition", effect_op=101, first_expedition=True),
+            ),
+        ),
+        "Helga": CatalogEntry(
+            name="Helga",
+            troop="infantry",
+            widget_type="attack",
+            effects=(
+                EffectTag(
+                    "damage_taken_down",
+                    50.0,
+                    "expedition",
+                    effect_op=111,
+                    first_expedition=True,
+                    proc_chance=0.4,
+                ),
+            ),
+        ),
+    }
+    troops = TroopsConfig(infantry=80, cavalry=40, archers=40, march_capacity=150)
+    scenarios = load_scenarios(root / "config" / "point_scenarios_beartrap.yaml")
+    event = load_event_profile(root / "config" / "events" / "beartrap.yaml")
+    result = recommend(
+        heroes,
+        catalog,
+        troops,
+        scenarios,
+        force_mode="joiner",
+        event=event,
+    )
+    names = [h["name"] for h in result.heroes]
+    assert names[0] == "Chenko"
+    assert set(names) == {"Chenko", "Amane", "Helga"}
+
+
+def test_beartrap_rally_lead_recommend_lists_chenko_before_helga() -> None:
+    """Helga's attack widget must not steal Bear Trap host slot 1 from Chenko."""
+    from pathlib import Path
+
+    from ks.heroes.optimize.events import load_event_profile
+    from ks.heroes.optimize.scenarios import load_scenarios
+
+    root = Path(__file__).resolve().parents[1]
+    heroes = [
+        _hero("Chenko", power=500_000),
+        _hero("Diana", power=400_000),
+        _hero("Helga", power=300_000),
+    ]
+    catalog = {
+        "Chenko": CatalogEntry(
+            name="Chenko",
+            troop="cavalry",
+            widget_type="none",
+            effects=(
+                EffectTag("lethality_up", 25.0, "expedition", effect_op=101, first_expedition=True),
+            ),
+        ),
+        "Diana": CatalogEntry(
+            name="Diana",
+            troop="archer",
+            widget_type="none",
+            effects=(
+                EffectTag("attack_up", 10.0, "expedition", effect_op=102, first_expedition=False),
+            ),
+        ),
+        "Helga": CatalogEntry(
+            name="Helga",
+            troop="infantry",
+            widget_type="attack",
+            rally_widget_priority=4,
+            effects=(
+                EffectTag(
+                    "damage_taken_down",
+                    50.0,
+                    "expedition",
+                    effect_op=111,
+                    first_expedition=True,
+                    proc_chance=0.4,
+                ),
+                EffectTag("rally_lethality", 15.0, "widget"),
+            ),
+        ),
+    }
+    troops = TroopsConfig(infantry=80, cavalry=40, archers=40, march_capacity=150)
+    scenarios = load_scenarios(root / "config" / "point_scenarios_beartrap.yaml")
+    event = load_event_profile(root / "config" / "events" / "beartrap.yaml")
+    result = recommend(
+        heroes,
+        catalog,
+        troops,
+        scenarios,
+        force_mode="rally_lead",
+        event=event,
+    )
+    names = [h["name"] for h in result.heroes]
+    assert names[0] == "Chenko"
+    assert set(names) == {"Chenko", "Diana", "Helga"}
 
 
 def _piece(pid: str, troop: str, slot: str, lethality: float) -> GearRecord:
