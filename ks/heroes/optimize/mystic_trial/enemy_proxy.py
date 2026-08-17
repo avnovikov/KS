@@ -35,21 +35,14 @@ _SLOT_LABEL = {
 
 
 def bonus_to_percent_points(raw: float) -> float:
-    """Map battle-report / UI values into ``score_march`` percent-point bonuses.
+    """Pass battle-report / UI values through as percent-points.
 
-    KingShot formation screens show totals like **Infantry Attack 160.2%**
-    (= 1.602× base = **+60.2** percent-points). Accepted inputs:
-
-    - ``0..5`` — bonus *on top of 1* (``0.602`` → +60.2%)
-    - ``5..100`` (exclusive of 100) — already percent-points (``60.2`` → +60.2%)
-    - ``>= 100`` — game-style **total** percent (``160.2`` → +60.2%)
+    ``score_march`` applies ``1 + pp/100``. Enter what you mean as the bonus:
+    ``115`` → +115% (×2.15), ``33`` → +33% (×1.33). Do **not** rewrite
+    game-style totals (``115`` used to become +15); stored opponent YAML and
+    player estimates both use the same percent-point convention.
     """
-    b = float(raw)
-    if 0.0 <= b <= 5.0:
-        return b * 100.0
-    if b >= 100.0:
-        return b - 100.0
-    return b
+    return float(raw)
 
 
 def mythic_set_for_troop(troop: str, *, enhancement: int) -> dict[str, GearRecord]:

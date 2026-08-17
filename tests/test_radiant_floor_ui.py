@@ -55,7 +55,8 @@ def test_radiant_js_renders_opponent_bonuses() -> None:
     assert "opponent-copy-other" in html
     assert "opponent-troop-edit" in html
     assert "optimiser_board.js" in html
-    assert "160.2" in html
+    assert "percent-points" in html
+    assert "115" in html
     assert "copyOpponentToOther" in text or "Copy to Opponent" in text
     board = (
         ROOT / "ks" / "heroes" / "ui" / "static" / "optimiser_board.js"

@@ -45,16 +45,48 @@ def _complete_march(**overrides):
     return base
 
 
-def test_bonus_to_percent_points_fraction_and_raw() -> None:
-    assert bonus_to_percent_points(0.85) == pytest.approx(85.0)
+def test_bonus_to_percent_points_passthrough() -> None:
+    """Stored report values are percent-points; score_march uses 1 + pp/100.
+
+    Enter 115 for +115% (×2.15), not a game 'total' 115% that we used to
+    rewrite into +15.
+    """
+    assert bonus_to_percent_points(115.0) == pytest.approx(115.0)
+    assert bonus_to_percent_points(33.0) == pytest.approx(33.0)
+    assert bonus_to_percent_points(160.2) == pytest.approx(160.2)
+    assert bonus_to_percent_points(0.0) == pytest.approx(0.0)
     assert bonus_to_percent_points(85) == pytest.approx(85.0)
 
 
-def test_bonus_to_percent_points_game_total_percent() -> None:
-    """Formation UI 'Infantry Attack 160.2%' → +60.2 percent-points."""
-    assert bonus_to_percent_points(160.2) == pytest.approx(60.2)
-    assert bonus_to_percent_points(0.602) == pytest.approx(60.2)
-    assert bonus_to_percent_points(60.2) == pytest.approx(60.2)
+def test_report_bonus_maps_match_stored_percent_points() -> None:
+    from ks.heroes.optimize.mystic_trial.enemy_proxy import report_bonus_percent_maps
+
+    atk, defense, leth, hp = report_bonus_percent_maps(
+        {
+            "infantry": {
+                "attack_pct": 115.0,
+                "defense_pct": 115.0,
+                "lethality_pct": 33.0,
+                "health_pct": 33.0,
+            },
+            "cavalry": {
+                "attack_pct": 115.0,
+                "defense_pct": 115.0,
+                "lethality_pct": 33.0,
+                "health_pct": 33.0,
+            },
+            "archers": {
+                "attack_pct": 115.0,
+                "defense_pct": 115.0,
+                "lethality_pct": 33.0,
+                "health_pct": 33.0,
+            },
+        }
+    )
+    assert atk["infantry"] == pytest.approx(115.0)
+    assert defense["cavalry"] == pytest.approx(115.0)
+    assert leth["archers"] == pytest.approx(33.0)
+    assert hp["infantry"] == pytest.approx(33.0)
 
 
 def test_mythic_set_four_slots() -> None:
