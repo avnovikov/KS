@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from ks.heroes.models import HeroRecord, SkillRecord
 from ks.heroes.optimize.skill_effects import EXPEDITION, family_percents, kind_family
 from ks.heroes.optimize.skillmod import (
@@ -40,6 +42,38 @@ def test_damage_taken_down_counts_in_expedition_family_percents() -> None:
     )
     assert incomplete is False
     assert percents.get("damage_taken_down") == 50.0
+
+
+def test_oath_of_guardian_proc_is_remaining_mixture_not_guaranteed_50() -> None:
+    """Leveled Oath of Guardian must not enter expedition percents as 50% DTD."""
+    entry = CatalogEntry(
+        name="Helga",
+        troop="infantry",
+        effects=(
+            EffectTag(
+                kind="damage_taken_down",
+                max_value=50.0,
+                applies_to="expedition",
+                effect_op=111,
+                first_expedition=True,
+                proc_chance=0.4,
+            ),
+        ),
+        skills=(
+            CatalogSkill(
+                3, "Oath of Guardian", "expedition", effect_kind="damage_taken_down"
+            ),
+        ),
+    )
+    hero = HeroRecord(
+        name="Helga",
+        skills=(SkillRecord(slot=3, name="Oath of Guardian", level=5),),
+    )
+    percents, incomplete = family_percents(
+        hero, entry, family=EXPEDITION, catalog={"Helga": entry}
+    )
+    assert incomplete is False
+    assert percents.get("damage_taken_down") == pytest.approx(20.0)
 
 
 def test_utility_expedition_tags_do_not_inflate_combat_percents() -> None:

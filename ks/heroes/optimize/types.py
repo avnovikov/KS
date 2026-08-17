@@ -71,6 +71,10 @@ class EffectTag:
     applies_to: str = "expedition"  # expedition | widget | talent
     effect_op: int | None = None  # community SkillMod identifier
     first_expedition: bool = False  # joiner-eligible first expedition skill
+    # Independent chance the effect fires (e.g. Helga Oath of Guardian).
+    # None = always-on. Incoming-damage kinds use a miss/hit mixture, not
+    # ``magnitude * proc_chance`` stacked as a second multiplicative DR layer.
+    proc_chance: float | None = None
 
 
 @dataclass(frozen=True)

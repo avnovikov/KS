@@ -32,6 +32,48 @@ def _star_factor(stars: int | None, pellets: int | None = None) -> float:
     return star_progress_factor(stars, pellets)
 
 
+# Incoming-damage kinds: a proc is a miss/hit mixture, not a second DR layer.
+_REMAINING_DAMAGE_KINDS = frozenset({"damage_taken_down", "opp_damage_down"})
+
+
+def incoming_damage_factor(
+    reduction_pct: float, proc_chance: float | None
+) -> float:
+    """Expected incoming-damage multiplier for a damage-taken-down effect.
+
+    Guaranteed ``r``% DTD leaves ``1 - r/100`` of the hit.
+    A proc is a mixture: miss keeps ``1.0``, hit keeps ``1 - r/100``.
+    That is not ``(1 - r/100) * (1 - p)`` (two multiplicative DR layers).
+    """
+    r = float(reduction_pct) / 100.0
+    if r < 0.0:
+        raise ValueError(f"reduction_pct must be >= 0; got {reduction_pct}")
+    r = min(r, 1.0)
+    if proc_chance is None:
+        return 1.0 - r
+    p = float(proc_chance)
+    if not 0.0 < p <= 1.0:
+        raise ValueError(f"proc_chance must be in (0, 1]; got {p}")
+    return (1.0 - p) * 1.0 + p * (1.0 - r)
+
+
+def effect_percent_points(magnitude: float, tag: EffectTag) -> float:
+    """Catalog percent points after applying an optional proc.
+
+    Remaining-damage kinds use :func:`incoming_damage_factor` (mixture), then
+    convert back to equivalent DTD points ``100 * (1 - factor)``. Other kinds
+    with a proc contribute ``p * magnitude`` (effect on vs off).
+    """
+    mag = float(magnitude)
+    if mag < 0.0:
+        raise ValueError(f"effect magnitude must be >= 0; got {mag}")
+    if tag.kind in _REMAINING_DAMAGE_KINDS:
+        return 100.0 * (1.0 - incoming_damage_factor(mag, tag.proc_chance))
+    if tag.proc_chance is None:
+        return mag
+    return mag * float(tag.proc_chance)
+
+
 def _effect_value(
     tag: EffectTag, stars: int | None, pellets: int | None = None
 ) -> float:
@@ -97,7 +139,8 @@ def _effect_tag_value(
         weight = 0.15 * weights.get(tag.kind, 0.5)
     else:
         weight = weights.get(tag.kind, 0.5)
-    value = weight * _effect_value(tag, hero.stars, hero.pellets)
+    raw = _effect_value(tag, hero.stars, hero.pellets)
+    value = weight * effect_percent_points(raw, tag)
     if tag.effect_op is not None and tag.first_expedition:
         value *= op_weights.get(tag.effect_op, 1.0)
     return value

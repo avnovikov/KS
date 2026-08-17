@@ -258,6 +258,35 @@ def _apply_widget_requirement(
     return True
 
 
+def _apply_garrison_attack_widget_exclusion(
+    variables: _TroopVariables,
+    troop_of: dict[str, str],
+    widget: dict[str, str],
+    mode: str,
+) -> None:
+    """Keep attack-widget heroes off garrison when a same-troop alternative exists.
+
+    Attack widgets fire only when leading a rally. Parking Helga (or Amadeus)
+    as garrison infantry over-wears the rally lead and contradicts published
+    heuristics: Howard/Zoe hold buildings, Helga/Amadeus lead rallies.
+    """
+    if mode != "garrison":
+        return
+    by_type: dict[str, list[str]] = {"infantry": [], "cavalry": [], "archers": []}
+    for name, troop in troop_of.items():
+        key = "archers" if troop in ("archer", "archers") else troop
+        if key not in by_type:
+            continue
+        by_type[key].append(name)
+    for names in by_type.values():
+        attackers = [n for n in names if widget.get(n) == "attack"]
+        others = [n for n in names if widget.get(n) != "attack"]
+        if not attackers or not others:
+            continue
+        for name in attackers:
+            variables.prob += variables.hero_selected[name] == 0
+
+
 def _apply_one_hero_per_troop_type(variables: _TroopVariables, troop_of: dict[str, str]) -> None:
     by_type: dict[str, list[str]] = {"infantry": [], "cavalry": [], "archers": []}
     for name, troop in troop_of.items():
@@ -418,6 +447,28 @@ def _build_bear_hero_objective(
     variables.prob += pulp.lpSum(x[n] * strengths[n] for n in x)
 
 
+def _selected_hero_names(x: dict[str, pulp.LpVariable]) -> list[str]:
+    return [n for n in x if pulp.value(x[n]) and pulp.value(x[n]) > 0.5]
+
+
+def order_march_hero_names(
+    names: list[str] | tuple[str, ...],
+    widget: dict[str, str],
+    mode: str,
+) -> tuple[str, ...]:
+    """In-game march slot 1 is the rally lead; put the attack-widget hero first.
+
+    Other modes keep a stable alphabetical order so garrison / joiner / solo
+    boards do not shuffle when the ILP's variable dict order changes.
+    """
+    selected = list(names)
+    if mode != "rally_lead":
+        return tuple(sorted(selected))
+    leads = sorted(n for n in selected if widget.get(n) == "attack")
+    rest = sorted(n for n in selected if widget.get(n) != "attack")
+    return tuple(leads + rest)
+
+
 def _extract_optimal_solution(
     variables: _TroopVariables,
     features: _HeroFeatures,
@@ -426,7 +477,9 @@ def _extract_optimal_solution(
     scenario: Scenario,
 ) -> ModeSolution:
     x = variables.hero_selected
-    chosen = tuple(sorted(n for n in x if pulp.value(x[n]) and pulp.value(x[n]) > 0.5))
+    chosen = order_march_hero_names(
+        _selected_hero_names(x), features.widget, scenario.mode
+    )
     ti = int(round(pulp.value(variables.infantry) or 0))
     tc = int(round(pulp.value(variables.cavalry) or 0))
     ta = int(round(pulp.value(variables.archers) or 0))
@@ -464,7 +517,9 @@ def _extract_bear_damage_solution(
     from ks.heroes.optimize.bear_damage import host_skillmod_buckets
 
     x = variables.hero_selected
-    chosen = tuple(sorted(n for n in x if pulp.value(x[n]) and pulp.value(x[n]) > 0.5))
+    chosen = order_march_hero_names(
+        _selected_hero_names(x), features.widget, scenario.mode
+    )
     eff_cap = troops.march_capacity + sum(features.escorts[n] for n in chosen)
     buffs = beartrap_buffs or BeartrapBuffs()
     lineup_strength = sum(features.strengths[n] for n in chosen)
@@ -542,6 +597,10 @@ def solve_mode(
 
     if not _apply_widget_requirement(variables, features.widget, scenario.require_widget):
         return _infeasible_solution(scenario, troops)
+
+    _apply_garrison_attack_widget_exclusion(
+        variables, features.troop_of, features.widget, scenario.mode
+    )
 
     if one_per_troop_type:
         _apply_one_hero_per_troop_type(variables, features.troop_of)

@@ -594,7 +594,10 @@ var EVENT_MODE_LABELS = [
   { "Archer Lethality": share(5, 1, 1) },
 ];
 
-function eventMode(names, points) {
+function eventMode(names, points, opts) {
+  opts = opts || {};
+  var mode = opts.mode || "garrison";
+  var widgets = opts.widgets || {};
   var contributions = {};
   var totalStats = {};
   names.forEach(function (name, i) {
@@ -611,9 +614,18 @@ function eventMode(names, points) {
     });
   });
   return {
-    recommended_mode: "garrison",
+    recommended_mode: mode,
     heroes: names.map(function (n, i) {
-      return eventHero(n, i === 0 ? "defense_widget" : "infantry_support", 220 + i);
+      var widget = widgets[n] || (i === 0 ? "defense" : "none");
+      var role =
+        widget === "attack"
+          ? "attack_widget"
+          : widget === "defense"
+            ? "defense_widget"
+            : "infantry_support";
+      var hero = eventHero(n, role, 220 + i);
+      hero.widget_type = widget;
+      return hero;
     }),
     troops: { infantry: 33858, cavalry: 17051, archers: 29386 },
     effective_capacity: 80295,
@@ -754,7 +766,10 @@ function goodBundle() {
       stat_family: "expedition",
       modes: {
         garrison: eventMode(["Hilde", "Howard", "Saul"], 26152.46),
-        rally_lead: eventMode(["Amadeus", "Jabel", "Diana"], 18110.2),
+        rally_lead: eventMode(["Jabel", "Diana", "Amadeus"], 18110.2, {
+          mode: "rally_lead",
+          widgets: { Amadeus: "attack" },
+        }),
       },
     },
     bear: {
@@ -946,6 +961,28 @@ async function suiteModeAndEventSwitching() {
     d.rows()[0].slots
       .map(function (s) {
         return s.name;
+      })
+      .join(",")
+  );
+  check(
+    "with the rally lead as the first march icon",
+    d.rows()[0].slots
+      .map(function (s) {
+        return s.name;
+      })
+      .join(",") === "Amadeus,Jabel,Diana",
+    d.rows()[0].slots
+      .map(function (s) {
+        return s.name;
+      })
+      .join(",")
+  );
+  check(
+    "and the first slot is tagged Lead",
+    d.rows()[0].slots[0].slotTag === "Lead",
+    d.rows()[0].slots
+      .map(function (s) {
+        return s.slotTag;
       })
       .join(",")
   );

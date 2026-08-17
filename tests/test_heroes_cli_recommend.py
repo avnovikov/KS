@@ -26,7 +26,8 @@ def test_recommend_cli_smoke(tmp_path: Path) -> None:
   {"name": "Zoe", "power": 1000, "escorts": 10, "stars": 5},
   {"name": "Saul", "power": 900, "escorts": 10, "stars": 5},
   {"name": "Howard", "power": 800, "escorts": 10, "stars": 5},
-  {"name": "Amadeus", "power": 1100, "escorts": 10, "stars": 5}
+  {"name": "Amadeus", "power": 1100, "escorts": 10, "stars": 5},
+  {"name": "Jabel", "power": 950, "escorts": 10, "stars": 5}
 ]
 """,
         encoding="utf-8",

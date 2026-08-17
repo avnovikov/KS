@@ -72,6 +72,10 @@ heroes:
       applies_to: expedition
       effect_op: 111
       first_expedition: true
+      # Oath of Guardian: 40% chance to take 50% damage (does not stack).
+      # Remaining = 0.6*1.0 + 0.4*0.5 = 0.8 — not a guaranteed 50% DTD, and
+      # not (1-0.5)*(1-0.4) as two multiplicative DR layers.
+      proc_chance: 0.4
     - kind: attack_up
       max_value: 25.0
       applies_to: expedition

@@ -260,16 +260,52 @@
 
   /** Hero names for a row in the same order the board places them: the
    *  formation slots (F1, F2, B1..B3) when the row has one, otherwise the
-   *  heroes list order the sword/bear march uses. The contribution table
+   *  sword/bear march with the rally lead in slot 1. The contribution table
    *  and the board's own row-builder both need one hero list in one order. */
-  function orderedHeroNames(row) {
+  function orderedHeroNames(row, entry) {
     if (hasFormation(row)) {
       var f = row.formation;
       return ALL_SLOTS.map(function (s) {
         return f[s];
       }).filter(Boolean);
     }
-    return (row.heroes || []).map(heroName).filter(Boolean);
+    return orderMarchHeroes(
+      (row.heroes || []).filter(function (hero) {
+        return heroName(hero);
+      }),
+      entry || { key: row && row.recommended_mode, row: row }
+    ).map(heroName);
+  }
+
+  function isRallyLeadEntry(entry) {
+    if (!entry) return false;
+    if (entry.key === "rally_lead") return true;
+    var mode = entry.row && entry.row.recommended_mode;
+    return mode === "rally_lead";
+  }
+
+  function heroWidgetType(hero) {
+    if (!hero || typeof hero !== "object") return "";
+    if (hero.widget_type) return String(hero.widget_type);
+    var role = hero.explain && hero.explain.role;
+    if (role === "attack_widget") return "attack";
+    var reason = String(hero.reason || "");
+    var match = /widget=([a-z]+)/.exec(reason);
+    return match ? match[1] : "";
+  }
+
+  /** In-game march slot 1 is the rally lead (attack widget). */
+  function orderMarchHeroes(heroes, entry) {
+    var list = (heroes || []).slice();
+    if (!isRallyLeadEntry(entry)) return list;
+    var leads = [];
+    var rest = [];
+    list.forEach(function (hero) {
+      if (heroWidgetType(hero) === "attack") leads.push(hero);
+      else rest.push(hero);
+    });
+    if (!leads.length) return list;
+    return leads.concat(rest);
   }
 
   function explainFor(row, name) {
@@ -841,11 +877,11 @@
   }
 
   /** One row per placed hero, plus a formation total row. */
-  function renderContributionTable(row) {
+  function renderContributionTable(row, entry) {
     var contributions = (row && row.contributions) || null;
     if (!contributions) return "";
     var family = row.stat_family || "conquest";
-    var names = orderedHeroNames(row).filter(function (n) {
+    var names = orderedHeroNames(row, entry).filter(function (n) {
       return contributions[n];
     });
     if (!names.length) return "";
@@ -906,20 +942,28 @@
       boardEl.appendChild(boardRowEl("Back", BACK_SLOTS, placed(BACK_SLOTS), entry));
     } else {
       // No F/B structure (the sword/bear events march three heroes together).
-      var heroes = (row.heroes || []).filter(function (hero) {
-        return heroName(hero);
-      });
+      var heroes = orderMarchHeroes(
+        (row.heroes || []).filter(function (hero) {
+          return heroName(hero);
+        }),
+        entry
+      );
       if (!heroes.length) {
         appendText("p", "empty", "No heroes in this result.");
         return;
       }
-      boardEl.appendChild(boardRowEl("March", null, heroes, entry));
+      var slotLabels = isRallyLeadEntry(entry)
+        ? heroes.map(function (_hero, i) {
+            return i === 0 ? "Lead" : "";
+          })
+        : null;
+      boardEl.appendChild(boardRowEl("March", slotLabels, heroes, entry));
     }
 
     // Per-hero split lives on the board itself, not behind a tap into the
     // hero sheet — it's the number a player checks every time they look at
     // a lineup, not an occasional drill-down.
-    var table = renderContributionTable(row);
+    var table = renderContributionTable(row, entry);
     if (table) {
       var tableEl = document.createElement("div");
       tableEl.innerHTML = table;

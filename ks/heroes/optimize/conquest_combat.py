@@ -12,10 +12,11 @@ from dataclasses import dataclass
 from ks.heroes.governor_bonuses import governor_attack_mult, governor_defense_mult
 from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.models import HeroRecord
-from ks.heroes.optimize.scoring import normalize_troop
+from ks.heroes.optimize.scoring import effect_percent_points, normalize_troop
 from ks.heroes.optimize.skill_effects import (
     CONQUEST,
     _effect_max_for_skill,
+    _effect_tag_for_skill,
     leveled_effect_value,
 )
 from ks.heroes.optimize.types import CatalogEntry, CatalogSkill
@@ -90,6 +91,9 @@ def _leveled_kind_totals(
             level,
             cskill.ladder,
         )
+        tag = _effect_tag_for_skill(entry, cskill)
+        if tag is not None:
+            value = effect_percent_points(value, tag)
         totals[cskill.effect_kind] = totals.get(cskill.effect_kind, 0.0) + value
     return totals, not any_level
 

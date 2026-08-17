@@ -14,8 +14,8 @@ mentions fall back to ``_DEFAULT_KIND_FAMILY``. ``widget`` effects are march
 from __future__ import annotations
 
 from ks.heroes.models import HeroRecord
-from ks.heroes.optimize.scoring import star_progress_factor
-from ks.heroes.optimize.types import CatalogEntry, CatalogSkill
+from ks.heroes.optimize.scoring import effect_percent_points, star_progress_factor
+from ks.heroes.optimize.types import CatalogEntry, CatalogSkill, EffectTag
 
 CONQUEST = "conquest"
 EXPEDITION = "expedition"
@@ -118,7 +118,9 @@ def catalog_percents(
             continue
         if tag.kind in _UTILITY_KINDS:
             continue
-        out[tag.kind] = out.get(tag.kind, 0.0) + float(tag.max_value) * factor
+        out[tag.kind] = out.get(tag.kind, 0.0) + effect_percent_points(
+            float(tag.max_value) * factor, tag
+        )
     return out
 
 
@@ -216,6 +218,9 @@ def leveled_catalog_percents(
             level,
             cskill.ladder,
         )
+        tag = _effect_tag_for_skill(entry, cskill)
+        if tag is not None:
+            value = effect_percent_points(value, tag)
         out[cskill.effect_kind] = out.get(cskill.effect_kind, 0.0) + value
     return out
 
@@ -260,6 +265,22 @@ def _effect_max_for_skill(entry: CatalogEntry, cskill: CatalogSkill) -> float | 
     if fallback_hit:
         return fallback
     return _DEFAULT_EFFECT_MAX.get(cskill.effect_kind)
+
+
+def _effect_tag_for_skill(
+    entry: CatalogEntry, cskill: CatalogSkill
+) -> EffectTag | None:
+    """Prefer a catalog effect whose applies_to matches the skill family."""
+    assert cskill.effect_kind is not None
+    fallback: EffectTag | None = None
+    for tag in entry.effects:
+        if tag.kind != cskill.effect_kind:
+            continue
+        if tag.applies_to == cskill.family:
+            return tag
+        if fallback is None:
+            fallback = tag
+    return fallback
 
 
 def family_percents(

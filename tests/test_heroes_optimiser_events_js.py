@@ -302,6 +302,8 @@ def test_mode_chips_carry_their_points_and_drive_the_board(js_run: dict) -> None
             "and moves the selection with it",
             "the chip that lost it says so too",
             "and the board shows that mode's heroes",
+            "with the rally lead as the first march icon",
+            "and the first slot is tagged Lead",
             "tapping Bear Trap switches event",
             "the event segment is marked selected",
             "and the one it left is not",

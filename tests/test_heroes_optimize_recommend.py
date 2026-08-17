@@ -61,6 +61,84 @@ def test_recommend_picks_garrison_for_defense_roster() -> None:
     assert len(result.heroes) == 3
 
 
+def test_garrison_does_not_select_attack_widget_when_same_troop_alternative_exists() -> None:
+    """Attack widgets only fire on rally lead — do not park Helga on garrison."""
+    heroes = [
+        _hero("Helga", power=250_000),
+        _hero("Howard", power=380_000),
+        _hero("Jabel"),
+        _hero("Saul"),
+    ]
+    catalog = {
+        "Helga": CatalogEntry(
+            name="Helga",
+            troop="infantry",
+            widget_type="attack",
+            rally_widget_priority=4,
+            effects=(
+                EffectTag("damage_taken_down", 50.0, "expedition", effect_op=111, first_expedition=True),
+                EffectTag("attack_up", 25.0, "expedition"),
+                EffectTag("lethality_up", 25.0, "expedition"),
+                EffectTag("rally_lethality", 15.0, "widget"),
+            ),
+        ),
+        "Howard": CatalogEntry(
+            name="Howard",
+            troop="infantry",
+            widget_type="none",
+            effects=(
+                EffectTag("damage_taken_down", 20.0, "expedition", effect_op=111, first_expedition=True),
+                EffectTag("opp_damage_down", 20.0, "expedition"),
+            ),
+        ),
+        "Jabel": _cat("Jabel", "cavalry", "defense", "defender_attack", 15),
+        "Saul": _cat("Saul", "archer", "defense", "defense_up", 25),
+    }
+    troops = TroopsConfig(infantry=80, cavalry=40, archers=40, march_capacity=150)
+    scenarios = {
+        "garrison": Scenario(
+            mode="garrison",
+            combat_rate=40,
+            minutes_held=40,
+            personal_rate=600,
+            enemy_power_scale=100000,
+            require_widget="defense",
+        ),
+    }
+    result = recommend(heroes, catalog, troops, scenarios, force_mode="garrison")
+    names = {h["name"] for h in result.heroes}
+    assert "Howard" in names
+    assert "Helga" not in names
+
+
+def test_garrison_may_select_attack_widget_if_only_hero_of_that_troop() -> None:
+    heroes = [_hero("Helga"), _hero("Jabel"), _hero("Saul")]
+    catalog = {
+        "Helga": CatalogEntry(
+            name="Helga",
+            troop="infantry",
+            widget_type="attack",
+            effects=(EffectTag("rally_lethality", 15.0, "widget"),),
+        ),
+        "Jabel": _cat("Jabel", "cavalry", "defense", "defender_attack", 15),
+        "Saul": _cat("Saul", "archer", "defense", "defense_up", 25),
+    }
+    troops = TroopsConfig(infantry=80, cavalry=40, archers=40, march_capacity=150)
+    scenarios = {
+        "garrison": Scenario(
+            mode="garrison",
+            combat_rate=40,
+            minutes_held=40,
+            personal_rate=600,
+            enemy_power_scale=100000,
+            require_widget="defense",
+        ),
+    }
+    result = recommend(heroes, catalog, troops, scenarios, force_mode="garrison")
+    names = {h["name"] for h in result.heroes}
+    assert names == {"Helga", "Jabel", "Saul"}
+
+
 def test_recommend_force_mode() -> None:
     heroes = [_hero("Zoe"), _hero("Saul"), _hero("Howard"), _hero("Amadeus")]
     catalog = {
@@ -90,6 +168,33 @@ def test_recommend_force_mode() -> None:
     }
     result = recommend(heroes, catalog, troops, scenarios, force_mode="rally_lead")
     assert result.recommended_mode == "rally_lead"
+    assert [h["name"] for h in result.heroes][0] == "Amadeus"
+
+
+def test_rally_lead_lists_attack_widget_first_even_when_name_sorts_last() -> None:
+    """In-game march slot 1 is the rally lead; Helga must not trail Chenko/Diana."""
+    heroes = [_hero("Chenko"), _hero("Diana"), _hero("Helga"), _hero("Howard")]
+    catalog = {
+        "Chenko": _cat("Chenko", "cavalry", "none", "attack_up", 20),
+        "Diana": _cat("Diana", "archer", "none", "lethality_up", 20),
+        "Helga": _cat("Helga", "infantry", "attack", "rally_lethality", 15),
+        "Howard": _cat("Howard", "infantry", "none", "damage_taken_down", 20),
+    }
+    troops = TroopsConfig(infantry=80, cavalry=40, archers=40, march_capacity=150)
+    scenarios = {
+        "rally_lead": Scenario(
+            mode="rally_lead",
+            combat_rate=80,
+            require_widget="attack",
+            enemy_power_scale=50000,
+            formation_weights={"infantry": 1.0, "cavalry": 1.0, "archers": 1.0},
+        ),
+    }
+    result = recommend(heroes, catalog, troops, scenarios, force_mode="rally_lead")
+    names = [h["name"] for h in result.heroes]
+    assert names[0] == "Helga"
+    assert set(names) == {"Helga", "Chenko", "Diana"}
+    assert result.heroes[0]["widget_type"] == "attack"
 
 
 def _piece(pid: str, troop: str, slot: str, lethality: float) -> GearRecord:
