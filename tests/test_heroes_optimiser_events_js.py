@@ -71,6 +71,7 @@ def _build_script(tmp_path: Path) -> Path:
     harness = HARNESS.read_text(encoding="utf-8")
     injections = (
         ("// @@APP_JS@@", "app.js"),
+        ("// @@FORMATION_TOTALS_JS@@", "formation_totals.js"),
         ("// @@OPTIMISER_EVENTS_JS@@", "optimiser_events.js"),
     )
     for marker, name in injections:
@@ -174,9 +175,14 @@ def test_board_script_is_served_and_is_the_file_on_disk(tmp_path: Path) -> None:
 
     page = client.get("/optimiser/events").text
     assert 'src="/static/optimiser_events.js"' in page
+    assert 'src="/static/formation_totals.js"' in page
     # app.js comes from _layout.html and has to load first: the board reads
-    # window.escapeHtml off it at IIFE-evaluation time.
+    # window.escapeHtml off it at IIFE-evaluation time. formation_totals.js
+    # must load before the board so weightedExpeditionTotals exists.
     assert page.index('src="/static/app.js"') < page.index(
+        'src="/static/formation_totals.js"'
+    )
+    assert page.index('src="/static/formation_totals.js"') < page.index(
         'src="/static/optimiser_events.js"'
     )
 
@@ -768,14 +774,14 @@ def test_expedition_table_collapses_per_troop_columns_to_unit_and_generic_stat(
     contribution only ever carries that troop's own labels. Listing every
     troop's labels as its own column produced a wall of columns that were
     "—" for every hero but one; this collapses to a Unit column plus one
-    shared Attack/Defense/Health/Lethality set, summing same-stat labels
-    across troops for the formation total."""
+    shared Attack/Defense/Health/Lethality set. Formation totals are
+    troop-share weighted averages, not a raw sum of Infantry+Cavalry+Archer."""
     _assert_ran(
         js_run,
         [
             "the expedition table has a unit column instead of per-troop columns",
             "the expedition table collapses troop-prefixed labels to a generic stat name",
-            "the expedition formation total sums the same stat across troops",
+            "the expedition formation total is share-weighted across troops",
         ],
     )
     board = js_run["data"]["sword_board_html"]

@@ -264,14 +264,40 @@ def test_recommend_result_carries_expedition_contributions() -> None:
             )
 
 
-def test_recommend_formation_totals_sum_hero_contributions() -> None:
+def test_recommend_formation_totals_are_share_weighted() -> None:
+    """Expedition formation totals collapse to Attack/Defense/… weighted by
+    troop ratio — not a raw sum of Infantry+Cavalry+Archer labels."""
+    from ks.heroes.optimize.stat_contributions import (
+        Share,
+        StatContribution,
+        formation_contribution,
+    )
+
     payload = _run_recommend().to_dict()
     totals = payload["formation_totals"]
     rows = [r["contributions"] for r in payload["heroes"] if r.get("contributions")]
     assert totals["power"]["gear"] == pytest.approx(
         sum(c["power"]["gear"] for c in rows)
     )
-    for label, share in totals["stats"].items():
-        assert share["total"] == pytest.approx(
-            sum((c["stats"].get(label) or {}).get("total", 0.0) for c in rows)
-        )
+    assert payload["stat_family"] == "expedition"
+    for label in totals["stats"]:
+        assert label in {"Attack", "Defense", "Health", "Lethality"}
+    rebuilt = formation_contribution(
+        [
+            StatContribution(
+                family="expedition",
+                estimated=bool(c.get("estimated")),
+                skills_incomplete=bool(c.get("skills_incomplete")),
+                power=Share(
+                    c["power"]["hero"], c["power"]["skills"], c["power"]["gear"]
+                ),
+                stats={
+                    lab: Share(s["hero"], s["skills"], s["gear"])
+                    for lab, s in c["stats"].items()
+                },
+            )
+            for c in rows
+        ],
+        troop_shares=payload.get("ratios"),
+    ).to_dict()
+    assert totals["stats"] == rebuilt["stats"]

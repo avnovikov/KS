@@ -520,9 +520,8 @@
    *
    * Every optimiser row carries the same three keys (see optimize_run.py):
    * `stat_family`, `formation_totals` and `contributions`. Conquest shares are
-   * flat stat points and sum; expedition shares are percent points and also
-   * sum — which is why the formatter takes the family rather than guessing
-   * from magnitude.
+   * flat stat points and sum. Expedition formation totals are already
+   * share-weighted (Attack/Defense/…) — not a sum of Infantry+Cavalry+Archer %.
    */
 
   function fmtShare(n, family) {
@@ -698,8 +697,8 @@
    *  labels ("Cavalry Attack", "Cavalry Defense", ...) — every other troop's
    *  columns would just be "—" for that hero. Collapse to one generic
    *  Attack/Defense/Health/Lethality column plus a Unit column naming which
-   *  troop the numbers belong to, and sum same-stat labels across troops for
-   *  the formation total (so "Attack" totals Infantry + Cavalry + Archer). */
+   *  troop the numbers belong to. Formation totals reuse
+   *  weightedExpeditionTotals (power sums; unit stats are share-weighted). */
   function renderExpeditionContributionTable(row, names, contributions, family) {
     var perHero = {};
     var presentStats = [];
@@ -744,17 +743,11 @@
     var totals = totalsOf(row);
     var totalRow = "";
     if (totals) {
-      var totalByStat = {};
-      Object.keys(totals.stats || {}).forEach(function (label) {
-        var stat = genericStatName(label);
-        var share = totals.stats[label];
-        var acc = totalByStat[stat] || { hero: 0, skills: 0, gear: 0, total: 0 };
-        acc.hero += share.hero;
-        acc.skills += share.skills;
-        acc.gear += share.gear;
-        acc.total += share.total;
-        totalByStat[stat] = acc;
-      });
+      var collapse = window.weightedExpeditionTotals;
+      if (!collapse) {
+        throw new Error("formation_totals.js must load before optimiser_events.js");
+      }
+      var totalByStat = collapse(totals.stats, row.ratios || row.troops);
       totalRow =
         '<tr class="contrib-total"><td>formation</td><td>' +
         esc(fmtShare(totals.power.total, "conquest")) + "</td><td>—</td>" +
