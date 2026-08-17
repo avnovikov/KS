@@ -125,6 +125,34 @@ class RadiantResult:
         return out
 
 
+def lineup_score_from_marches(
+    marches: Sequence[MarchResult],
+) -> tuple[float, tuple[str, ...]]:
+    """Sum march scores only when units match (all MC win rates or all proxy).
+
+    Each march's ``score`` is either an MC win rate (~0–1) when an enemy was
+    available, or a large proxy strength otherwise. Mixing those in a sum
+    makes the UI "win-rate" lineup total meaningless (e.g. dual-march Coliseum
+    with only one complete opponent slot).
+    """
+    if not marches:
+        return 0.0, ()
+    mc_flags = [bool(m.breakdown.get("mc")) for m in marches]
+    if all(mc_flags) or not any(mc_flags):
+        return float(sum(m.score for m in marches)), ()
+    mc_total = float(
+        sum(m.score for m, is_mc in zip(marches, mc_flags) if is_mc)
+    )
+    omitted = [
+        i + 1 for i, is_mc in enumerate(mc_flags) if not is_mc
+    ]
+    warning = (
+        "lineup_score uses MC win rates only; omitted proxy march(es) "
+        + ", ".join(str(n) for n in omitted)
+    )
+    return mc_total, (warning,)
+
+
 def build_opponent_panel(
     player_marches: Sequence[MarchResult],
     stub: FloorStub,
@@ -721,16 +749,17 @@ def optimize_radiant(
     opponent = (
         build_opponent_panel(marches, floor_stub) if floor_stub is not None else None
     )
+    lineup_score, lineup_warnings = lineup_score_from_marches(marches)
     return RadiantResult(
         marches=tuple(marches),
-        lineup_score=sum(m.score for m in marches),
+        lineup_score=lineup_score,
         governor=governor.to_dict(),
         research=research_bonuses.to_dict(),
         active_marches=active_marches,
         floor=floor_payload,
         opponent=opponent,
         engine=engine,
-        warnings=tuple(warnings),
+        warnings=tuple(warnings) + lineup_warnings,
     )
 
 
@@ -744,6 +773,7 @@ __all__ = [
     "RadiantResult",
     "build_opponent_panel",
     "counts_for_ratio",
+    "lineup_score_from_marches",
     "optimize_radiant",
     "ratio_candidates",
     "score_march",
