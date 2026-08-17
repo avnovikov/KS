@@ -22,6 +22,14 @@ def _parse_effects(effects_raw: list[Any]) -> list[EffectTag]:
         if not isinstance(item, dict):
             raise ValueError("effect entries must be mappings")
         op = item.get("effect_op")
+        proc_raw = item.get("proc_chance")
+        proc_chance: float | None = None
+        if proc_raw is not None:
+            proc_chance = float(proc_raw)
+            if not 0.0 < proc_chance <= 1.0:
+                raise ValueError(
+                    f"effect proc_chance must be in (0, 1]; got {proc_chance}"
+                )
         effects.append(
             EffectTag(
                 kind=str(item["kind"]),
@@ -29,6 +37,7 @@ def _parse_effects(effects_raw: list[Any]) -> list[EffectTag]:
                 applies_to=str(item.get("applies_to") or "expedition"),
                 effect_op=int(op) if op is not None else None,
                 first_expedition=bool(item.get("first_expedition", False)),
+                proc_chance=proc_chance,
             )
         )
     return effects

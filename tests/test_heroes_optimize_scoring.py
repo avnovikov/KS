@@ -1,7 +1,12 @@
 import pytest
 
 from ks.heroes.models import HeroRecord
-from ks.heroes.optimize.scoring import hero_strength, max_power_by_troop
+from ks.heroes.optimize.scoring import (
+    effect_percent_points,
+    hero_strength,
+    incoming_damage_factor,
+    max_power_by_troop,
+)
 from ks.heroes.optimize.stat_contributions import EXPEDITION, Share, StatContribution
 from ks.heroes.optimize.types import CatalogEntry, EffectTag
 
@@ -124,6 +129,40 @@ def test_hero_strength_without_contribution_scores_effects_only() -> None:
     hero = HeroRecord(name="Zoe", stars=3, power=100_000)
     assert hero_strength(hero, entry, "solo") == hero_strength(
         hero, entry, "solo", contribution=None
+    )
+
+
+def test_proc_is_remaining_damage_mixture_not_multiplicative_layers() -> None:
+    """Oath of Guardian: 40% of hits take half damage; 60% take full.
+
+    That expected remaining is 0.8, same EV as Howard's guaranteed 20% DTD,
+    and must not be modelled as two stacked DR layers (1-0.5)*(1-0.4)=0.3.
+    """
+    mixed = incoming_damage_factor(50.0, 0.4)
+    guaranteed = incoming_damage_factor(20.0, None)
+    stacked_layers = (1.0 - 0.5) * (1.0 - 0.4)
+    assert mixed == pytest.approx(0.8)
+    assert guaranteed == pytest.approx(0.8)
+    assert mixed == pytest.approx(guaranteed)
+    assert mixed != pytest.approx(stacked_layers)
+
+
+def test_proc_chance_scales_expected_damage_taken_down() -> None:
+    """Helga Oath of Guardian is a chance proc, not a guaranteed 50% hold."""
+    guaranteed = _entry(
+        "Howard",
+        "none",
+        EffectTag("damage_taken_down", 20.0, "expedition"),
+    )
+    proc = _entry(
+        "Helga",
+        "attack",
+        EffectTag("damage_taken_down", 50.0, "expedition", proc_chance=0.4),
+    )
+    hero = HeroRecord(name="x", stars=5)
+    assert effect_percent_points(50.0, proc.effects[0]) == pytest.approx(20.0)
+    assert hero_strength(hero, proc, "garrison") == pytest.approx(
+        hero_strength(hero, guaranteed, "garrison")
     )
 
 

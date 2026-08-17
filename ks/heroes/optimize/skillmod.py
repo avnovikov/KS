@@ -20,6 +20,7 @@ import math
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from ks.heroes.optimize.scoring import effect_percent_points
 from ks.heroes.optimize.types import CatalogEntry, EffectTag
 
 # Kinds that feed the attacker DamageUp SkillMod bucket (joiner first skill).
@@ -59,7 +60,7 @@ def _accumulate_damage_up(
         op = 0
     else:
         op = int(tag.effect_op)
-    out[op] = out.get(op, 0.0) + float(tag.max_value)
+    out[op] = out.get(op, 0.0) + effect_percent_points(float(tag.max_value), tag)
 
 
 def joiner_damage_up_from_entries(
@@ -90,7 +91,7 @@ def lineup_skillmod_detail(
     Percent values use catalog ``max_value`` scaled by star progress when a
     matching ``HeroRecord`` is supplied in ``heroes_by_name``.
     """
-    from ks.heroes.optimize.scoring import star_progress_factor
+    from ks.heroes.optimize.scoring import effect_percent_points, star_progress_factor
 
     by_op: dict[int, float] = {}
     by_hero: list[dict[str, Any]] = []
@@ -115,7 +116,7 @@ def lineup_skillmod_detail(
             if joiner_only and not tag.first_expedition:
                 continue
             op = 0 if tag.effect_op is None else int(tag.effect_op)
-            pct = float(tag.max_value) * scale
+            pct = effect_percent_points(float(tag.max_value) * scale, tag)
             by_op[op] = by_op.get(op, 0.0) + pct
             by_hero.append(
                 {
@@ -149,7 +150,11 @@ def skillmod_numerator_from_tags(
             continue
         op = 0 if tag.effect_op is None else int(tag.effect_op)
         if tag.kind in _DAMAGE_UP_KINDS:
-            damage_up[op] = damage_up.get(op, 0.0) + float(tag.max_value)
+            damage_up[op] = damage_up.get(op, 0.0) + effect_percent_points(
+                float(tag.max_value), tag
+            )
         elif tag.kind in _OPP_DEFENSE_DOWN_KINDS:
-            opp_def[op] = opp_def.get(op, 0.0) + float(tag.max_value)
+            opp_def[op] = opp_def.get(op, 0.0) + effect_percent_points(
+                float(tag.max_value), tag
+            )
     return stack_effect_ops(damage_up) * stack_effect_ops(opp_def)

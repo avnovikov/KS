@@ -1,8 +1,11 @@
 from pathlib import Path
 
+import pytest
+
 from ks.heroes.optimize.catalog import load_catalog
 from ks.heroes.optimize.events import load_event_profile
 from ks.heroes.optimize.scoring import hero_strength
+from ks.heroes.optimize.skill_effects import catalog_percents
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.types import CatalogEntry, EffectTag
 
@@ -16,6 +19,9 @@ def test_expanded_catalog_has_effect_op(tmp_path: Path) -> None:
     catalog = load_catalog(pro, root / "config" / "hero_catalog.yaml")
     assert catalog["Chenko"].effects[0].effect_op == 101
     assert catalog["Howard"].effects[0].effect_op == 111
+    assert catalog["Helga"].effects[0].proc_chance == 0.4
+    helga_pct = catalog_percents(catalog["Helga"], stars=5, pellets=0)
+    assert helga_pct["damage_taken_down"] == pytest.approx(20.0)
     assert catalog["Amadeus"].widget_type == "attack"
     assert catalog["Zoe"].widget_type == "defense"
     assert catalog["Ava"].widget_type == "attack"

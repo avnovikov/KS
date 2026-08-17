@@ -203,7 +203,7 @@ def host_skillmod_buckets(
     Includes ``expedition`` and ``widget`` applies_to (host skills fire).
     Values are star-scaled catalog ``max_value`` percent points.
     """
-    from ks.heroes.optimize.scoring import star_progress_factor
+    from ks.heroes.optimize.scoring import effect_percent_points, star_progress_factor
     from ks.heroes.optimize.types import CatalogEntry, EffectTag
     from ks.heroes.models import HeroRecord
 
@@ -227,7 +227,7 @@ def host_skillmod_buckets(
                 continue
             family, default_op = meta
             op = int(tag.effect_op) if tag.effect_op is not None else default_op
-            pct = float(tag.max_value) * float(scale)
+            pct = effect_percent_points(float(tag.max_value) * float(scale), tag)
             if pct <= 0:
                 continue
             bucket = out[family]

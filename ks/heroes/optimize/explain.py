@@ -336,6 +336,7 @@ def explain_selected_heroes(
             {
                 "name": name,
                 "reason": ", ".join(summary_bits),
+                "widget_type": (entry.widget_type if entry else None),
                 "explain": explain.to_dict(),
             }
         )

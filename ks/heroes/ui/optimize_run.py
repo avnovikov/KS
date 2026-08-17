@@ -185,8 +185,11 @@ def _apply_swordland_exclusive_squads(
     """Re-solve Garrison then Rally Lead so they don't share heroes.
 
     Garrison is chosen first (hold squad). Rally Lead is solved from the
-    leftovers. One attack-widget hero is held out of the Garrison pool so
-    Rally Lead can still satisfy ``require_widget: attack``.
+    leftovers. Attack-widget heroes are also ineligible for Garrison in
+    ``solve_mode`` whenever a same-troop alternative exists, so CLI / spend-XP
+    / recommend() cannot park Helga on a building. One attack-widget hero is
+    still held out of the Garrison pool here so Rally Lead can satisfy
+    ``require_widget: attack`` even if the ILP exclusion were skipped.
     """
     if "rally_lead" not in scenarios or "garrison" not in scenarios:
         return

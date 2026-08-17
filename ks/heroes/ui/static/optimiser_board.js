@@ -4,7 +4,8 @@
  * portraits/initials, board rows, mode-chips, and march reporting — so Radiant /
  * Coliseum / Molten report marches the same way Swordland/Bear do.
  *
- * Depends on app.js (window.safeUrl, window.escapeHtml). Loaded after app.js.
+ * Depends on app.js (window.safeUrl, window.escapeHtml) and
+ * formation_totals.js (window.weightedExpeditionTotals). Loaded after both.
  */
 (function (global) {
   "use strict";
@@ -426,17 +427,11 @@
     var totals = totalsOf(row);
     var totalRow = "";
     if (totals) {
-      var totalByStat = {};
-      Object.keys(totals.stats || {}).forEach(function (label) {
-        var stat = genericStatName(label);
-        var share = totals.stats[label];
-        var acc = totalByStat[stat] || { hero: 0, skills: 0, gear: 0, total: 0 };
-        acc.hero += share.hero;
-        acc.skills += share.skills;
-        acc.gear += share.gear;
-        acc.total += share.total;
-        totalByStat[stat] = acc;
-      });
+      var collapse = global.weightedExpeditionTotals;
+      if (!collapse) {
+        throw new Error("formation_totals.js must load before optimiser_board.js");
+      }
+      var totalByStat = collapse(totals.stats, row.ratios || row.troops);
       totalRow =
         '<tr class="contrib-total"><td>formation</td><td>' +
         esc(fmtShare(totals.power.total, "conquest")) +

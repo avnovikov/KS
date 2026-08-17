@@ -13,6 +13,7 @@ from ks.heroes.optimize.stat_contributions import (
     family_for_event,
     formation_contribution,
     hero_contribution,
+    weighted_expedition_totals,
 )
 from ks.heroes.optimize.types import CatalogEntry
 
@@ -240,7 +241,22 @@ def test_power_override_replaces_scraped_power() -> None:
     assert c.power.hero == pytest.approx(99_000.0)
 
 
-def test_formation_contribution_sums_matching_labels() -> None:
+def test_weighted_expedition_totals_are_share_weighted() -> None:
+    """Unit Attack/Defense/… collapse to Σ (troop% × share); not a raw sum."""
+    stats = {
+        "Infantry Attack": Share(40.0, 0.0, 0.0),
+        "Cavalry Attack": Share(100.0, 0.0, 0.0),
+        "Archer Attack": Share(10.0, 0.0, 0.0),
+    }
+    out = weighted_expedition_totals(
+        stats, {"infantry": 0.5, "cavalry": 0.1, "archers": 0.4}
+    )
+    # 40*0.5 + 100*0.1 + 10*0.4 = 34
+    assert out["Attack"].total == pytest.approx(34.0)
+    assert "Infantry Attack" not in out
+
+
+def test_formation_contribution_sums_power_and_weights_unit_stats() -> None:
     a = StatContribution(
         family=EXPEDITION,
         estimated=True,
@@ -258,13 +274,35 @@ def test_formation_contribution_sums_matching_labels() -> None:
             "Archer Health": Share(0.0, 5.0, 0.0),
         },
     )
+    # Equal weight over infantry + archers present in the lineup.
     total = formation_contribution([a, b])
     assert total.power.hero == pytest.approx(4.0)
     assert total.power.gear == pytest.approx(6.0)
-    assert total.stats["Infantry Lethality"].skills == pytest.approx(25.0)
-    assert total.stats["Infantry Lethality"].gear == pytest.approx(61.94)
-    assert total.stats["Archer Health"].skills == pytest.approx(5.0)
+    # Inf Lethality summed 86.94, then × 0.5 → 43.47; Arch Health 5 × 0.5 → 2.5
+    assert total.stats["Lethality"].total == pytest.approx(43.47)
+    assert total.stats["Health"].skills == pytest.approx(2.5)
+    assert "Infantry Lethality" not in total.stats
     assert total.skills_incomplete is True
+
+
+def test_formation_contribution_weights_by_troop_share() -> None:
+    a = StatContribution(
+        family=EXPEDITION,
+        estimated=False,
+        skills_incomplete=False,
+        power=Share(0, 0, 0),
+        stats={
+            "Infantry Attack": Share(40.0, 0.0, 0.0),
+            "Cavalry Attack": Share(100.0, 0.0, 0.0),
+            "Archer Attack": Share(10.0, 0.0, 0.0),
+        },
+    )
+    total = formation_contribution(
+        [a],
+        troop_shares={"infantry": 0.5, "cavalry": 0.1, "archers": 0.4},
+    )
+    assert total.stats["Attack"].total == pytest.approx(34.0)
+    assert "Infantry Attack" not in total.stats
 
 
 def test_formation_contribution_rejects_mixed_families() -> None:
