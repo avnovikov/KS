@@ -610,7 +610,7 @@
         inp.dataset.troop = id;
         inp.dataset.bonus = spec.key;
         inp.title =
-          "Percent-points or game total (e.g. 160.2 / 60.2 / 0.602); shown as entered";
+          "Percent-points (e.g. 115 → +115% / ×2.15); shown as entered";
         lab.appendChild(inp);
         box.appendChild(lab);
       });
