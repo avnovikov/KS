@@ -167,6 +167,8 @@ def _expedition_board_payload(
     pick: Sequence[HeroRecord],
     catalog: Mapping[str, CatalogEntry],
     gear_by_hero: Mapping[str, Mapping[str, GearRecord]],
+    *,
+    troop_shares: Mapping[str, float] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
     """Swordland-shaped contributions for the Radiant march board."""
     contribs: dict[str, Any] = {}
@@ -179,7 +181,10 @@ def _expedition_board_payload(
             catalog=dict(catalog),
         )
     contributions = {name: c.to_dict() for name, c in contribs.items()}
-    totals = formation_contribution(list(contribs.values())).to_dict()
+    totals = formation_contribution(
+        list(contribs.values()),
+        troop_shares=troop_shares,
+    ).to_dict()
     heroes = [
         {"name": h.name, "contributions": contributions.get(h.name)} for h in pick
     ]
@@ -660,7 +665,7 @@ def optimize_radiant(
         )
         scored = found["proxy"]
         contributions, formation_totals, hero_rows = _expedition_board_payload(
-            pick, catalog, gear_by_hero
+            pick, catalog, gear_by_hero, troop_shares=found.get("ratio")
         )
         breakdown: dict[str, Any] = {
             "proxy": scored.to_dict(),

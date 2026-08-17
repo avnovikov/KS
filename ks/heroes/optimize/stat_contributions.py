@@ -55,6 +55,7 @@ __all__ = [
     "family_for_event",
     "formation_contribution",
     "hero_contribution",
+    "weighted_expedition_totals",
 ]
 
 # Event key → stat family. Lives here so no scorer re-invents the mapping.
@@ -365,10 +366,93 @@ def hero_contribution(
     )
 
 
+def _label_troop(label: str) -> str | None:
+    low = label.lower()
+    if low.startswith("infantry"):
+        return "infantry"
+    if low.startswith("cavalry"):
+        return "cavalry"
+    if low.startswith("archer"):
+        return "archers"
+    return None
+
+
+def _label_expedition_stat(label: str) -> str | None:
+    for stat in EXPEDITION_STATS:
+        if label.endswith(f" {stat}"):
+            return stat
+    if label in EXPEDITION_STATS:
+        return stat
+    return None
+
+
+def weighted_expedition_totals(
+    stats: Mapping[str, Share],
+    troop_shares: Mapping[str, float] | None = None,
+) -> dict[str, Share]:
+    """Collapse troop-prefixed % into share-weighted Attack/Defense/….
+
+    Same-troop labels are summed first. ``troop_shares`` (march ratio or
+    headcount) weights each troop; missing shares → equal weight over troop
+    types present in ``stats``. Power is not handled here — callers sum it.
+    """
+    by_troop: dict[str, dict[str, Share]] = {}
+    for label, share in stats.items():
+        troop = _label_troop(label)
+        stat = _label_expedition_stat(label)
+        if troop is None or stat is None:
+            continue
+        prev = by_troop.setdefault(troop, {}).get(stat)
+        if prev is None:
+            by_troop[troop][stat] = share
+            continue
+        by_troop[troop][stat] = Share(
+            hero=prev.hero + share.hero,
+            skills=prev.skills + share.skills,
+            gear=prev.gear + share.gear,
+        )
+    if not by_troop:
+        return {}
+
+    if troop_shares:
+        raw = {t: max(0.0, float(troop_shares.get(t, 0.0))) for t in by_troop}
+    else:
+        raw = {t: 1.0 for t in by_troop}
+    mass = sum(raw.values())
+    if mass <= 0:
+        raw = {t: 1.0 for t in by_troop}
+        mass = float(len(raw))
+    weights = {t: raw[t] / mass for t in raw}
+
+    out: dict[str, Share] = {}
+    for stat in EXPEDITION_STATS:
+        hero = skills = gear = 0.0
+        seen = False
+        for troop, weight in weights.items():
+            share = by_troop.get(troop, {}).get(stat)
+            if share is None:
+                continue
+            seen = True
+            hero += weight * share.hero
+            skills += weight * share.skills
+            gear += weight * share.gear
+        if seen:
+            out[stat] = Share(hero=hero, skills=skills, gear=gear)
+    return out
+
+
 def formation_contribution(
     contributions: Sequence[StatContribution],
+    *,
+    troop_shares: Mapping[str, float] | None = None,
 ) -> StatContribution:
-    """Sum contributions across a lineup; matching stat labels add together."""
+    """Combine lineup contributions.
+
+    Power (hero / skills / gear) always sums.
+    Conquest: matching flat labels sum.
+    Expedition: matching troop labels sum first, then Attack / Defense /
+    Health / Lethality collapse via ``weighted_expedition_totals``.
+    """
     items = list(contributions)
     if not items:
         raise ValueError("formation_contribution needs at least one contribution")
@@ -391,6 +475,8 @@ def formation_contribution(
                 skills=prev.skills + share.skills,
                 gear=prev.gear + share.gear,
             )
+    if items[0].family == EXPEDITION:
+        stats = weighted_expedition_totals(stats, troop_shares)
     return StatContribution(
         family=items[0].family,
         estimated=any(c.estimated for c in items),
@@ -405,6 +491,9 @@ def contribution_strength(contribution: StatContribution) -> float:
 
     Conquest: power in millions + (attack + defense) / 10k + health / 100k.
     Expedition: power in millions + summed percent points / 100.
+    Formation expedition totals are already share-weighted (see
+    ``weighted_expedition_totals``); per-hero contributions still use troop
+    labels.
 
     The scales are calibration constants, not game formulas — they exist so
     power and stats land in the same order of magnitude in the objective.

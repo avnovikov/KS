@@ -8,8 +8,9 @@
  * So this does what tests/js/inventory_harness.js does for the inventory
  * table: stands up a fake DOM and a recordable fetch, then runs the *real,
  * unmodified* sources — ks/heroes/ui/static/app.js (which publishes the
- * shared escapeHtml and bindDialogDismiss the board depends on) and
- * ks/heroes/ui/static/optimiser_events.js — injected at the markers below by
+ * shared escapeHtml and bindDialogDismiss the board depends on),
+ * ks/heroes/ui/static/formation_totals.js (weighted expedition collapse),
+ * and ks/heroes/ui/static/optimiser_events.js — injected at the markers below by
  * tests/test_heroes_optimiser_events_js.py.
  *
  * Protocol: a single line "@@RESULTS@@<json>" on stdout, holding
@@ -298,6 +299,7 @@ function makePage(spec) {
     showToast: function (message, ok) {
       toasts.push({ msg: String(message), ok: !!ok });
     },
+    weightedExpeditionTotals: globalThis.weightedExpeditionTotals,
   };
 
   /* --- driver ------------------------------------------------------------- */
@@ -487,6 +489,12 @@ async function settle() {
 
 /* --- the units under test, injected verbatim by the pytest runner ---------- */
 
+/** Runs ks/heroes/ui/static/formation_totals.js (weighted expedition collapse). */
+function loadFormationTotalsJs() {
+// @@FORMATION_TOTALS_JS@@
+}
+loadFormationTotalsJs();
+
 /** Runs ks/heroes/ui/static/app.js, which publishes showToast, escapeHtml
  *  and bindDialogDismiss. */
 function loadSharedAppJs() {
@@ -506,6 +514,7 @@ async function boot(page) {
   var stub = globalThis.window.showToast;
   loadSharedAppJs();
   globalThis.window.showToast = stub;
+  globalThis.window.weightedExpeditionTotals = globalThis.weightedExpeditionTotals;
   loadBoardScript();
   await settle();
   return page;
@@ -582,12 +591,8 @@ function eventHero(name, role, points) {
  *  the row's own family — stays on the same flat scale every other power
  *  figure on this board uses. */
 /** Cycled across names: each hero's expedition contribution only ever
- *  carries its OWN troop's labels (never another troop's), so a fixture
- *  with every hero on the same troop couldn't tell the difference between
- *  collapsing labels correctly and not collapsing them at all. Two heroes
- *  share the generic "Attack" stat under different troops so the formation
- *  total's cross-troop sum ("Infantry Attack" + "Cavalry Attack") is
- *  actually exercised, not just single-troop passthrough. */
+ *  carries its OWN troop's labels. Formation totals collapse to
+ *  share-weighted Attack/Defense/Health/Lethality (troop counts as shares). */
 var EVENT_MODE_LABELS = [
   { "Infantry Attack": share(6, 3, 1) },
   { "Cavalry Attack": share(4, 2, 1) },
@@ -613,6 +618,11 @@ function eventMode(names, points, opts) {
       totalStats[label] = acc;
     });
   });
+  var troops = { infantry: 33858, cavalry: 17051, archers: 29386 };
+  var collapse = globalThis.weightedExpeditionTotals;
+  if (!collapse) {
+    throw new Error("formation_totals.js must load before eventMode fixtures");
+  }
   return {
     recommended_mode: mode,
     heroes: names.map(function (n, i) {
@@ -627,7 +637,8 @@ function eventMode(names, points, opts) {
       hero.widget_type = widget;
       return hero;
     }),
-    troops: { infantry: 33858, cavalry: 17051, archers: 29386 },
+    troops: troops,
+    ratios: troops,
     effective_capacity: 80295,
     expected_personal_points: points,
     breakdown: { combat: 1902.4, occupation: 24000, first_control: 50, loot: 200 },
@@ -650,7 +661,7 @@ function eventMode(names, points, opts) {
     formation_totals: statContribs(
       "expedition",
       share(120 * names.length, 60 * names.length, 20 * names.length),
-      totalStats
+      collapse(totalStats, troops)
     ),
     contributions: contributions,
   };
@@ -2022,12 +2033,8 @@ async function suiteStatContributions() {
 
   // --- expedition contribution table collapses per-troop labels ------------
   // goodBundle's garrison mode places Hilde (Infantry Attack), Howard
-  // (Cavalry Attack) and Saul (Archer Lethality) — three different troops,
-  // two of them sharing the generic "Attack" stat. A table that still keyed
-  // its columns off the raw troop-prefixed labels would need six columns
-  // (Infantry/Cavalry/Archer × Attack/Lethality) with most cells dashed;
-  // the fix collapses that to a "unit" column plus one shared "Attack"
-  // column (formation total 6+4=10) and one "Lethality" column (total 5).
+  // (Cavalry Attack) and Saul (Archer Lethality). Formation totals are
+  // share-weighted: Attack = 10×inf% + 7×cav% ≈ 5.7%, Lethality = 7×arch%.
   d.selectEvent("sword");
   var swordBoard = boardEl.innerHTML;
   record("sword_board_html", swordBoard);
@@ -2049,14 +2056,13 @@ async function suiteStatContributions() {
     swordTable.slice(0, 500)
   );
   check(
-    "the expedition formation total sums the same stat across troops",
-    // Infantry Attack (total 10 = 6+3+1) + Cavalry Attack (total 7 = 4+2+1)
-    // must combine into one "Attack" total of 17.0%, not stay split across
-    // two per-troop columns each showing its own smaller number.
+    "the expedition formation total is share-weighted across troops",
+    // Infantry 33858 + Cavalry 17051 + Archer 29386 = 80295
+    // Attack = (10*33858 + 7*17051) / 80295 ≈ 5.7%
     swordTable.indexOf("contrib-total") !== -1 &&
       swordTable
         .slice(swordTable.indexOf("contrib-total"))
-        .indexOf("17.0%") !== -1,
+        .indexOf("5.7%") !== -1,
     swordTable.slice(
       swordTable.indexOf("contrib-total"),
       swordTable.indexOf("contrib-total") + 400

@@ -249,7 +249,10 @@ def recommend(
         for row in hero_rows
     )
     formation_totals = (
-        formation_contribution(list(contributions.values())).to_dict()
+        formation_contribution(
+            list(contributions.values()),
+            troop_shares=ratios,
+        ).to_dict()
         if contributions
         else None
     )
