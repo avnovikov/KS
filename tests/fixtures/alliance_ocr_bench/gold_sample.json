@@ -1,0 +1,11 @@
+[
+  {
+    "id": "ex1",
+    "shot": "synthetic.png",
+    "roi": [10, 20, 200, 80],
+    "name": "DarkLord",
+    "power": 12.5,
+    "tag": "ABC",
+    "rank_hint": "r4"
+  }
+]
