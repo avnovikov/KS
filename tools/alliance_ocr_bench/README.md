@@ -28,6 +28,10 @@ python -m tools.alliance_ocr_bench.mine_unstable \
   --out /Users/alexei/KS/artifacts/alliance-ocr-bench/candidates.csv
 ```
 
+A single day-pair may yield only a few rows. Cross-comparing all `names*.json`
+snapshots produced ~30 unique LEVENSHTEIN candidates at
+`artifacts/alliance-ocr-bench/candidates-all-pairs.csv` (good gold seed).
+
 ## 2) Hand-confirm gold
 
 Create `/Users/alexei/KS/artifacts/alliance-ocr-bench/gold.json` (≥30 rows) from
