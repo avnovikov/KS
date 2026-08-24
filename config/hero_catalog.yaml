@@ -177,9 +177,54 @@ heroes:
     rally_widget_priority: 3
     garrison_widget_priority: 2
     effects:
+    - kind: lethality_up
+      max_value: 25.0
+      applies_to: expedition
+      effect_op: 101
+      first_expedition: true
     - kind: rally_lethality
       max_value: 15.0
       applies_to: widget
+    - kind: aoe_damage_up
+      max_value: 280.0
+      applies_to: conquest
+    arena_role: back_dps
+    arena_value: 88
+    arena_tags:
+    - aoe
+    - cc
+    - dps
+    skills:
+    - slot: 0
+      name: Tidal Rush
+      family: conquest
+      effect_kind: damage_up
+      ladder: [200, 220, 240, 260, 280]
+    - slot: 1
+      name: Fermented Blow
+      family: conquest
+      effect_kind: aoe_damage_up
+      ladder: [50, 55, 60, 65, 70]
+    - slot: 2
+      name: Lucky Hit
+      family: conquest
+      effect_kind: cc
+    - slot: 3
+      name: Wild Card
+      family: expedition
+      effect_kind: damage_up
+    - slot: 4
+      name: Rumhead
+      family: expedition
+      effect_kind: lethality_up
+    - slot: 5
+      name: Servant of Wine
+      family: conquest
+      effect_kind: heal_up
+    - slot: 6
+      name: Admiral of the Line
+      family: expedition
+      effect_kind: lethality_up
     troop: archers
     gen: 2
     rarity: legendary
@@ -237,6 +282,50 @@ heroes:
     - kind: defender_attack
       max_value: 15.0
       applies_to: widget
+    - kind: damage_up
+      max_value: 84.0
+      applies_to: conquest
+    arena_role: front_tank
+    arena_value: 90
+    arena_tags:
+    - tank
+    - cc
+    skills:
+    - slot: 0
+      name: Shield Strike
+      family: conquest
+      effect_kind: damage_up
+      ladder: [60, 66, 72, 78, 84]
+    - slot: 1
+      name: Agony Rush
+      family: conquest
+      effect_kind: heal_up
+      ladder: [20, 25, 30, 35, 40]
+    - slot: 2
+      name: Holy Might
+      family: conquest
+      effect_kind: attack_speed_up
+      ladder: [3, 4, 5, 6, 7]
+    - slot: 3
+      name: Sundering Wound
+      family: expedition
+      effect_kind: damage_up
+    - slot: 4
+      name: Charisma
+      family: expedition
+      effect_kind: attack_up
+    - slot: 5
+      name: Infinite Arsenal
+      family: expedition
+      effect_kind: damage_up
+    - slot: 6
+      name: Death Or Glory
+      family: conquest
+      effect_kind: attack_up
+    - slot: 7
+      name: Dark Lady
+      family: expedition
+      effect_kind: defender_attack
     troop: infantry
     gen: 2
     rarity: legendary
@@ -359,19 +448,59 @@ heroes:
   Hilde:
     widget_type: defense
     widget_name: Revelation
-    widget_march_skill: Defender Squads' Health
+    widget_march_skill: Defender Squads' Health +15%
     rally_widget_priority: 1
     garrison_widget_priority: 4
     effects:
     - kind: defense_up
-      max_value: 20.0
+      max_value: 15.0
       applies_to: expedition
       effect_op: 112
       first_expedition: true
     - kind: attack_up
-      max_value: 20.0
+      max_value: 15.0
       applies_to: expedition
       effect_op: 102
+    - kind: defender_health
+      max_value: 15.0
+      applies_to: widget
+    arena_role: front_tank
+    arena_value: 75
+    arena_tags:
+    - tank
+    - heal
+    skills:
+    - slot: 0
+      name: Rejuvenating Plea
+      family: conquest
+      effect_kind: heal_up
+      ladder: [200, 220, 240, 260, 280]
+    - slot: 1
+      name: Redeemer
+      family: conquest
+      effect_kind: heal_up
+      ladder: [100, 110, 120, 130, 140]
+    - slot: 2
+      name: Intimidation
+      family: conquest
+      effect_kind: damage_up
+      ladder: [140, 154, 168, 182, 196]
+    - slot: 3
+      name: Noble Path
+      family: expedition
+      effect_kind: attack_up
+    - slot: 4
+      name: Elixir oftrength
+      family: expedition
+      effect_kind: damage_up
+    - slot: 5
+      name: Trial by Fire
+      family: expedition
+      effect_kind: damage_taken_down
+    - slot: 6
+      name: Fortitude
+      family: expedition
+      effect_kind: defender_health
     troop: cavalry
     gen: 2
     rarity: legendary
