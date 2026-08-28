@@ -10,7 +10,8 @@ on 2026-08-01 for local private use in this KS tooling UI.
 
 Portraits under `heroes/` vendored from
 [Kingshot Database](https://kingshotdata.com/) (`/uploads/…/*avatar*.webp` etc.)
-on 2026-08-02 for local private use. Letter SVGs are generated when no portrait
+on 2026-08-02 for local private use; Gen 2 portraits (Zoe, Marlin, Hilde) added
+2026-08-24 from the same source. Letter SVGs are generated when no portrait
 is present.
 
 ## Troops
