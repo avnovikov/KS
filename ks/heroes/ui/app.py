@@ -7,6 +7,7 @@ import shutil
 import threading
 import time
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -17,7 +18,10 @@ from ks.heroes.config import DEFAULT_HEROES_CONFIG
 from ks.heroes.gear_config import DEFAULT_GEAR_CONFIG
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.gear_store import GearStore
-from ks.heroes.models import HeroRecord
+from ks.heroes.models import ExclusiveGearRecord, HeroRecord
+from ks.heroes.name_ocr import DEFAULT_CATALOG_YAML
+from ks.heroes.optimize.catalog import load_catalog
+from ks.heroes.optimize.types import CatalogEntry
 from ks.heroes.optimize.troops import troops_config_from_dict
 from ks.heroes.store import HeroStore
 from ks.heroes.ui.hero_icons import ensure_all_hero_icons
@@ -42,6 +46,7 @@ TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 _STARS_RANGE = range(0, 6)
 _PELLETS_RANGE = range(0, 6)
 _HERO_LEVEL_RANGE = range(1, 81)
+_WIDGET_LEVEL_RANGE = range(0, 11)
 _POWER_MIN = 0
 _POWER_MAX = 99_999_999
 
@@ -323,6 +328,52 @@ def sync_all_powers(store: GearStore) -> int:
     return changed
 
 
+def _widget_meta_by_hero() -> dict[str, dict[str, Any]]:
+    catalog = load_catalog(None, DEFAULT_CATALOG_YAML)
+    meta: dict[str, dict[str, Any]] = {}
+    for name, entry in catalog.items():
+        wtype = (entry.widget_type or "").lower()
+        if not wtype or wtype == "none":
+            continue
+        widget_tags = [t for t in entry.effects if t.applies_to == "widget"]
+        meta[name] = {
+            "widget_name": entry.widget_name,
+            "widget_type": entry.widget_type,
+            "widget_march_skill": entry.widget_march_skill,
+            "max_widget_value": (
+                max((t.max_value for t in widget_tags), default=None)
+                if widget_tags
+                else None
+            ),
+        }
+    return meta
+
+
+def _exclusive_gear_from_level(
+    hero: HeroRecord,
+    level: int | None,
+    catalog_entry: CatalogEntry | None,
+) -> ExclusiveGearRecord | None:
+    if level is None or level <= 0:
+        return None
+    prev = hero.exclusive_gear
+    widget_name = catalog_entry.widget_name if catalog_entry else None
+    widget_type = catalog_entry.widget_type if catalog_entry else None
+    if widget_name is None and prev is not None:
+        widget_name = prev.widget_name
+    if widget_type is None and prev is not None:
+        widget_type = prev.widget_type
+    max_level = prev.max_level if prev is not None else 10
+    return ExclusiveGearRecord(
+        level=level,
+        max_level=max_level,
+        widget_name=widget_name,
+        widget_type=widget_type,
+        source="manual",
+        updated_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+    )
+
+
 def update_hero_stars(
     store: HeroStore,
     name: str,
@@ -331,12 +382,16 @@ def update_hero_stars(
     pellets: int | None | object = ...,
     power: int | None | object = ...,
     level: int | None | object = ...,
+    widget_level: int | None | object = ...,
+    catalog_entry: CatalogEntry | None = None,
 ) -> HeroRecord:
-    """Update stars/pellets/power/level.
+    """Update stars/pellets/power/level/widget_level.
 
     When stars/pellets change and ``power`` is omitted, rescale power via
     ``star_progress_factor``. Explicit ``power`` always wins (OCR fixes).
     Level is stored only — no invented level→power formula.
+    ``widget_level`` 0 or null clears exclusive gear; 1–10 scales optimiser
+    widget effects linearly to catalog max at level 10.
     """
     heroes = {h.name: h for h in store.all_heroes()}
     hero = heroes.get(name)
@@ -347,6 +402,7 @@ def update_hero_stars(
     new_pellets = hero.pellets
     new_power = hero.power
     new_level = hero.level
+    new_exclusive_gear = hero.exclusive_gear
     power_explicit = False
 
     if stars is not ...:
@@ -373,6 +429,16 @@ def update_hero_stars(
             new_level = value
         else:
             new_level = None
+    if widget_level is not ...:
+        if widget_level is not None:
+            value = int(widget_level)
+            if value not in _WIDGET_LEVEL_RANGE:
+                raise ValueError(f"widget_level must be 0..10; got {value}")
+            new_exclusive_gear = _exclusive_gear_from_level(
+                hero, value if value > 0 else None, catalog_entry
+            )
+        else:
+            new_exclusive_gear = None
     if power is not ...:
         power_explicit = True
         if power is not None:
@@ -400,6 +466,7 @@ def update_hero_stars(
         and new_pellets == hero.pellets
         and new_power == hero.power
         and new_level == hero.level
+        and new_exclusive_gear == hero.exclusive_gear
     ):
         return hero
 
@@ -421,6 +488,7 @@ def update_hero_stars(
         pellets=new_pellets,
         power=new_power,
         level=new_level,
+        exclusive_gear=new_exclusive_gear,
         assurance=new_assurance,
     )
     overwrite = frozenset(
@@ -430,6 +498,7 @@ def update_hero_stars(
             ("pellets", hero.pellets, new_pellets),
             ("power", hero.power, new_power),
             ("level", hero.level, new_level),
+            ("exclusive_gear", hero.exclusive_gear, new_exclusive_gear),
         )
         if before != after
     )
@@ -647,6 +716,7 @@ def create_app(
             icons=icon_map,
             heroes_dir=str(heroes_path),
             cache_bust=bust,
+            widget_meta=_widget_meta_by_hero(),
             incomplete_names={
                 h.name for h in heroes if hero_row_incomplete(h)
             },
@@ -936,6 +1006,7 @@ def create_app(
         pellets_arg: Any = ...
         power_arg: Any = ...
         level_arg: Any = ...
+        widget_level_arg: Any = ...
         if "stars" in raw:
             stars_arg = raw.get("stars")
         if "pellets" in raw:
@@ -944,6 +1015,13 @@ def create_app(
             power_arg = raw.get("power")
         if "level" in raw:
             level_arg = raw.get("level")
+        if "widget_level" in raw:
+            widget_level_arg = raw.get("widget_level")
+
+        catalog_entry = None
+        if widget_level_arg is not ...:
+            catalog = load_catalog(None, DEFAULT_CATALOG_YAML)
+            catalog_entry = catalog.get(name)
 
         try:
             updated = update_hero_stars(
@@ -953,6 +1031,8 @@ def create_app(
                 pellets=pellets_arg,
                 power=power_arg,
                 level=level_arg,
+                widget_level=widget_level_arg,
+                catalog_entry=catalog_entry,
             )
         except KeyError as exc:
             raise HTTPException(

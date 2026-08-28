@@ -17,7 +17,7 @@
 <h1 class="page-title">Heroes</h1>
 <p class="page-meta">{{ heroes_dir }} · {{ heroes|length }} heroes</p>
 <p class="hint">
-  Edit level, stars, pellets and power mid-event — changes save themselves.
+  Edit level, stars, pellets, power and widget level mid-event — changes save themselves.
   Level is <strong>pinned</strong> (<span class="pin-legend">•</span>) once it
   holds a value: an OCR rescan keeps what is there and discards what it read.
   Blank the box to let the next rescan fill it in again. Tap a hero name for
@@ -39,6 +39,7 @@
         <th class="sortable" tabindex="0" data-sort="stars" scope="col" title="Sort by stars">Stars</th>
         <th class="sortable" tabindex="0" data-sort="pellets" scope="col" title="Sort by pellets">Pellets</th>
         <th class="sortable" tabindex="0" data-sort="power" scope="col" title="Sort by power">Power</th>
+        <th class="sortable" tabindex="0" data-sort="widget_level" scope="col" title="Sort by exclusive gear level">Widget Lv</th>
       </tr>
     </thead>
     <tbody>
@@ -51,6 +52,7 @@
           data-stars="{{ h.stars if h.stars is not none else '' }}"
           data-pellets="{{ h.pellets if h.pellets is not none else '' }}"
           data-power="{{ h.power if h.power is not none else '' }}"
+          data-widget-level="{{ h.exclusive_gear.level if h.exclusive_gear and h.exclusive_gear.level is not none else '' }}"
           {% if h.name in incomplete_names %}data-incomplete="1"{% endif %}>
         <td>
           <div class="name-cell">
@@ -120,6 +122,21 @@
                  data-label="{{ h.name }} power"
                  aria-label="Power for {{ h.name }}"
                  value="{{ h.power if h.power is not none else '' }}" />
+        </td>
+        {% set wm = widget_meta.get(h.name) %}
+        <td{% if wm %} title="{{ wm.widget_name or '' }}{% if wm.widget_march_skill %} · {{ wm.widget_march_skill }}{% endif %}"{% endif %}>
+          {% if wm %}
+          <input type="number" class="cell-input" inputmode="numeric"
+                 min="0" max="10" step="1"
+                 data-field="widget_level"
+                 data-sort-key="widget_level"
+                 data-blank="null"
+                 data-label="{{ h.name }} widget level"
+                 aria-label="Exclusive gear level for {{ h.name }}"
+                 value="{{ h.exclusive_gear.level if h.exclusive_gear and h.exclusive_gear.level is not none else '' }}" />
+          {% else %}
+          <span class="muted">—</span>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}

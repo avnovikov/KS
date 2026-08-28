@@ -35,6 +35,43 @@ class HeroStats:
 
 
 @dataclass(frozen=True)
+class ExclusiveGearRecord:
+    """Player-owned exclusive gear / widget progression."""
+
+    level: int | None = None
+    max_level: int = 10
+    widget_name: str | None = None
+    widget_type: str | None = None
+    source: str | None = None
+    updated_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "level": self.level,
+            "max_level": self.max_level,
+            "widget_name": self.widget_name,
+            "widget_type": self.widget_type,
+            "source": self.source,
+            "updated_at": self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None) -> ExclusiveGearRecord | None:
+        if not data:
+            return None
+        level = data.get("level")
+        max_level = data.get("max_level")
+        return cls(
+            level=int(level) if level is not None else None,
+            max_level=int(max_level) if max_level is not None else 10,
+            widget_name=data.get("widget_name"),
+            widget_type=data.get("widget_type"),
+            source=data.get("source"),
+            updated_at=data.get("updated_at"),
+        )
+
+
+@dataclass(frozen=True)
 class SkillRecord:
     slot: int
     name: str | None = None
@@ -86,6 +123,7 @@ class HeroRecord:
     scraped_at: str = ""
     name_screenshot: str | None = None
     assurance: dict[str, FieldAssurance] = field(default_factory=dict)
+    exclusive_gear: ExclusiveGearRecord | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -104,6 +142,9 @@ class HeroRecord:
             "scraped_at": self.scraped_at,
             "name_screenshot": self.name_screenshot,
             "assurance": assurance_to_dict(self.assurance),
+            "exclusive_gear": (
+                self.exclusive_gear.to_dict() if self.exclusive_gear else None
+            ),
         }
 
     @classmethod
@@ -125,4 +166,5 @@ class HeroRecord:
             scraped_at=str(data.get("scraped_at") or ""),
             name_screenshot=data.get("name_screenshot"),
             assurance=assurance_from_dict(data.get("assurance") or {}),
+            exclusive_gear=ExclusiveGearRecord.from_dict(data.get("exclusive_gear")),
         )

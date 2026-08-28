@@ -41,6 +41,9 @@ def _merge_preserved(
             prev_val = getattr(prev, field)
             if prev_val is not None:
                 updates[field] = prev_val
+    if "exclusive_gear" not in overwrite:
+        if incoming.exclusive_gear is None and prev.exclusive_gear is not None:
+            updates["exclusive_gear"] = prev.exclusive_gear
     return replace(incoming, **updates) if updates else incoming
 
 
