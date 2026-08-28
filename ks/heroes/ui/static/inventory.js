@@ -400,6 +400,13 @@
     }
     state.tr.dataset.power = powerStr;
 
+    if (KIND === "heroes") {
+      var eg = payload.exclusive_gear;
+      var widgetLevel =
+        eg && eg.level !== null && eg.level !== undefined ? String(eg.level) : "";
+      state.tr.dataset.widget_level = widgetLevel;
+    }
+
     if (payload.assurance) {
       ["power", "stars", "level", "pellets"].forEach(function (field) {
         var assur = payload.assurance[field];
@@ -609,6 +616,7 @@
     level: 1,
     stars: 1,
     pellets: 1,
+    widget_level: 1,
   };
 
   function sortValue(tr, key) {

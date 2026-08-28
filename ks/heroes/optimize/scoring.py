@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from ks.heroes.exclusive_gear import (
+    exclusive_gear_level_factor,
+    widget_level_from_hero,
+    widget_max_level_from_hero,
+)
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.events import default_kind_weights
 from ks.heroes.optimize.types import CatalogEntry, EffectTag, EventProfile
@@ -74,10 +79,12 @@ def effect_percent_points(magnitude: float, tag: EffectTag) -> float:
     return mag * float(tag.proc_chance)
 
 
-def _effect_value(
-    tag: EffectTag, stars: int | None, pellets: int | None = None
-) -> float:
-    return tag.max_value * star_progress_factor(stars, pellets)
+def _effect_value(tag: EffectTag, hero: HeroRecord) -> float:
+    if tag.applies_to == "widget":
+        level = widget_level_from_hero(hero)
+        max_level = widget_max_level_from_hero(hero)
+        return tag.max_value * exclusive_gear_level_factor(level, max_level=max_level)
+    return tag.max_value * star_progress_factor(hero.stars, hero.pellets)
 
 
 def normalize_troop(troop: str | None) -> str | None:
@@ -139,20 +146,27 @@ def _effect_tag_value(
         weight = 0.15 * weights.get(tag.kind, 0.5)
     else:
         weight = weights.get(tag.kind, 0.5)
-    raw = _effect_value(tag, hero.stars, hero.pellets)
+    raw = _effect_value(tag, hero)
     value = weight * effect_percent_points(raw, tag)
     if tag.effect_op is not None and tag.first_expedition:
         value *= op_weights.get(tag.effect_op, 1.0)
     return value
 
 
-def _widget_priority_bonus(entry: CatalogEntry, mode: str) -> float:
+def _widget_priority_bonus(
+    entry: CatalogEntry, mode: str, hero: HeroRecord
+) -> float:
     """Flat bonus for defense/attack widgets prioritized by garrison/rally modes."""
+    base = 0.0
     if entry.widget_type == "defense" and mode == "garrison" and entry.garrison_widget_priority:
-        return 5.0 * entry.garrison_widget_priority
-    if entry.widget_type == "attack" and mode == "rally_lead" and entry.rally_widget_priority:
-        return 5.0 * entry.rally_widget_priority
-    return 0.0
+        base = 5.0 * entry.garrison_widget_priority
+    elif entry.widget_type == "attack" and mode == "rally_lead" and entry.rally_widget_priority:
+        base = 5.0 * entry.rally_widget_priority
+    if base == 0.0:
+        return 0.0
+    level = widget_level_from_hero(hero)
+    max_level = widget_max_level_from_hero(hero)
+    return base * exclusive_gear_level_factor(level, max_level=max_level)
 
 
 def hero_strength(
@@ -182,7 +196,7 @@ def hero_strength(
         _effect_tag_value(tag, hero, mode, weights, op_weights)
         for tag in entry.effects
     )
-    total += _widget_priority_bonus(entry, mode)
+    total += _widget_priority_bonus(entry, mode, hero)
 
     if contribution is not None:
         if contribution.family != EXPEDITION:

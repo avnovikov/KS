@@ -183,6 +183,14 @@
       ],
       ["Scraped", hero.scraped_at],
     ];
+    var eg = hero.exclusive_gear;
+    if (eg && (eg.level || eg.widget_name)) {
+      var egBits = [];
+      if (eg.widget_name) egBits.push(eg.widget_name);
+      if (eg.widget_type) egBits.push(eg.widget_type);
+      if (eg.level != null) egBits.push("Lv " + eg.level + "/" + (eg.max_level == null ? 10 : eg.max_level));
+      facts.splice(2, 0, ["Exclusive gear", egBits.join(" · ")]);
+    }
     var factHtml = facts
       .map(function (pair) {
         return (

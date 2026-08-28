@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
 
+from ks.heroes.exclusive_gear import widget_effects_for_hero
 from ks.heroes.gear_models import GearRecord
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.scoring import hero_strength, normalize_troop
@@ -147,6 +148,7 @@ def fits_because_event(
     scenario: Scenario,
     *,
     strength: float | None = None,
+    hero: HeroRecord | None = None,
 ) -> list[str]:
     entry = catalog.get(name)
     bits: list[str] = []
@@ -160,6 +162,15 @@ def fits_because_event(
         bits.append(f"Widget={widget} (requirement is {req})")
     else:
         bits.append(f"Widget={widget}")
+    if hero is not None and entry.widget_type:
+        eg = hero.exclusive_gear
+        lvl = eg.level if eg else None
+        if lvl:
+            bits.append(f"Exclusive gear L{lvl}/{eg.max_level if eg else 10}")
+            for kind, effective in widget_effects_for_hero(hero, entry.effects):
+                bits.append(f"Widget {kind} effective={effective:.1f}% at L{lvl}")
+        elif any(e.applies_to == "widget" for e in entry.effects):
+            bits.append("Exclusive gear level unset (widget effect=0 in optimiser)")
     troop = normalize_troop(entry.troop)
     if troop:
         bits.append(f"Covers {troop} slot (one-per-troop formation)")
@@ -319,7 +330,12 @@ def explain_selected_heroes(
         role = _role_label(entry, scenario.mode, scenario)
         fits = tuple(
             fits_because_event(
-                name, catalog, scenario.mode, scenario, strength=strength
+                name,
+                catalog,
+                scenario.mode,
+                scenario,
+                strength=strength,
+                hero=hero,
             )
         )
         explain = HeroExplain(
@@ -332,6 +348,8 @@ def explain_selected_heroes(
             summary_bits.append(f"troop={entry.troop}")
         if entry and entry.widget_type:
             summary_bits.append(f"widget={entry.widget_type}")
+            if hero and hero.exclusive_gear and hero.exclusive_gear.level:
+                summary_bits.append(f"widget_lv={hero.exclusive_gear.level}")
         rows.append(
             {
                 "name": name,

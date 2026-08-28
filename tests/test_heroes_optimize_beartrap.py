@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from ks.heroes.models import HeroRecord
+from ks.heroes.models import ExclusiveGearRecord, HeroRecord
 from ks.heroes.optimize.events import load_event_profile
 from ks.heroes.optimize.recommend import recommend
 from ks.heroes.optimize.scenarios import load_scenarios
@@ -70,7 +70,11 @@ def test_beartrap_starter_prefers_attack_widget() -> None:
             EffectTag("attack_up", 25.0, "expedition", effect_op=102, first_expedition=True),
         ),
     )
-    hero = HeroRecord(name="x", stars=5)
+    hero = HeroRecord(
+        name="x",
+        stars=5,
+        exclusive_gear=ExclusiveGearRecord(level=10),
+    )
     assert hero_strength(hero, amadeus, "rally_lead", event=event) > hero_strength(
         hero, zoe, "rally_lead", event=event
     )

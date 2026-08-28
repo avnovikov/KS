@@ -1,0 +1,12 @@
+{
+  "alliances": [
+    {
+      "tag": "ABC",
+      "power_rank": 1,
+      "r4": [{"name": "DarkLord99", "power": 12.5}],
+      "r3": [],
+      "r2": [],
+      "r5": []
+    }
+  ]
+}
