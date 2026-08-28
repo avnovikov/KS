@@ -328,6 +328,29 @@ def sync_all_powers(store: GearStore) -> int:
     return changed
 
 
+def _catalog_has_widget(entry: CatalogEntry | None) -> bool:
+    if entry is None:
+        return False
+    wtype = (entry.widget_type or "").lower()
+    return bool(wtype and wtype != "none")
+
+
+def _parse_widget_level(raw: object) -> int:
+    if isinstance(raw, bool):
+        raise ValueError("widget_level must be a whole number 0..10")
+    if isinstance(raw, int):
+        value = raw
+    elif isinstance(raw, float):
+        if not raw.is_integer():
+            raise ValueError("widget_level must be a whole number 0..10")
+        value = int(raw)
+    else:
+        raise ValueError("widget_level must be a whole number 0..10")
+    if value not in _WIDGET_LEVEL_RANGE:
+        raise ValueError(f"widget_level must be 0..10; got {value}")
+    return value
+
+
 def _widget_meta_by_hero() -> dict[str, dict[str, Any]]:
     catalog = load_catalog(None, DEFAULT_CATALOG_YAML)
     meta: dict[str, dict[str, Any]] = {}
@@ -431,9 +454,11 @@ def update_hero_stars(
             new_level = None
     if widget_level is not ...:
         if widget_level is not None:
-            value = int(widget_level)
-            if value not in _WIDGET_LEVEL_RANGE:
-                raise ValueError(f"widget_level must be 0..10; got {value}")
+            value = _parse_widget_level(widget_level)
+            if value > 0 and not _catalog_has_widget(catalog_entry):
+                raise ValueError(
+                    f"{hero.name} has no exclusive gear widget in catalog"
+                )
             new_exclusive_gear = _exclusive_gear_from_level(
                 hero, value if value > 0 else None, catalog_entry
             )

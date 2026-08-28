@@ -6,7 +6,7 @@
 
 ## Problem
 
-Legendary heroes carry **exclusive gear** (the widget slot) that upgrades from level 1 to 10. The march skill on that gear scales linearly — e.g. Jabel’s *Greaves of Faith* grants **Defender Troops’ Lethality +15%** at level 10. The optimiser already models widget effects from `hero_catalog.yaml` at full `max_value`, but inventory had no field for the player’s actual widget level, so garrison/rally scores ignored upgrade progress.
+Legendary and other catalog heroes with an **exclusive gear widget** upgrade that slot from level 1 to 10. The march skill scales linearly — e.g. Jabel’s *Greaves of Faith* grants **Defender Troops’ Lethality +15%** at level 10. The optimiser models widget effects from `hero_catalog.yaml`; without a stored widget level those effects score as **zero** until you enter levels in inventory.
 
 ## Schema
 
@@ -25,14 +25,16 @@ Each hero in `heroes.json` may include:
 
 | Field | Type | Notes |
 |-------|------|-------|
-| `level` | int 0–10 | `0` or absent effect = no widget bonus in optimiser |
+| `level` | int 1–10 | Absent or cleared = no widget bonus in optimiser |
 | `max_level` | int | Default 10 |
 | `widget_name` | str | Filled from catalog on save when known |
 | `widget_type` | str | `attack` / `defense` from catalog |
 | `source` | str | `manual` for UI edits |
 | `updated_at` | ISO8601 | Set on manual update |
 
-OCR rescans **preserve** `exclusive_gear` when the incoming hero record omits it (same pattern as `level`).
+OCR rescans **preserve** `exclusive_gear` when the incoming hero record omits it (preserve-if-absent — not pinned like hero `level`).
+
+**Breaking change:** heroes without a stored widget level score **zero** widget effect and priority bonus. Enter levels in inventory after upgrading exclusive gear.
 
 ## Optimiser scaling
 
@@ -64,12 +66,12 @@ Expedition skills continue to use the existing star/pellet progress factor; widg
 ## UI
 
 - **Inventory · Heroes:** editable **Widget Lv** column (0–10) for heroes with a catalog widget; auto-save via `PATCH /api/heroes/{name}` with `widget_level`.
-- **Hero detail modal:** shows exclusive gear name, type, level, and effective widget % from catalog.
+- **Hero detail modal:** shows exclusive gear name, type, and level (effective % appears in optimiser why-cards).
 - **Optimiser why-cards:** mention widget level and effective % when set.
 
 ## API
 
-`PATCH /api/heroes/{name}` accepts `widget_level` (integer 0–10 or JSON `null` to clear).
+`PATCH /api/heroes/{name}` accepts `widget_level` (integer 0–10 or JSON `null` to clear). Rejects positive levels for heroes without a catalog widget. Non-integer values (e.g. `4.7`) return 400.
 
 ## References
 

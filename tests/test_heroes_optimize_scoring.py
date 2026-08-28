@@ -1,12 +1,20 @@
 import pytest
 
-from ks.heroes.models import HeroRecord
+from ks.heroes.models import ExclusiveGearRecord, HeroRecord
 from ks.heroes.optimize.scoring import hero_strength, max_power_by_troop
 from ks.heroes.optimize.types import CatalogEntry, EffectTag
 
 
 def _entry(name: str, widget: str, *effects: EffectTag) -> CatalogEntry:
     return CatalogEntry(name=name, widget_type=widget, effects=effects)
+
+
+def _hero(stars: int = 5) -> HeroRecord:
+    return HeroRecord(
+        name="x",
+        stars=stars,
+        exclusive_gear=ExclusiveGearRecord(level=10),
+    )
 
 
 def test_garrison_prefers_defense_widget() -> None:
@@ -22,7 +30,7 @@ def test_garrison_prefers_defense_widget() -> None:
         EffectTag("rally_attack", 15.0, "widget"),
         EffectTag("attack_up", 25.0, "expedition"),
     )
-    hero = HeroRecord(name="x", stars=5)
+    hero = _hero()
     assert hero_strength(hero, zoe, "garrison") > hero_strength(hero, amadeus, "garrison")
 
 
@@ -39,7 +47,7 @@ def test_rally_prefers_attack_widget() -> None:
         EffectTag("rally_attack", 15.0, "widget"),
         EffectTag("attack_up", 25.0, "expedition"),
     )
-    hero = HeroRecord(name="x", stars=5)
+    hero = _hero()
     assert hero_strength(hero, amadeus, "rally_lead") > hero_strength(hero, zoe, "rally_lead")
 
 

@@ -3180,6 +3180,7 @@ def test_heroes_inventory_shows_widget_level_column_for_catalog_widgets(
     assert 'data-field="widget_level"' in rows["Jabel"]
     assert 'data-field="widget_level"' not in rows["Gordon"]
     assert "—" in rows["Gordon"]
+    assert 'data-widget_level=' in rows["Jabel"]
 
 
 def test_patch_hero_widget_level_persists_exclusive_gear(tmp_path: Path) -> None:
@@ -3202,10 +3203,47 @@ def test_patch_hero_widget_level_persists_exclusive_gear(tmp_path: Path) -> None
     assert cleared.status_code == 200
     assert cleared.json()["hero"]["exclusive_gear"] is None
 
+    zero = client.patch("/api/heroes/Jabel", json={"widget_level": 4})
+    assert zero.status_code == 200
+    zero_clear = client.patch("/api/heroes/Jabel", json={"widget_level": 0})
+    assert zero_clear.status_code == 200
+    assert zero_clear.json()["hero"]["exclusive_gear"] is None
+
     store = HeroStore(heroes_dir)
     store.reload()
     stored = next(h for h in store.all_heroes() if h.name == "Jabel")
     assert stored.exclusive_gear is None
+
+
+def test_patch_hero_widget_level_rejects_invalid_values(tmp_path: Path) -> None:
+    heroes_dir = tmp_path / "heroes"
+    heroes_dir.mkdir()
+    HeroStore(heroes_dir).upsert(
+        HeroRecord(name="Jabel", power=500_000, stars=5, scraped_at="t")
+    )
+    client = TestClient(create_app(heroes_dir=heroes_dir))
+    bad_range = client.patch("/api/heroes/Jabel", json={"widget_level": 11})
+    assert bad_range.status_code == 400
+    assert "0..10" in bad_range.json()["detail"]
+
+    bad_float = client.patch("/api/heroes/Jabel", json={"widget_level": 4.7})
+    assert bad_float.status_code == 400
+    assert "whole number" in bad_float.json()["detail"]
+
+
+def test_patch_hero_widget_level_rejects_non_widget_hero(tmp_path: Path) -> None:
+    heroes_dir = tmp_path / "heroes"
+    heroes_dir.mkdir()
+    HeroStore(heroes_dir).upsert(
+        HeroRecord(name="Gordon", power=500_000, stars=3, scraped_at="t")
+    )
+    client = TestClient(create_app(heroes_dir=heroes_dir))
+    res = client.patch("/api/heroes/Gordon", json={"widget_level": 4})
+    assert res.status_code == 400
+    assert "no exclusive gear widget" in res.json()["detail"]
+
+    clear = client.patch("/api/heroes/Gordon", json={"widget_level": None})
+    assert clear.status_code == 200
 
 
 def test_ocr_rescan_preserves_exclusive_gear(tmp_path: Path) -> None:
