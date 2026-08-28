@@ -158,12 +158,17 @@
 
   function troopsLine(row) {
     var t = row.troops || {};
-    function n(v) {
-      return v == null ? "—" : fmtPoints(v);
+    var cap = Number(row.effective_capacity);
+    function pct(v) {
+      if (!(cap > 0) || v == null) return "—";
+      return Math.round((100 * Number(v)) / cap) + "%";
+    }
+    function nCap(v) {
+      return v == null || !(Number(v) >= 0) ? "—" : fmtPoints(v);
     }
     return (
-      "I " + n(t.infantry) + " · C " + n(t.cavalry) + " · A " + n(t.archers) +
-      " · cap " + n(row.effective_capacity)
+      "I " + pct(t.infantry) + " · C " + pct(t.cavalry) + " · A " + pct(t.archers) +
+      " · cap " + nCap(row.effective_capacity)
     );
   }
 
@@ -231,7 +236,9 @@
   }
 
   function rowIsOk(row) {
-    return !row.status || row.status === "Optimal";
+    // Mode rows usually omit status; section errors use "Error". Accept
+    // "ok" too so a mistaken section-level status on a mode still draws.
+    return !row.status || row.status === "Optimal" || row.status === "ok";
   }
 
   function hasFormation(row) {
@@ -249,6 +256,73 @@
       if (name) map[name] = hero;
     });
     return map;
+  }
+
+  /** Hero names for a row in the same order the board places them: the
+   *  formation slots (F1, F2, B1..B3) when the row has one, otherwise the
+   *  sword/bear march with the rally lead in slot 1. The contribution table
+   *  and the board's own row-builder both need one hero list in one order. */
+  function orderedHeroNames(row, entry) {
+    if (hasFormation(row)) {
+      var f = row.formation;
+      return ALL_SLOTS.map(function (s) {
+        return f[s];
+      }).filter(Boolean);
+    }
+    return orderMarchHeroes(
+      (row.heroes || []).filter(function (hero) {
+        return heroName(hero);
+      }),
+      entry || { key: row && row.recommended_mode, row: row }
+    ).map(heroName);
+  }
+
+  function isLeadMarchEntry(entry) {
+    if (!entry) return false;
+    var key = entry.key;
+    var mode = entry.row && entry.row.recommended_mode;
+    return (
+      key === "rally_lead" ||
+      key === "joiner" ||
+      mode === "rally_lead" ||
+      mode === "joiner"
+    );
+  }
+
+  function isRallyLeadEntry(entry) {
+    if (!entry) return false;
+    if (entry.key === "rally_lead") return true;
+    var mode = entry.row && entry.row.recommended_mode;
+    return mode === "rally_lead";
+  }
+
+  function heroWidgetType(hero) {
+    if (!hero || typeof hero !== "object") return "";
+    if (hero.widget_type) return String(hero.widget_type);
+    var role = hero.explain && hero.explain.role;
+    if (role === "attack_widget") return "attack";
+    var reason = String(hero.reason || "");
+    var match = /widget=([a-z]+)/.exec(reason);
+    return match ? match[1] : "";
+  }
+
+  /** Slot 1 is the march captain. Swordland Rally Lead prefers the attack
+   *  widget; Bear Trap (host + joiner) keeps API order (Chenko first-expedition). */
+  function orderMarchHeroes(heroes, entry) {
+    var list = (heroes || []).slice();
+    var key = entry && entry.key;
+    var mode = entry && entry.row && entry.row.recommended_mode;
+    if (key === "joiner" || mode === "joiner") return list;
+    if (activeEvent === "bear") return list;
+    if (!isRallyLeadEntry(entry)) return list;
+    var leads = [];
+    var rest = [];
+    list.forEach(function (hero) {
+      if (heroWidgetType(hero) === "attack") leads.push(hero);
+      else rest.push(hero);
+    });
+    if (!leads.length) return list;
+    return leads.concat(rest);
   }
 
   function explainFor(row, name) {
@@ -459,6 +533,373 @@
     return el;
   }
 
+  /* --- stat contributions ---------------------------------------------------
+   *
+   * Every optimiser row carries the same three keys (see optimize_run.py):
+   * `stat_family`, `formation_totals` and `contributions`. Conquest shares are
+   * flat stat points and sum. Expedition formation totals are already
+   * share-weighted (Attack/Defense/…) — not a sum of Infantry+Cavalry+Archer %.
+   */
+
+  function fmtShare(n, family) {
+    if (n == null || !Number.isFinite(Number(n))) return "—";
+    if (family === "expedition") return Number(n).toFixed(1) + "%";
+    return Math.round(Number(n)).toLocaleString("en-US");
+  }
+
+  /** The row's formation-level split, or null when the row is not Optimal. */
+  function totalsOf(row) {
+    var totals = row && row.formation_totals;
+    return totals && totals.power ? totals : null;
+  }
+
+  /** Mirrors stat_contributions.contribution_strength's own per-family
+   *  scale (combat / 10,000, health / 100,000): a stat's raw total is not a
+   *  fair measure of how much it actually moves the ILP score. Health is
+   *  naturally an order of magnitude bigger than Attack/Defense even on a
+   *  lineup where Attack/Defense contribute more to the number that decides
+   *  the formation — picking "top 3 by raw total" would show HP every time
+   *  regardless of which stats the optimiser actually weighed heavier. */
+  var CONQUEST_HEALTH_LABELS = ["Hero Health", "Escort Health"];
+  var CONQUEST_COMBAT_SCALE = 10000;
+  var CONQUEST_HEALTH_SCALE = 100000;
+
+  function scoreWeight(label, total, family) {
+    if (family !== "conquest") return total;
+    var scale =
+      CONQUEST_HEALTH_LABELS.indexOf(label) !== -1
+        ? CONQUEST_HEALTH_SCALE
+        : CONQUEST_COMBAT_SCALE;
+    return total / scale;
+  }
+
+  /** Chips: the power split, then the stats that most moved the score for
+   *  that family — not simply the largest raw numbers (see scoreWeight). */
+  function renderContributionStrip(row) {
+    var totals = totalsOf(row);
+    if (!totals) return "";
+    var family = row.stat_family || totals.family || "conquest";
+    var p = totals.power;
+    var facts = [
+      ["power", fmtShare(p.total, "conquest")],
+      ["from hero", fmtShare(p.hero, "conquest")],
+      ["from skills", fmtShare(p.skills, "conquest")],
+      ["from gear", fmtShare(p.gear, "conquest")]
+    ];
+    Object.keys(totals.stats || {})
+      .map(function (label) {
+        return [label, totals.stats[label]];
+      })
+      .filter(function (pair) {
+        return pair[1] && pair[1].total > 0;
+      })
+      .sort(function (a, b) {
+        return (
+          scoreWeight(b[0], b[1].total, family) -
+          scoreWeight(a[0], a[1].total, family)
+        );
+      })
+      .slice(0, 3)
+      .forEach(function (pair) {
+        facts.push([pair[0], fmtShare(pair[1].total, family)]);
+      });
+    var chips = facts
+      .map(function (pair) {
+        return (
+          '<div class="fact"><div class="fact-k">' + esc(pair[0]) +
+          '</div><div class="fact-v">' + esc(pair[1]) + "</div></div>"
+        );
+      })
+      .join("");
+    var flags = [];
+    if (totals.estimated) flags.push("estimated");
+    if (totals.skills_incomplete) flags.push("skills partial");
+    var note = flags.length
+      ? '<p class="contrib-note">' + esc(family + " · " + flags.join(" · ")) + "</p>"
+      : '<p class="contrib-note">' + esc(family) + "</p>";
+    return '<div class="contrib-strip">' + chips + "</div>" + note;
+  }
+
+  /** First-expedition Attack/Lethality DamageUp SkillMod for Bear (and similar). */
+  function renderSkillmodDetail(row) {
+    var detail = row && row.skillmod_detail;
+    if (!detail || !(detail.by_hero || []).length) return "";
+    var factor = Number(detail.damage_up);
+    var factorText = Number.isFinite(factor)
+      ? "×" + factor.toFixed(3)
+      : "—";
+    var scope = detail.joiner_only
+      ? "first-expedition Attack/Lethality only"
+      : "expedition Attack/Lethality (incl. non-first)";
+    var facts = [
+      ["SkillMod DamageUp", factorText],
+      ["scope", scope]
+    ];
+    (detail.by_hero || []).forEach(function (rowHero) {
+      var label =
+        (rowHero.name || "?") +
+        " " +
+        String(rowHero.kind || "").replace(/_/g, " ");
+      var pct = Number(rowHero.pct);
+      var op = rowHero.effect_op != null ? " · op " + rowHero.effect_op : "";
+      facts.push([
+        label,
+        (Number.isFinite(pct) ? "+" + pct.toFixed(1) + "%" : "—") + op
+      ]);
+    });
+    var chips = facts
+      .map(function (pair) {
+        return (
+          '<div class="fact"><div class="fact-k">' +
+          esc(pair[0]) +
+          '</div><div class="fact-v">' +
+          esc(pair[1]) +
+          "</div></div>"
+        );
+      })
+      .join("");
+    return (
+      '<div class="contrib-strip skillmod-strip">' +
+      chips +
+      "</div>" +
+      '<p class="contrib-note">joiner SkillMod stacks same effect_op additively, different ops multiply</p>'
+    );
+  }
+
+  function contribSplit(share, fam) {
+    if (!share) return "—";
+    return (
+      esc(fmtShare(share.total, fam)) +
+      '<br><span class="contrib-split">' +
+      esc(fmtShare(share.hero, fam)) + " hero · +" +
+      esc(fmtShare(share.skills, fam)) + " skills · +" +
+      esc(fmtShare(share.gear, fam)) + " gear" +
+      "</span>"
+    );
+  }
+
+  /** Wraps the assembled head/body/total rows in the shared table chrome —
+   *  heading, note (with the estimated/skills-partial flags every family
+   *  shares), and the scroll container. */
+  function contribTableShell(family, totals, headHtml, bodyHtml, totalRowHtml, extraNote) {
+    var flags = [];
+    if (totals && totals.estimated) flags.push("estimated");
+    if (totals && totals.skills_incomplete) flags.push("skills partial");
+    var bits = ["each cell: total, then hero · skills delta (+) · gear delta (+)"];
+    if (extraNote) bits.push(extraNote);
+    if (flags.length) bits.push(flags.join(" · "));
+    return (
+      '<h3 class="section-title">Stat contributions · ' + esc(family) + "</h3>" +
+      '<p class="contrib-note">' + esc(bits.join(" · ")) + "</p>" +
+      '<div class="table-scroll"><table class="contrib-table"><thead>' +
+      headHtml + "</thead><tbody>" + bodyHtml + totalRowHtml + "</tbody></table></div>"
+    );
+  }
+
+  /** "Cavalry Attack" -> "Attack": the stat name shared across every troop. */
+  function genericStatName(label) {
+    var parts = String(label).split(" ");
+    return parts[parts.length - 1];
+  }
+
+  /** "Cavalry Attack" -> "Cavalry": everything before the stat name. */
+  function unitOf(label) {
+    var parts = String(label).split(" ");
+    return parts.slice(0, parts.length - 1).join(" ");
+  }
+
+  var EXPEDITION_STAT_ORDER = ["Attack", "Defense", "Health", "Lethality"];
+
+  /** A hero's expedition contribution only ever carries its own troop's four
+   *  labels ("Cavalry Attack", "Cavalry Defense", ...) — every other troop's
+   *  columns would just be "—" for that hero. Collapse to one generic
+   *  Attack/Defense/Health/Lethality column plus a Unit column naming which
+   *  troop the numbers belong to. Formation totals reuse
+   *  weightedExpeditionTotals (power sums; unit stats are share-weighted). */
+  function renderExpeditionContributionTable(row, names, contributions, family) {
+    var perHero = {};
+    var presentStats = [];
+    names.forEach(function (name) {
+      var stats = contributions[name].stats || {};
+      var unit = null;
+      var byStat = {};
+      Object.keys(stats).forEach(function (label) {
+        var stat = genericStatName(label);
+        if (unit === null) unit = unitOf(label);
+        byStat[stat] = stats[label];
+        if (presentStats.indexOf(stat) === -1) presentStats.push(stat);
+      });
+      perHero[name] = { unit: unit, byStat: byStat };
+    });
+    var order = EXPEDITION_STAT_ORDER.filter(function (s) {
+      return presentStats.indexOf(s) !== -1;
+    });
+
+    var head =
+      "<tr><th>hero</th><th>power</th><th>unit</th>" +
+      order.map(function (s) { return "<th>" + esc(s) + "</th>"; }).join("") +
+      "</tr>";
+    var body = names
+      .map(function (name) {
+        var c = contributions[name];
+        var info = perHero[name];
+        return (
+          "<tr><td>" + esc(name) + "</td>" +
+          "<td>" + contribSplit(c.power, "conquest") + "</td>" +
+          "<td>" + esc(info.unit || "—") + "</td>" +
+          order
+            .map(function (s) {
+              return "<td>" + contribSplit(info.byStat[s], family) + "</td>";
+            })
+            .join("") +
+          "</tr>"
+        );
+      })
+      .join("");
+
+    var totals = totalsOf(row);
+    var totalRow = "";
+    if (totals) {
+      var collapse = window.weightedExpeditionTotals;
+      if (!collapse) {
+        throw new Error("formation_totals.js must load before optimiser_events.js");
+      }
+      var totalByStat = collapse(totals.stats, row.ratios || row.troops);
+      totalRow =
+        '<tr class="contrib-total"><td>formation</td><td>' +
+        esc(fmtShare(totals.power.total, "conquest")) + "</td><td>—</td>" +
+        order
+          .map(function (s) {
+            var share = totalByStat[s];
+            return "<td>" + esc(share ? fmtShare(share.total, family) : "—") + "</td>";
+          })
+          .join("") +
+        "</tr>";
+    }
+    return contribTableShell(
+      family,
+      totals,
+      head,
+      body,
+      totalRow,
+      "unit is each hero's own troop"
+    );
+  }
+
+  /** Conquest labels (Hero Attack, Escort Health, …) are shared across every
+   *  troop already, so every hero has the same columns — no collapsing
+   *  needed, just the union of whatever labels are present. */
+  /** Which of a formation row's placed names sit in FRONT_SLOTS / BACK_SLOTS,
+   *  in slot order — [] for either when the row has no formation at all. */
+  function frontBackNames(row, names) {
+    var formation = row.formation || {};
+    function inSlots(slots) {
+      return slots
+        .map(function (s) { return formation[s]; })
+        .filter(function (n) { return n && names.indexOf(n) !== -1; });
+    }
+    return { front: inSlots(FRONT_SLOTS), back: inSlots(BACK_SLOTS) };
+  }
+
+  function renderConquestContributionTable(row, names, contributions, family) {
+    var labels = [];
+    names.forEach(function (name) {
+      Object.keys(contributions[name].stats || {}).forEach(function (label) {
+        if (labels.indexOf(label) === -1) labels.push(label);
+      });
+    });
+
+    function heroRow(name) {
+      var c = contributions[name];
+      return (
+        "<tr><td>" + esc(name) + "</td>" +
+        "<td>" + contribSplit(c.power, "conquest") + "</td>" +
+        labels
+          .map(function (l) {
+            return "<td>" + contribSplit((c.stats || {})[l], family) + "</td>";
+          })
+          .join("") +
+        "</tr>"
+      );
+    }
+
+    function subtotalRow(label, sectionNames) {
+      var power = 0;
+      var byLabel = {};
+      labels.forEach(function (l) { byLabel[l] = 0; });
+      sectionNames.forEach(function (name) {
+        var c = contributions[name];
+        power += c.power.total;
+        labels.forEach(function (l) {
+          var share = (c.stats || {})[l];
+          if (share) byLabel[l] += share.total;
+        });
+      });
+      return (
+        '<tr class="contrib-total"><td>' + esc(label) + "</td><td>" +
+        esc(fmtShare(power, "conquest")) + "</td>" +
+        labels
+          .map(function (l) { return "<td>" + esc(fmtShare(byLabel[l], family)) + "</td>"; })
+          .join("") +
+        "</tr>"
+      );
+    }
+
+    var head =
+      "<tr><th>hero</th><th>power</th>" +
+      labels.map(function (l) { return "<th>" + esc(l) + "</th>"; }).join("") +
+      "</tr>";
+
+    var sections = frontBackNames(row, names);
+    var body;
+    if (sections.front.length || sections.back.length) {
+      // Mirrors the survival model's own tau_F/tau_B split: a player reads
+      // "is my front row actually tanky" without re-deriving it from one
+      // flat five-hero list.
+      var colspan = 2 + labels.length;
+      var sectionHead = function (label) {
+        return '<tr class="contrib-section"><td colspan="' + colspan + '">' + esc(label) + "</td></tr>";
+      };
+      body =
+        sectionHead("Front") +
+        sections.front.map(heroRow).join("") +
+        subtotalRow("front", sections.front) +
+        sectionHead("Back") +
+        sections.back.map(heroRow).join("") +
+        subtotalRow("back", sections.back);
+    } else {
+      body = names.map(heroRow).join("");
+    }
+
+    var totals = totalsOf(row);
+    var totalRow = totals
+      ? '<tr class="contrib-total"><td>formation</td><td>' +
+        esc(fmtShare(totals.power.total, "conquest")) + "</td>" +
+        labels
+          .map(function (l) {
+            var share = (totals.stats || {})[l];
+            return "<td>" + esc(share ? fmtShare(share.total, family) : "—") + "</td>";
+          })
+          .join("") +
+        "</tr>"
+      : "";
+    return contribTableShell(family, totals, head, body, totalRow, null);
+  }
+
+  /** One row per placed hero, plus a formation total row. */
+  function renderContributionTable(row, entry) {
+    var contributions = (row && row.contributions) || null;
+    if (!contributions) return "";
+    var family = row.stat_family || "conquest";
+    var names = orderedHeroNames(row, entry).filter(function (n) {
+      return contributions[n];
+    });
+    if (!names.length) return "";
+    return family === "expedition"
+      ? renderExpeditionContributionTable(row, names, contributions, family)
+      : renderConquestContributionTable(row, names, contributions, family);
+  }
+
   function renderBoard(entry) {
     boardEl.innerHTML = "";
     if (!entry) {
@@ -482,6 +923,20 @@
     var extra = isScored(activeEvent) ? "" : breakdownLine(row);
     appendText("p", "board-meta", extra ? meta + " · " + extra : meta);
 
+    var strip = renderContributionStrip(row);
+    if (strip) {
+      var stripEl = document.createElement("div");
+      stripEl.innerHTML = strip;
+      boardEl.appendChild(stripEl);
+    }
+
+    var skillmodHtml = renderSkillmodDetail(row);
+    if (skillmodHtml) {
+      var skillmodEl = document.createElement("div");
+      skillmodEl.innerHTML = skillmodHtml;
+      boardEl.appendChild(skillmodEl);
+    }
+
     if (hasFormation(row)) {
       var f = row.formation;
       // The formation holds names; the hero entries hold whatever else the
@@ -495,18 +950,35 @@
       }
       boardEl.appendChild(boardRowEl("Front", FRONT_SLOTS, placed(FRONT_SLOTS), entry));
       boardEl.appendChild(boardRowEl("Back", BACK_SLOTS, placed(BACK_SLOTS), entry));
-      return;
+    } else {
+      // No F/B structure (the sword/bear events march three heroes together).
+      var heroes = orderMarchHeroes(
+        (row.heroes || []).filter(function (hero) {
+          return heroName(hero);
+        }),
+        entry
+      );
+      if (!heroes.length) {
+        appendText("p", "empty", "No heroes in this result.");
+        return;
+      }
+      var slotLabels = isLeadMarchEntry(entry)
+        ? heroes.map(function (_hero, i) {
+            return i === 0 ? "Lead" : "";
+          })
+        : null;
+      boardEl.appendChild(boardRowEl("March", slotLabels, heroes, entry));
     }
 
-    // No F/B structure (the sword/bear events march three heroes together).
-    var heroes = (row.heroes || []).filter(function (hero) {
-      return heroName(hero);
-    });
-    if (!heroes.length) {
-      appendText("p", "empty", "No heroes in this result.");
-      return;
+    // Per-hero split lives on the board itself, not behind a tap into the
+    // hero sheet — it's the number a player checks every time they look at
+    // a lineup, not an occasional drill-down.
+    var table = renderContributionTable(row, entry);
+    if (table) {
+      var tableEl = document.createElement("div");
+      tableEl.innerHTML = table;
+      boardEl.appendChild(tableEl);
     }
-    boardEl.appendChild(boardRowEl("March", null, heroes, entry));
   }
 
   function renderNote() {
@@ -643,6 +1115,203 @@
   // Close button + backdrop click + Escape, from app.js — the same three
   // triggers hero_detail.js wires, previously spelled out in both files.
   window.bindDialogDismiss(modal, modalClose, closeHeroSheet);
+
+  var joinerBar = document.getElementById("joiner-pool-bar");
+  var joinerBtn = document.getElementById("joiner-pool-btn");
+  var joinerWithoutLeadBtn = document.getElementById("joiner-without-lead-btn");
+  var joinerDialog = document.getElementById("joiner-pool-dialog");
+  var joinerList = document.getElementById("joiner-pool-list");
+  var joinerConfirm = document.getElementById("joiner-pool-confirm");
+  var joinerCancel = document.getElementById("joiner-pool-cancel");
+  var joinerErr = document.getElementById("joiner-pool-error");
+
+  function rallyLeadNames() {
+    var modes = ((bundle || {}).bear || {}).modes || {};
+    var lead = modes.rally_lead;
+    if (!lead || !lead.heroes) return [];
+    return lead.heroes
+      .map(function (h) {
+        return h && h.name;
+      })
+      .filter(Boolean);
+  }
+
+  function updateJoinerPoolBar() {
+    if (!joinerBar) return;
+    var show =
+      activeEvent === "bear" &&
+      bundle &&
+      bundle.bear &&
+      bundle.bear.modes &&
+      bundle.bear.modes.rally_lead &&
+      rallyLeadNames().length > 0;
+    joinerBar.hidden = !show;
+  }
+
+  var _origRender = render;
+  render = function () {
+    _origRender();
+    updateJoinerPoolBar();
+  };
+
+  function closeJoinerDialog() {
+    if (!joinerDialog) return;
+    joinerDialog.classList.remove("open");
+    joinerDialog.setAttribute("aria-hidden", "true");
+    if (joinerConfirm) joinerConfirm.disabled = false;
+    if (joinerErr) {
+      joinerErr.hidden = true;
+      joinerErr.textContent = "";
+    }
+  }
+
+  async function applyJoinerAllowList(allow, okMessage) {
+    var res = await fetch("/api/optimize/beartrap/joiner", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+      body: JSON.stringify({ allow_heroes: allow }),
+    });
+    var data = await res.json().catch(function () {
+      return {};
+    });
+    if (!res.ok) {
+      throw new Error(window.detailOf(data, res.statusText));
+    }
+    if (!bundle.bear) bundle.bear = { modes: {} };
+    if (!bundle.bear.modes) bundle.bear.modes = {};
+    bundle.bear.modes.joiner = data;
+    chosen.bear = "joiner";
+    closeJoinerDialog();
+    render();
+    setStatus(okMessage || "Joiner re-solved.", "ok");
+  }
+
+  async function openJoinerDialog() {
+    if (!joinerDialog || !joinerList) return;
+    if (joinerErr) {
+      joinerErr.hidden = true;
+      joinerErr.textContent = "";
+    }
+    var locked = {};
+    rallyLeadNames().forEach(function (n) {
+      locked[String(n).toLowerCase()] = true;
+    });
+    joinerList.innerHTML = "<p class=\"hint\">Loading roster…</p>";
+    joinerDialog.classList.add("open");
+    joinerDialog.setAttribute("aria-hidden", "false");
+    try {
+      var res = await fetch("/api/heroes", { cache: "no-store" });
+      var data = await res.json().catch(function () {
+        return {};
+      });
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      var heroes = data.heroes || [];
+      var html = heroes
+        .map(function (h) {
+          var name = h.name;
+          var isLocked = locked[String(name).toLowerCase()];
+          // locked heroes are Rally Lead — omit from pool (not just disabled)
+          if (isLocked) return "";
+          return (
+            '<label><input type="checkbox" class="joiner-pool-check" value="' +
+            esc(name) +
+            '" checked> ' +
+            esc(name) +
+            (h.troop_type ? " · " + esc(h.troop_type) : "") +
+            "</label>"
+          );
+        })
+        .join("");
+      joinerList.innerHTML =
+        html || '<p class="hint">No remaining heroes after Rally Lead.</p>';
+    } catch (err) {
+      joinerList.innerHTML = "";
+      if (joinerErr) {
+        joinerErr.hidden = false;
+        joinerErr.textContent = String((err && err.message) || err);
+      }
+    }
+  }
+
+  async function solveJoinerWithoutLead() {
+    if (joinerWithoutLeadBtn) joinerWithoutLeadBtn.disabled = true;
+    try {
+      var locked = {};
+      rallyLeadNames().forEach(function (n) {
+        locked[String(n).toLowerCase()] = true;
+      });
+      var res = await fetch("/api/heroes", { cache: "no-store" });
+      var data = await res.json().catch(function () {
+        return {};
+      });
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      var allow = (data.heroes || [])
+        .map(function (h) {
+          return h && h.name;
+        })
+        .filter(function (name) {
+          return name && !locked[String(name).toLowerCase()];
+        });
+      if (!allow.length) {
+        throw new Error("No remaining heroes after Rally Lead.");
+      }
+      await applyJoinerAllowList(allow, "Joiner re-solved without Rally Lead.");
+    } catch (err) {
+      var msg = String((err && err.message) || err);
+      setStatus(msg, "err");
+    } finally {
+      if (joinerWithoutLeadBtn) joinerWithoutLeadBtn.disabled = false;
+    }
+  }
+
+  if (joinerBtn) {
+    joinerBtn.addEventListener("click", function () {
+      openJoinerDialog();
+    });
+  }
+  if (joinerWithoutLeadBtn) {
+    joinerWithoutLeadBtn.addEventListener("click", function () {
+      solveJoinerWithoutLead();
+    });
+  }
+  if (joinerDialog && joinerCancel) {
+    window.bindDialogDismiss(joinerDialog, joinerCancel, closeJoinerDialog);
+  }
+  if (joinerConfirm) {
+    joinerConfirm.addEventListener("click", async function () {
+      if (joinerConfirm.disabled) return;
+      var checks = joinerList
+        ? slice(joinerList.querySelectorAll(".joiner-pool-check:checked"))
+        : [];
+      var allow = checks.map(function (el) {
+        return el.value;
+      });
+      if (!allow.length) {
+        if (joinerErr) {
+          joinerErr.hidden = false;
+          joinerErr.textContent = "Select at least one hero for the Joiner pool.";
+        }
+        return;
+      }
+      joinerConfirm.disabled = true;
+      if (joinerErr) {
+        joinerErr.hidden = true;
+        joinerErr.textContent = "";
+      }
+      try {
+        await applyJoinerAllowList(allow, "Joiner re-solved from the selected pool.");
+      } catch (err) {
+        joinerConfirm.disabled = false;
+        var msg = String((err && err.message) || err);
+        if (joinerErr) {
+          joinerErr.hidden = false;
+          joinerErr.textContent = msg;
+        }
+        setStatus(msg, "err");
+      }
+    });
+  }
 
   loadOptimize();
 })();

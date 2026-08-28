@@ -477,6 +477,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Path to troops.yaml (default: config/troops.yaml).",
     )
     ui.add_argument(
+        "--governor",
+        type=Path,
+        default=None,
+        help=(
+            "Governor gear dir (governor_gear.json). "
+            "Default: data/governor/full-run beside heroes."
+        ),
+    )
+    ui.add_argument(
         "--serial",
         type=str,
         default=None,
@@ -493,6 +502,22 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=8765,
         help="Bind port (default: 8765).",
+    )
+    ui.add_argument(
+        "--auth",
+        choices=["discord", "off"],
+        default="off",
+        help="Auth mode: 'discord' enables Discord OAuth via config/auth.yaml (default: off).",
+    )
+    ui.add_argument(
+        "--users-root",
+        type=Path,
+        default=None,
+        dest="users_root",
+        help=(
+            "Root dir for per-user inventory data when --auth discord is set. "
+            "Env: KS_USERS_ROOT. Default: data/users."
+        ),
     )
     return p
 
@@ -999,6 +1024,7 @@ def _cmd_arena(args: argparse.Namespace) -> int:
             roles,
             gear=gear_pieces,
             gear_profile=args.gear_profile,
+            with_survival=True,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"Error: {exc}", file=sys.stderr)
@@ -1009,14 +1035,40 @@ def _cmd_arena(args: argparse.Namespace) -> int:
         return 1
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(result.to_dict(), indent=2) + "\n", encoding="utf-8")
+    payload = result.to_dict()
+    survival = payload.get("survival") or (result.explanations or {}).get("survival")
+    args.out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     print(f"side: {result.side}")
-    print(f"score: {result.score:.1f}")
+    print(f"ilp_score: {result.score:.1f}")
+    if survival and survival.get("score_eff") is not None:
+        print(
+            f"score_eff vs {survival.get('primary_foe')}: "
+            f"{float(survival['score_eff']):.1f}"
+        )
     print("formation (2 front / 3 back):")
     for slot in ("F1", "F2", "B1", "B2", "B3"):
         name = result.formation.get(slot, "?")
         reason = result.reasons.get(name, "")
         print(f"  {slot}: {name}" + (f"  ({reason})" if reason else ""))
+    if survival:
+        our = survival.get("our") or {}
+        print(
+            f"our toughness: tau_F={float(our.get('tau_F') or 0):.0f} "
+            f"tau_B={float(our.get('tau_B') or 0):.0f} "
+            f"U_front={float(our.get('U_front') or 0):.1f} "
+            f"U_back={float(our.get('U_back') or 0):.1f}"
+        )
+        print("vs self-play foes (our heroes/gear/power):")
+        for model, block in (survival.get("foes") or {}).items():
+            foe_form = (block.get("foe") or {}).get("formation") or {}
+            front = f"{foe_form.get('F1', '?')}/{foe_form.get('F2', '?')}"
+            print(
+                f"  {model}: s={float(block.get('s') or 0):.3f} "
+                f"delta={float(block.get('delta') or 0):.3f} "
+                f"O={float(block.get('O') or 0):.1f} "
+                f"score_eff={float(block.get('score_eff') or 0):.1f} "
+                f"foe_front={front}"
+            )
     if result.gear_assignment:
         print("gear:")
         for name, rows in result.gear_assignment.items():
@@ -1057,6 +1109,7 @@ def _cmd_conquest(args: argparse.Namespace) -> int:
             roles,
             gear=gear_pieces,
             gear_profile=args.gear_profile,
+            with_survival=True,
         )
     except Exception as exc:  # noqa: BLE001
         print(f"Error: {exc}", file=sys.stderr)
@@ -1067,13 +1120,41 @@ def _cmd_conquest(args: argparse.Namespace) -> int:
         return 1
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(result.to_dict(), indent=2) + "\n", encoding="utf-8")
-    print(f"score: {result.score:.1f}")
+    payload = result.to_dict()
+    survival = (result.explanations or {}).get("survival")
+    if survival is not None:
+        payload["survival"] = survival
+    args.out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    print(f"ilp_score: {result.score:.1f}")
+    if survival and survival.get("score_eff") is not None:
+        print(
+            f"score_eff vs {survival.get('primary_foe')}: "
+            f"{float(survival['score_eff']):.1f}"
+        )
     print("conquest formation (2 front / 3 back):")
     for slot in ("F1", "F2", "B1", "B2", "B3"):
         name = result.formation.get(slot, "?")
         reason = result.reasons.get(name, "")
         print(f"  {slot}: {name}" + (f"  ({reason})" if reason else ""))
+    if survival:
+        our = survival.get("our") or {}
+        print(
+            f"our toughness: tau_F={float(our.get('tau_F') or 0):.0f} "
+            f"tau_B={float(our.get('tau_B') or 0):.0f} "
+            f"U_front={float(our.get('U_front') or 0):.1f} "
+            f"U_back={float(our.get('U_back') or 0):.1f}"
+        )
+        print("vs self-play foes (our heroes/gear/power):")
+        for model, block in (survival.get("foes") or {}).items():
+            foe_form = (block.get("foe") or {}).get("formation") or {}
+            front = f"{foe_form.get('F1','?')}/{foe_form.get('F2','?')}"
+            print(
+                f"  {model}: s={float(block.get('s') or 0):.3f} "
+                f"delta={float(block.get('delta') or 0):.3f} "
+                f"O={float(block.get('O') or 0):.1f} "
+                f"score_eff={float(block.get('score_eff') or 0):.1f} "
+                f"foe_front={front}"
+            )
     if result.gear_assignment:
         print("gear:")
         for name, rows in result.gear_assignment.items():
@@ -1117,6 +1198,54 @@ def _cmd_ui(args: argparse.Namespace) -> int:
 
     gear = Path(args.gear) if args.gear is not None else None
     heroes = Path(args.heroes) if args.heroes is not None else None
+
+    auth_mode = getattr(args, "auth", "off") or "off"
+    users_root_arg = getattr(args, "users_root", None)
+
+    if auth_mode == "discord":
+        import os
+        from ks.auth.config import load_auth_config
+        from ks.heroes.ui.app import create_app
+
+        try:
+            auth_cfg = load_auth_config()
+        except (KeyError, ValueError) as exc:
+            print(f"error: auth config invalid: {exc}", file=sys.stderr)
+            return 1
+
+        env_root = os.environ.get("KS_USERS_ROOT")
+        users_root = (
+            Path(users_root_arg).expanduser().resolve()
+            if users_root_arg is not None
+            else Path(env_root).expanduser().resolve()
+            if env_root
+            else ROOT / "data" / "users"
+        )
+        users_root.mkdir(parents=True, exist_ok=True)
+
+        try:
+            import uvicorn
+        except ImportError as exc:
+            raise ImportError(
+                "UI dependencies missing; install with: pip install 'ks[ui]'"
+            ) from exc
+
+        app = create_app(
+            gear,
+            heroes_dir=heroes,
+            troops_path=Path(args.troops) if args.troops is not None else None,
+            governor_dir=Path(args.governor) if args.governor is not None else None,
+            gear_config=Path(args.config),
+            heroes_config=Path(args.heroes_config),
+            serial=args.serial,
+            auth_config=auth_cfg,
+            users_root=users_root,
+        )
+        print(f"Auth: Discord OAuth (users_root={users_root})")
+        print(f"UI: http://{args.host}:{args.port}/")
+        uvicorn.run(app, host=str(args.host), port=int(args.port), log_level="info")
+        return 0
+
     if gear is None and heroes is None:
         # Keep prior default when neither flag is passed.
         gear = ROOT / "artifacts" / "gear" / "full-run"
@@ -1139,6 +1268,7 @@ def _cmd_ui(args: argparse.Namespace) -> int:
         gear,
         heroes_dir=heroes,
         troops_path=Path(args.troops) if args.troops is not None else None,
+        governor_dir=Path(args.governor) if args.governor is not None else None,
         host=str(args.host),
         port=int(args.port),
         gear_config=Path(args.config),

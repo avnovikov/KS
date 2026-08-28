@@ -1,10 +1,11 @@
-"""Conquest optimizer: 5 heroes, 2F+3B, Conquest-skill aware scoring."""
+"""Conquest optimizer: 5 heroes, 2F+3B, Conquest-skill aware scoring + survival."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from ks.heroes.gear_models import GearRecord
+from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.combat_formation import (
     CombatFormationResult,
@@ -12,9 +13,12 @@ from ks.heroes.optimize.combat_formation import (
     placement_mult,
     solve_combat_formation,
 )
+from ks.heroes.optimize.opponent_models import GEAR_FRONT_FIRST
+from ks.heroes.optimize.stat_contributions import StatContribution
+from ks.heroes.optimize.survival_pipeline import attach_survival
 from ks.heroes.optimize.types import CatalogEntry
 
-CONQUEST_GEAR_ORDER = ("F1", "F2", "B2", "B1", "B3")
+CONQUEST_GEAR_ORDER = GEAR_FRONT_FIRST
 _ULTIMATE_LEVEL_WEIGHT = 0.04
 
 
@@ -41,7 +45,8 @@ def _conquest_base_score(
     roles: dict[str, Any],
     *,
     effective_power: int | None,
-    gear_bonus: float,
+    contribution: StatContribution | None = None,
+    governor: GovernorTroopBonuses | None = None,
 ) -> float:
     """Base ILP score for Conquest: attack scoring amplified by ultimate level."""
     base = hero_base_score(
@@ -49,8 +54,9 @@ def _conquest_base_score(
         entry,
         roles,
         effective_power=effective_power,
-        gear_bonus=gear_bonus,
+        contribution=contribution,
         side="attack",
+        governor=governor,
     )
     return base * ultimate_level_multiplier(hero)
 
@@ -63,13 +69,26 @@ def optimize_conquest(
     gear: list[GearRecord] | None = None,
     gear_profile: str = "early_game_combat",
     with_explanations: bool = False,
+    with_survival: bool = True,
+    governor: GovernorTroopBonuses | None = None,
 ) -> CombatFormationResult:
     """Select and place the best 5-hero Conquest formation (2F + 3B).
 
-    Scoring applies attack-side placement multipliers and scales each hero's
-    base score by their ultimate skill level via ``ultimate_level_multiplier``.
+    When ``with_survival`` is true, attach a ``survival`` block comparing the
+    lineup to self-play foes from the same roster/gear.
     """
-    return solve_combat_formation(
+
+    def _base(hero, entry, roles, *, effective_power, contribution=None):
+        return _conquest_base_score(
+            hero,
+            entry,
+            roles,
+            effective_power=effective_power,
+            contribution=contribution,
+            governor=governor,
+        )
+
+    result = solve_combat_formation(
         "conquest",
         heroes,
         catalog,
@@ -78,10 +97,25 @@ def optimize_conquest(
         gear=gear,
         gear_profile=gear_profile,
         gear_slot_order=CONQUEST_GEAR_ORDER,
-        base_score_fn=_conquest_base_score,
+        base_score_fn=_base,
         placement_mult_fn=lambda troop, slot, name, roles: placement_mult(
             troop, slot, name, roles, side="attack"
         ),
         with_explanations=with_explanations,
         explain_fn=None,
+        governor=governor,
+    )
+    if not with_survival:
+        return result
+    return attach_survival(
+        result,
+        heroes,
+        catalog,
+        roles,
+        gear=gear,
+        gear_profile=gear_profile,
+        side="attack",
+        base_score_fn=_base,
+        gear_order=CONQUEST_GEAR_ORDER,
+        heuristic_mode="conquest",
     )

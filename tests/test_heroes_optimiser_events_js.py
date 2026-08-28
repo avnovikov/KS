@@ -71,6 +71,7 @@ def _build_script(tmp_path: Path) -> Path:
     harness = HARNESS.read_text(encoding="utf-8")
     injections = (
         ("// @@APP_JS@@", "app.js"),
+        ("// @@FORMATION_TOTALS_JS@@", "formation_totals.js"),
         ("// @@OPTIMISER_EVENTS_JS@@", "optimiser_events.js"),
     )
     for marker, name in injections:
@@ -174,9 +175,14 @@ def test_board_script_is_served_and_is_the_file_on_disk(tmp_path: Path) -> None:
 
     page = client.get("/optimiser/events").text
     assert 'src="/static/optimiser_events.js"' in page
+    assert 'src="/static/formation_totals.js"' in page
     # app.js comes from _layout.html and has to load first: the board reads
-    # window.escapeHtml off it at IIFE-evaluation time.
+    # window.escapeHtml off it at IIFE-evaluation time. formation_totals.js
+    # must load before the board so weightedExpeditionTotals exists.
     assert page.index('src="/static/app.js"') < page.index(
+        'src="/static/formation_totals.js"'
+    )
+    assert page.index('src="/static/formation_totals.js"') < page.index(
         'src="/static/optimiser_events.js"'
     )
 
@@ -302,6 +308,8 @@ def test_mode_chips_carry_their_points_and_drive_the_board(js_run: dict) -> None
             "and moves the selection with it",
             "the chip that lost it says so too",
             "and the board shows that mode's heroes",
+            "with the rally lead as the first march icon",
+            "and the first slot is tagged Lead",
             "tapping Bear Trap switches event",
             "the event segment is marked selected",
             "and the one it left is not",
@@ -724,3 +732,64 @@ def test_degenerate_bundles_do_not_render_a_broken_board(js_run: dict) -> None:
             "and not clickable",
         ],
     )
+
+
+def test_the_board_shows_where_strength_came_from(js_run: dict) -> None:
+    """Formation totals AND the per-hero split both live on the board itself
+    — a player reads this on every lineup, not only behind a tap into one
+    hero's sheet."""
+    _assert_ran(
+        js_run,
+        [
+            "the board carries a stat contribution strip",
+            "the strip names the stat family",
+            "the strip splits power into hero, skills and gear",
+            "the board carries a contribution table",
+            "the contribution table has a row per placed hero",
+            "the contribution table totals the formation",
+            "an estimated split says so",
+            "the table shows skills and gear as deltas, not bare numbers",
+            "the strip ranks stats by score weight, not raw magnitude",
+            "the conquest table splits into Front and Back sections in order",
+            "each section carries its own subtotal row",
+        ],
+    )
+    board = js_run["data"]["conquest_board_html"]
+    assert "contrib-strip" in board
+    assert "contrib-table" in board
+
+
+def test_the_hero_sheet_does_not_duplicate_the_contribution_table(
+    js_run: dict,
+) -> None:
+    _assert_ran(js_run, ["the hero sheet does not repeat the contribution table"])
+    sheet = js_run["data"]["conquest_sheet_html"]
+    assert "contrib-table" not in sheet
+
+
+def test_expedition_table_collapses_per_troop_columns_to_unit_and_generic_stat(
+    js_run: dict,
+) -> None:
+    """Sword/Bear heroes are each on exactly one troop, so their expedition
+    contribution only ever carries that troop's own labels. Listing every
+    troop's labels as its own column produced a wall of columns that were
+    "—" for every hero but one; this collapses to a Unit column plus one
+    shared Attack/Defense/Health/Lethality set. Formation totals are
+    troop-share weighted averages, not a raw sum of Infantry+Cavalry+Archer."""
+    _assert_ran(
+        js_run,
+        [
+            "the expedition table has a unit column instead of per-troop columns",
+            "the expedition table collapses troop-prefixed labels to a generic stat name",
+            "the expedition formation total is share-weighted across troops",
+        ],
+    )
+    board = js_run["data"]["sword_board_html"]
+    # The strip's own top-stat chips legitimately show full troop-prefixed
+    # labels ("Infantry Attack") — only the table is supposed to collapse
+    # them, so these assertions scope to that slice, same as the JS checks.
+    table = board[board.index("contrib-table") :]
+    assert "<th>unit</th>" in table
+    assert "<th>Attack</th>" in table
+    assert "Infantry Attack" not in table
+    assert "Cavalry Attack" not in table

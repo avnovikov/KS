@@ -2,6 +2,9 @@
 {% block title %}Gear · Inventory · KS{% endblock %}
 
 {% block actions %}
+<button type="button" id="add-gear-btn" title="Add a piece without OCR">
+  Add piece
+</button>
 <button type="button" class="rescan" id="rescan-btn"
         data-rescan-url="/api/gear/rescan"
         data-reload-url="/inventory/gear"
@@ -179,6 +182,52 @@
       </p>
       <div class="dialog-actions">
         <button type="button" class="btn-danger" id="remove-confirm">Delete permanently</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="add-gear-dialog" aria-hidden="true">
+  <div class="modal modal-confirm" role="dialog" aria-modal="true"
+       aria-labelledby="add-gear-title" aria-describedby="add-gear-explain">
+    <div class="modal-header">
+      <div>
+        <h2 id="add-gear-title">Add gear piece</h2>
+        <div class="modal-sub">Name comes from the gear names table</div>
+      </div>
+      <button type="button" class="modal-close" id="add-gear-cancel">Cancel</button>
+    </div>
+    <div class="modal-body">
+      <p id="add-gear-explain">
+        Pick troop, slot, and rarity. Duplicates are allowed (new inventory id).
+        Set enhancement / mastery on the row after it appears.
+      </p>
+      <div class="add-gear-fields">
+        <label>Troop
+          <select id="add-gear-troop" aria-label="Troop type">
+            {% for t in ["infantry", "cavalry", "archers"] %}
+            <option value="{{ t }}">{{ t }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Slot
+          <select id="add-gear-slot" aria-label="Slot">
+            {% for s in ["helmet", "chest", "gloves", "boots"] %}
+            <option value="{{ s }}"{% if s == "gloves" %} selected{% endif %}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Rarity
+          <select id="add-gear-rarity" aria-label="Rarity">
+            {% for r in ["grey", "green", "blue", "epic", "mythic", "red"] %}
+            <option value="{{ r }}"{% if r == "epic" %} selected{% endif %}>{{ r }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </div>
+      <p class="hint" id="add-gear-error" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" id="add-gear-confirm">Add piece</button>
       </div>
     </div>
   </div>

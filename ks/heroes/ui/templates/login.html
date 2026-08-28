@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KS — Login</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      margin: 0;
+      background: #1a1a2e;
+      color: #eee;
+    }
+    .card {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 12px;
+      padding: 2.5rem 3rem;
+      text-align: center;
+      max-width: 380px;
+    }
+    h1 { margin: 0 0 0.5rem; font-size: 1.6rem; }
+    p  { color: #aaa; margin: 0 0 2rem; font-size: 0.95rem; }
+    a.discord-btn {
+      display: inline-block;
+      background: #5865f2;
+      color: #fff;
+      text-decoration: none;
+      padding: 0.75rem 1.75rem;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      transition: background 0.15s;
+    }
+    a.discord-btn:hover { background: #4752c4; }
+    .error-banner {
+      background: #7d1c1c;
+      border: 1px solid #c62828;
+      border-radius: 6px;
+      padding: 0.6rem 1rem;
+      margin-bottom: 1.5rem;
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>KS Inventory</h1>
+    <p>Sign in with your Discord account to access the inventory.</p>
+    {% if request.query_params.get("error") %}
+    <div class="error-banner">
+      Login failed — please try again.
+    </div>
+    {% endif %}
+    <a class="discord-btn" href="{{ auth_url }}">Sign in with Discord</a>
+  </div>
+</body>
+</html>

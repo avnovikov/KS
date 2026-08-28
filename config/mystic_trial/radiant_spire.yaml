@@ -1,0 +1,20 @@
+id: radiant_spire
+label: Radiant Spire
+focus: all
+active_marches: 2
+schema_marches: 3
+# Mystic Trial event march size for chance/proxy fill (not troops.yaml march_capacity).
+event_march_capacity: 150000
+# Borrowed event troop tier (pure); overridden per stage·round in opponents YAML.
+event_troop_tier: 10
+seed_ratio:
+  infantry: 0.50
+  cavalry: 0.15
+  archers: 0.35
+published_ratios:
+  - {infantry: 0.50, cavalry: 0.15, archers: 0.35}
+  - {infantry: 0.55, cavalry: 0.10, archers: 0.35}
+  - {infantry: 0.60, cavalry: 0.10, archers: 0.30}
+  - {infantry: 0.50, cavalry: 0.10, archers: 0.40}
+  - {infantry: 0.50, cavalry: 0.20, archers: 0.30}
+  - {infantry: 0.333333, cavalry: 0.333333, archers: 0.333334}

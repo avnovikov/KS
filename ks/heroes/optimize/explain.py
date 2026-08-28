@@ -6,8 +6,10 @@ from dataclasses import dataclass
 from typing import Any, Callable, TypeVar
 
 from ks.heroes.exclusive_gear import widget_effects_for_hero
+from ks.heroes.gear_models import GearRecord
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.scoring import hero_strength, normalize_troop
+from ks.heroes.optimize.stat_contributions import EXPEDITION, hero_contribution
 from ks.heroes.optimize.troop_stats import TroopStatsTable
 from ks.heroes.optimize.types import (
     CatalogEntry,
@@ -218,7 +220,7 @@ def leave_one_out_mode(
     event: EventProfile | None = None,
     troop_stats: TroopStatsTable | None = None,
     truegold: int = 0,
-    gear_bonus_by_troop: dict[str, float] | None = None,
+    gear_by_troop: dict[str, dict[str, GearRecord]] | None = None,
 ) -> dict[str, LeaveOneOutPoints]:
     """Re-solve mode without each selected hero; report point drop."""
     from ks.heroes.optimize.model import solve_mode
@@ -234,7 +236,7 @@ def leave_one_out_mode(
             event=event,
             troop_stats=troop_stats,
             truegold=truegold,
-            gear_bonus_by_troop=gear_bonus_by_troop,
+            gear_by_troop=gear_by_troop,
         )
 
     def on_optimal(_name: str, alt: Any) -> LeaveOneOutPoints:
@@ -289,7 +291,7 @@ def explain_selected_heroes(
     event: EventProfile | None = None,
     troop_stats: TroopStatsTable | None = None,
     truegold: int = 0,
-    gear_bonus_by_troop: dict[str, float] | None = None,
+    gear_by_troop: dict[str, dict[str, GearRecord]] | None = None,
 ) -> tuple[dict[str, Any], ...]:
     """Build hero rows with reason + explain (B) and leave-one-out (C)."""
     loo = leave_one_out_mode(
@@ -301,7 +303,7 @@ def explain_selected_heroes(
         event=event,
         troop_stats=troop_stats,
         truegold=truegold,
-        gear_bonus_by_troop=gear_bonus_by_troop,
+        gear_by_troop=gear_by_troop,
     )
     hero_by_name = {h.name: h for h in heroes}
     rows: list[dict[str, Any]] = []
@@ -315,11 +317,14 @@ def explain_selected_heroes(
                 entry,
                 scenario.mode,
                 event=event,
-                effective_power=hero.power,
-                gear_bonus=float(
-                    (gear_bonus_by_troop or {}).get(
-                        normalize_troop(entry.troop) or "", 0.0
-                    )
+                contribution=hero_contribution(
+                    hero,
+                    entry,
+                    family=EXPEDITION,
+                    gear_pieces=(gear_by_troop or {}).get(
+                        normalize_troop(entry.troop) or ""
+                    ),
+                    catalog=catalog,
                 ),
             )
         role = _role_label(entry, scenario.mode, scenario)
@@ -349,6 +354,7 @@ def explain_selected_heroes(
             {
                 "name": name,
                 "reason": ", ".join(summary_bits),
+                "widget_type": (entry.widget_type if entry else None),
                 "explain": explain.to_dict(),
             }
         )
@@ -437,6 +443,7 @@ def leave_one_out_arena(
             gear=gear,
             gear_profile=gear_profile,
             with_explanations=False,
+            with_survival=False,
         )
 
     def on_optimal(_name: str, alt: Any) -> LeaveOneOutScore:

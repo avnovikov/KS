@@ -1,0 +1,30 @@
+{% extends "_layout.html" %}
+{% block title %}Molten Fort · Mystic Trial · Optimiser · KS{% endblock %}
+
+{% block actions %}
+<button type="button" id="molten-regen"
+        title="Recompute single march from governor + inventory">Regenerate</button>
+{% endblock %}
+
+{% block content %}
+{% include "_mystic_trial_rooms.html" %}
+<h1 class="page-title">Molten Fort</h1>
+<p class="page-meta">Event lineups · Mystic Trial · {{ heroes_dir }} · governor {{ governor_dir }}</p>
+<p class="banner-warn" id="proxy-banner" role="status">
+  Proxy score — not in-game clear prediction. Governor-primary; heroes at 15% weight.
+</p>
+<p class="status-line" id="molten-status" role="status">Solving march…</p>
+<p class="banner-err" id="molten-error" role="alert" hidden></p>
+
+<p id="molten-score" class="hint" hidden></p>
+<div class="chip-row" id="governor-chips"></div>
+<div class="mode-chips" id="mode-chips" role="group" aria-label="Marches"></div>
+<section class="panel board" id="board"></section>
+{% include "_gear_detail_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/formation_totals.js"></script>
+<script src="/static/optimiser_board.js"></script>
+<script src="/static/optimiser_molten_fort.js"></script>
+{% endblock %}

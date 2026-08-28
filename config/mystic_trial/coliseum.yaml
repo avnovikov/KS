@@ -1,0 +1,17 @@
+id: coliseum
+label: Coliseum
+focus: heroes_gear
+active_marches: 2
+schema_marches: 2
+# Event-borrowed troops (inventory troops.yaml is not used for mystic fill/stats).
+event_march_capacity: 250000
+event_troop_tier: 10
+seed_ratio:
+  infantry: 0.50
+  cavalry: 0.10
+  archers: 0.40
+published_ratios:
+  - {infantry: 0.50, cavalry: 0.10, archers: 0.40}
+  - {infantry: 0.55, cavalry: 0.15, archers: 0.30}
+  - {infantry: 0.50, cavalry: 0.20, archers: 0.30}
+  - {infantry: 0.60, cavalry: 0.10, archers: 0.30}

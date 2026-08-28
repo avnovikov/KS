@@ -9,14 +9,16 @@ from typing import Any
 import yaml
 
 from ks.heroes.gear_models import GearRecord
+from ks.heroes.governor_models import GovernorTroopBonuses
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.arena import load_arena_roles, optimize_arena
-from ks.heroes.optimize.catalog import load_catalog
+from ks.heroes.optimize.catalog import heroes_by_troop, load_catalog
 from ks.heroes.optimize.combat_formation import load_combat_roles
 from ks.heroes.optimize.conquest import optimize_conquest
 from ks.heroes.optimize.events import load_event_profile
 from ks.heroes.optimize.recommend import recommend
 from ks.heroes.optimize.scenarios import load_scenarios
+from ks.heroes.optimize.stat_contributions import family_for_event
 from ks.heroes.optimize.troop_stats import load_troop_stats
 from ks.heroes.optimize.troops import load_troops_config
 
@@ -24,6 +26,233 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 logger = logging.getLogger(__name__)
 
 _DOMAIN_ERRORS = (ValueError, OSError, FileNotFoundError, yaml.YAMLError, KeyError)
+
+
+def filter_heroes_by_allowlist(
+    heroes: list[HeroRecord],
+    allow_heroes: list[str] | tuple[str, ...] | set[str],
+) -> list[HeroRecord]:
+    """Return roster heroes whose names appear in ``allow_heroes`` (case-insensitive).
+
+    Preserves roster order. Raises if the allow-list is empty or names an
+    unknown hero.
+    """
+    raw = [str(n).strip() for n in allow_heroes if str(n).strip()]
+    if not raw:
+        raise ValueError("allow_heroes must not be empty")
+    by_lower = {h.name.lower(): h for h in heroes}
+    unknown = [n for n in raw if n.lower() not in by_lower]
+    if unknown:
+        raise ValueError(f"unknown heroes in allow_heroes: {unknown}")
+    wanted = {n.lower() for n in raw}
+    return [h for h in heroes if h.name.lower() in wanted]
+
+
+def run_beartrap_joiner(
+    heroes: list[HeroRecord],
+    *,
+    allow_heroes: list[str] | tuple[str, ...] | set[str],
+    gear: list[GearRecord] | None = None,
+    config_root: Path | None = None,
+    troops_path: Path | None = None,
+    gear_profile: str = "early_game_growth",
+    governor: GovernorTroopBonuses | None = None,
+) -> dict[str, Any]:
+    """Solve Bear Trap joiner using only ``allow_heroes`` from the roster."""
+    root = (config_root or REPO_ROOT).expanduser().resolve()
+    pool = filter_heroes_by_allowlist(heroes, allow_heroes)
+    catalog = load_catalog(None, root / "config" / "hero_catalog.yaml")
+    resolved_troops = (
+        Path(troops_path).expanduser().resolve()
+        if troops_path is not None
+        else root / "config" / "troops.yaml"
+    )
+    troops = load_troops_config(resolved_troops)
+    scenarios = load_scenarios(root / "config" / "point_scenarios_beartrap.yaml")
+    event = load_event_profile(root / "config" / "events" / "beartrap.yaml")
+    troop_stats = load_troop_stats(root / "config" / "troop_stats.yaml")
+    raw_troops = yaml.safe_load(resolved_troops.read_text(encoding="utf-8")) or {}
+    truegold = int(raw_troops.get("truegold", troop_stats.default_truegold))
+    result = recommend(
+        pool,
+        catalog,
+        troops,
+        scenarios,
+        force_mode="joiner",
+        event=event,
+        troop_stats=troop_stats,
+        truegold=truegold,
+        gear=gear,
+        gear_profile=gear_profile,
+        governor=governor,
+    )
+    payload = result.to_dict()
+    payload["contributions"] = {
+        row["name"]: row["contributions"]
+        for row in payload.get("heroes") or []
+        if row.get("name") and row.get("contributions")
+    } or None
+    # Do not set status="ok" on the mode row. Event lineups UI treats a mode
+    # as drawable only when status is missing or "Optimal" (section-level
+    # bundles use "ok"; mode rows from recommend leave status unset).
+    payload["mode"] = "joiner"
+    payload["allow_heroes"] = [h.name for h in pool]
+    payload["stat_family"] = family_for_event(event.name)
+    return payload
+
+
+def _recommend_mode_payload(
+    heroes: list[HeroRecord],
+    catalog: dict[str, Any],
+    *,
+    troops: Any,
+    scenarios: Any,
+    mode: str,
+    event: Any,
+    troop_stats: Any,
+    truegold: int,
+    gear: list[GearRecord] | None,
+    gear_profile: str,
+    governor: GovernorTroopBonuses | None,
+) -> dict[str, Any]:
+    result = recommend(
+        heroes,
+        catalog,
+        troops,
+        scenarios,
+        force_mode=mode,
+        event=event,
+        troop_stats=troop_stats,
+        truegold=truegold,
+        gear=gear,
+        gear_profile=gear_profile,
+        governor=governor,
+    )
+    payload = result.to_dict()
+    payload["contributions"] = {
+        row["name"]: row["contributions"]
+        for row in payload.get("heroes") or []
+        if row.get("name") and row.get("contributions")
+    } or None
+    return payload
+
+
+def _mode_hero_names(payload: dict[str, Any]) -> set[str]:
+    return {
+        str(h["name"])
+        for h in (payload.get("heroes") or [])
+        if isinstance(h, dict) and h.get("name")
+    }
+
+
+def _reserve_attack_widget_for_rally_lead(
+    heroes: list[HeroRecord],
+    catalog: dict[str, Any],
+) -> str | None:
+    """Pick one attack-widget hero to keep available for Swordland Rally Lead.
+
+    Garrison-first exclusive mode can otherwise consume Helga (often the only
+    attack widget) as an infantry filler, leaving Rally Lead infeasible.
+    """
+    candidates: list[tuple[int, str]] = []
+    for hero in heroes:
+        entry = catalog.get(hero.name)
+        if entry is None or entry.widget_type != "attack":
+            continue
+        priority = int(getattr(entry, "rally_widget_priority", 0) or 0)
+        candidates.append((priority, hero.name))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    return candidates[0][1]
+
+
+def _apply_swordland_exclusive_squads(
+    *,
+    heroes: list[HeroRecord],
+    catalog: dict[str, Any],
+    modes: dict[str, Any],
+    mode_errors: dict[str, str],
+    troops: Any,
+    scenarios: Any,
+    event: Any,
+    troop_stats: Any,
+    truegold: int,
+    gear: list[GearRecord] | None,
+    gear_profile: str,
+    governor: GovernorTroopBonuses | None,
+) -> None:
+    """Re-solve Garrison then Rally Lead so they don't share heroes.
+
+    Garrison is chosen first (hold squad). Rally Lead is solved from the
+    leftovers. Attack-widget heroes are also ineligible for Garrison in
+    ``solve_mode`` whenever a same-troop alternative exists, so CLI / spend-XP
+    / recommend() cannot park Helga on a building. One attack-widget hero is
+    still held out of the Garrison pool here so Rally Lead can satisfy
+    ``require_widget: attack`` even if the ILP exclusion were skipped.
+    """
+    if "rally_lead" not in scenarios or "garrison" not in scenarios:
+        return
+
+    reserved = _reserve_attack_widget_for_rally_lead(heroes, catalog)
+    garrison_pool = (
+        [h for h in heroes if h.name != reserved] if reserved else list(heroes)
+    )
+    try:
+        modes["garrison"] = _recommend_mode_payload(
+            garrison_pool,
+            catalog,
+            troops=troops,
+            scenarios=scenarios,
+            mode="garrison",
+            event=event,
+            troop_stats=troop_stats,
+            truegold=truegold,
+            gear=gear,
+            gear_profile=gear_profile,
+            governor=governor,
+        )
+        mode_errors.pop("garrison", None)
+    except ValueError as exc:
+        modes.pop("garrison", None)
+        detail = str(exc)
+        if reserved is None:
+            detail = (
+                f"{detail} (Garrison requires a defense-widget hero on the roster)"
+            )
+        mode_errors["garrison"] = detail
+        return
+
+    garrison_names = _mode_hero_names(modes["garrison"])
+    lead_pool = [h for h in heroes if h.name not in garrison_names]
+    try:
+        modes["rally_lead"] = _recommend_mode_payload(
+            lead_pool,
+            catalog,
+            troops=troops,
+            scenarios=scenarios,
+            mode="rally_lead",
+            event=event,
+            troop_stats=troop_stats,
+            truegold=truegold,
+            gear=gear,
+            gear_profile=gear_profile,
+            governor=governor,
+        )
+        mode_errors.pop("rally_lead", None)
+    except ValueError as exc:
+        modes.pop("rally_lead", None)
+        detail = str(exc)
+        if reserved:
+            detail = (
+                f"{detail} (need an attack-widget hero for Rally Lead; "
+                f"reserved {reserved} but Garrison still left none usable)"
+            )
+        else:
+            detail = (
+                f"{detail} (Rally Lead requires an attack-widget hero on the roster)"
+            )
+        mode_errors["rally_lead"] = detail
 
 
 def _event_bundle(
@@ -37,6 +266,7 @@ def _event_bundle(
     troop_stats_path: Path,
     gear: list[GearRecord] | None,
     gear_profile: str,
+    governor: GovernorTroopBonuses | None = None,
 ) -> dict[str, Any]:
     troops = load_troops_config(troops_path)
     scenarios = load_scenarios(scenarios_path)
@@ -48,21 +278,40 @@ def _event_bundle(
     mode_errors: dict[str, str] = {}
     for mode in scenarios:
         try:
-            result = recommend(
+            modes[mode] = _recommend_mode_payload(
                 heroes,
                 catalog,
-                troops,
-                scenarios,
-                force_mode=mode,
+                troops=troops,
+                scenarios=scenarios,
+                mode=mode,
                 event=event,
                 troop_stats=troop_stats,
                 truegold=truegold,
                 gear=gear,
                 gear_profile=gear_profile,
+                governor=governor,
             )
-            modes[mode] = result.to_dict()
         except ValueError as exc:
             mode_errors[mode] = str(exc)
+
+    # Swordland: exclusive Garrison first, then Rally Lead leftovers
+    # (attack widget reserved out of the Garrison pool).
+    if event.name == "swordland":
+        _apply_swordland_exclusive_squads(
+            heroes=heroes,
+            catalog=catalog,
+            modes=modes,
+            mode_errors=mode_errors,
+            troops=troops,
+            scenarios=scenarios,
+            event=event,
+            troop_stats=troop_stats,
+            truegold=truegold,
+            gear=gear,
+            gear_profile=gear_profile,
+            governor=governor,
+        )
+
     if not modes and mode_errors:
         raise ValueError(
             "; ".join(f"{m}: {err}" for m, err in mode_errors.items())
@@ -71,6 +320,7 @@ def _event_bundle(
         "label": label,
         "event": event.name,
         "status": "ok",
+        "stat_family": family_for_event(event.name),
         "modes": modes,
     }
     if mode_errors:
@@ -78,8 +328,14 @@ def _event_bundle(
     return out
 
 
-def _section_error(label: str, message: str) -> dict[str, Any]:
-    return {"label": label, "modes": {}, "status": "Error", "error": message}
+def _section_error(label: str, message: str, *, stat_family: str) -> dict[str, Any]:
+    return {
+        "label": label,
+        "modes": {},
+        "status": "Error",
+        "error": message,
+        "stat_family": stat_family,
+    }
 
 
 def _formation_error(message: str, **identity: str) -> dict[str, Any]:
@@ -97,6 +353,9 @@ def _formation_error(message: str, **identity: str) -> dict[str, Any]:
         "score": None,
         "reasons": {},
         "error": message,
+        "stat_family": "conquest",
+        "formation_totals": None,
+        "contributions": None,
     }
 
 
@@ -108,6 +367,7 @@ def run_optimize_bundle(
     troops_path: Path | None = None,
     gear_profile_events: str = "early_game_growth",
     gear_profile_arena: str = "early_game_combat",
+    governor: GovernorTroopBonuses | None = None,
 ) -> dict[str, Any]:
     """Compute sword + bear mode tables, arena attack/defense, and conquest.
 
@@ -177,14 +437,15 @@ def run_optimize_bundle(
             troop_stats_path=troop_stats_path,
             gear=gear,
             gear_profile=gear_profile_events,
+            governor=governor,
         )
     except _DOMAIN_ERRORS as exc:
         errors["sword"] = str(exc)
-        out["sword"] = _section_error("Swordland", str(exc))
+        out["sword"] = _section_error("Swordland", str(exc), stat_family="expedition")
     except Exception as exc:  # noqa: BLE001
         logger.exception("sword optimize failed")
         errors["sword"] = f"internal error: {exc}"
-        out["sword"] = _section_error("Swordland", errors["sword"])
+        out["sword"] = _section_error("Swordland", errors["sword"], stat_family="expedition")
 
     try:
         out["bear"] = _event_bundle(
@@ -197,14 +458,15 @@ def run_optimize_bundle(
             troop_stats_path=troop_stats_path,
             gear=gear,
             gear_profile=gear_profile_events,
+            governor=governor,
         )
     except _DOMAIN_ERRORS as exc:
         errors["bear"] = str(exc)
-        out["bear"] = _section_error("Bear Trap", str(exc))
+        out["bear"] = _section_error("Bear Trap", str(exc), stat_family="expedition")
     except Exception as exc:  # noqa: BLE001
         logger.exception("bear optimize failed")
         errors["bear"] = f"internal error: {exc}"
-        out["bear"] = _section_error("Bear Trap", errors["bear"])
+        out["bear"] = _section_error("Bear Trap", errors["bear"], stat_family="expedition")
 
     arena: dict[str, Any] = {}
     for side in ("attack", "defense"):
@@ -220,6 +482,7 @@ def run_optimize_bundle(
                 roles,
                 gear=gear,
                 gear_profile=gear_profile_arena,
+                governor=governor,
             )
             payload = result.to_dict()
             warn = (result.reasons or {}).get("_explain_warning")
@@ -249,6 +512,7 @@ def run_optimize_bundle(
                 conquest_roles,
                 gear=gear,
                 gear_profile=gear_profile_arena,
+                governor=governor,
             )
             out["conquest"] = conquest_result.to_dict()
             if conquest_result.status != "Optimal":
@@ -289,3 +553,233 @@ def attach_gear_icon_urls(
     conquest = bundle.get("conquest")
     if isinstance(conquest, dict):
         _patch_assignment(conquest.get("gear_assignment"))
+
+
+def attach_mystic_gear_icon_urls(
+    payload: dict[str, Any],
+    icon_by_piece_id: dict[str, str | None],
+) -> None:
+    """Patch gear_assignment on mystic-trial march payloads (Radiant/Coliseum/Molten)."""
+    if not icon_by_piece_id:
+        return
+
+    def _patch(assignment: dict[str, list[dict[str, Any]]] | None) -> None:
+        if not assignment:
+            return
+        for pieces in assignment.values():
+            for piece in pieces:
+                pid = piece.get("piece_id")
+                if pid and pid in icon_by_piece_id:
+                    piece["icon_url"] = icon_by_piece_id[pid]
+
+    for march in payload.get("marches") or []:
+        if isinstance(march, dict):
+            _patch(march.get("gear_assignment"))
+
+
+def resolve_mystic_player_event_troops(
+    *,
+    governor_dir: Path,
+    stage: int,
+    round_no: int,
+    room: str,
+    room_path: Path,
+) -> dict[str, int]:
+    """Saved stage·round event troops, else room YAML, else 10 / 250000."""
+    from ks.heroes.optimize.mystic_trial.radiant_opponents import (
+        default_player_event_troops,
+        get_player_event_troops,
+        load_store,
+        opponents_path,
+    )
+    from ks.heroes.optimize.mystic_trial.rooms import load_room
+
+    store = load_store(opponents_path(governor_dir, room=room))
+    saved = get_player_event_troops(store, stage, round_no)
+    if saved is not None:
+        return saved
+    room_cfg = load_room(room_path)
+    return default_player_event_troops(
+        tier=room_cfg.event_troop_tier,
+        march_size=room_cfg.event_march_capacity,
+    )
+
+
+def apply_saved_radiant_opponents(
+    payload: dict[str, Any],
+    *,
+    governor_dir: Path,
+    stage: int,
+    round_no: int,
+    room: str = "radiant",
+) -> dict[str, Any]:
+    """Merge persisted stage·round opponent marches into an optimize payload."""
+    from ks.heroes.optimize.mystic_trial.radiant_opponents import (
+        get_player_bonuses,
+        get_stage_round,
+        load_store,
+        merge_saved_into_opponent,
+        opponents_path,
+    )
+
+    store = load_store(opponents_path(governor_dir, room=room))
+    saved = get_stage_round(store, stage, round_no)
+    if not saved:
+        payload["stage"] = stage
+        payload["round"] = round_no
+        return payload
+    payload["opponent"] = merge_saved_into_opponent(payload.get("opponent"), saved)
+    player_bonuses = get_player_bonuses(store, stage, round_no)
+    if player_bonuses is not None:
+        payload["player_bonuses"] = player_bonuses
+    payload["stage"] = stage
+    payload["round"] = round_no
+    return payload
+
+
+def run_radiant_optimize(
+    heroes: list[HeroRecord],
+    *,
+    governor_bonuses: GovernorTroopBonuses,
+    gear: list[GearRecord] | None = None,
+    config_root: Path | None = None,
+    troops_path: Path | None = None,
+    research_bonuses: Any | None = None,
+    active_marches: int = 2,
+    floor: int | None = None,
+    enemy_ratio: dict[str, float] | None = None,
+    enemy_bonuses: dict[str, dict[str, float]] | None = None,
+    saved_opponents: list[dict[str, Any]] | None = None,
+    player_report_bonuses: dict[str, dict[str, float]] | None = None,
+    player_event_troops: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    """Dual-march Radiant Spire proxy from current inventory + governor gear."""
+    from ks.heroes.optimize.radiant_spire import optimize_radiant
+    from ks.heroes.research_models import ResearchBonuses
+
+    root = (config_root or REPO_ROOT).expanduser().resolve()
+    catalog = load_catalog(None, root / "config" / "hero_catalog.yaml")
+    resolved_troops = (
+        Path(troops_path).expanduser().resolve()
+        if troops_path is not None
+        else root / "config" / "troops.yaml"
+    )
+    troops = load_troops_config(resolved_troops)
+    troop_stats = load_troop_stats(root / "config" / "troop_stats.yaml")
+    raw_troops = yaml.safe_load(resolved_troops.read_text(encoding="utf-8")) or {}
+    truegold = int(raw_troops.get("truegold", troop_stats.default_truegold))
+    research = (
+        research_bonuses
+        if isinstance(research_bonuses, ResearchBonuses)
+        else ResearchBonuses.empty()
+    )
+    result = optimize_radiant(
+        heroes,
+        catalog,
+        gear_pieces=list(gear or ()),
+        governor=governor_bonuses,
+        troops=troops,
+        troop_stats=troop_stats,
+        research=research,
+        active_marches=active_marches,
+        truegold=truegold,
+        floor=floor,
+        floors_path=root / "config" / "mystic_trial" / "radiant_spire_floors.yaml",
+        room_path=root / "config" / "mystic_trial" / "radiant_spire.yaml",
+        enemy_ratio=enemy_ratio,
+        enemy_bonuses=enemy_bonuses,
+        saved_opponents=saved_opponents,
+        player_report_bonuses=player_report_bonuses,
+        player_event_troops=player_event_troops,
+    )
+    out = result.to_dict()
+    out["catalog_hero_names"] = sorted(catalog.keys())
+    roster_troop = {
+        h.name: h.troop_type or ""
+        for h in heroes
+        if getattr(h, "name", None)
+    }
+    out["catalog_by_troop"] = heroes_by_troop(catalog, roster_troop=roster_troop)
+    return out
+
+
+def run_coliseum_optimize(
+    heroes: list[HeroRecord],
+    *,
+    governor_bonuses: GovernorTroopBonuses,
+    gear: list[GearRecord] | None = None,
+    config_root: Path | None = None,
+    troops_path: Path | None = None,
+    saved_opponents: list[dict[str, Any]] | None = None,
+    player_event_troops: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    """Dual-march Coliseum proxy from heroes + gear (governor weight 0)."""
+    from ks.heroes.optimize.mystic_trial.coliseum import optimize_coliseum
+
+    root = (config_root or REPO_ROOT).expanduser().resolve()
+    catalog = load_catalog(None, root / "config" / "hero_catalog.yaml")
+    resolved_troops = (
+        Path(troops_path).expanduser().resolve()
+        if troops_path is not None
+        else root / "config" / "troops.yaml"
+    )
+    troops = load_troops_config(resolved_troops)
+    troop_stats = load_troop_stats(root / "config" / "troop_stats.yaml")
+    raw_troops = yaml.safe_load(resolved_troops.read_text(encoding="utf-8")) or {}
+    truegold = int(raw_troops.get("truegold", troop_stats.default_truegold))
+    result = optimize_coliseum(
+        heroes,
+        catalog,
+        gear_pieces=list(gear or ()),
+        governor=governor_bonuses,
+        troops=troops,
+        troop_stats=troop_stats,
+        truegold=truegold,
+        room_path=root / "config" / "mystic_trial" / "coliseum.yaml",
+        saved_opponents=saved_opponents,
+        player_event_troops=player_event_troops,
+    )
+    out = result.to_dict()
+    out["catalog_hero_names"] = sorted(catalog.keys())
+    roster_troop = {
+        h.name: h.troop_type or ""
+        for h in heroes
+        if getattr(h, "name", None)
+    }
+    out["catalog_by_troop"] = heroes_by_troop(catalog, roster_troop=roster_troop)
+    return out
+
+
+def run_molten_optimize(
+    heroes: list[HeroRecord],
+    *,
+    governor_bonuses: GovernorTroopBonuses,
+    gear: list[GearRecord] | None = None,
+    config_root: Path | None = None,
+    troops_path: Path | None = None,
+) -> dict[str, Any]:
+    """Single-march Molten Fort proxy — governor-primary, light hero weight."""
+    from ks.heroes.optimize.mystic_trial.molten import optimize_molten
+
+    root = (config_root or REPO_ROOT).expanduser().resolve()
+    catalog = load_catalog(None, root / "config" / "hero_catalog.yaml")
+    resolved_troops = (
+        Path(troops_path).expanduser().resolve()
+        if troops_path is not None
+        else root / "config" / "troops.yaml"
+    )
+    troops = load_troops_config(resolved_troops)
+    troop_stats = load_troop_stats(root / "config" / "troop_stats.yaml")
+    raw_troops = yaml.safe_load(resolved_troops.read_text(encoding="utf-8")) or {}
+    truegold = int(raw_troops.get("truegold", troop_stats.default_truegold))
+    result = optimize_molten(
+        heroes,
+        catalog,
+        gear_pieces=list(gear or ()),
+        governor=governor_bonuses,
+        troops=troops,
+        troop_stats=troop_stats,
+        truegold=truegold,
+        room_path=root / "config" / "mystic_trial" / "molten_fort.yaml",
+    )
+    return result.to_dict()

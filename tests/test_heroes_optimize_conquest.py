@@ -138,3 +138,37 @@ def test_cli_conquest_argparse_smoke(tmp_path: Path) -> None:
     assert args.heroes == heroes_file
     assert args.roles.name == "conquest_roles.yaml"
     assert args.gear is None
+
+
+def test_conquest_result_dict_carries_contributions() -> None:
+    roles = load_combat_roles("config/conquest_roles.yaml", catalog=_catalog())
+    # with_survival=False keeps this test on the path Task 4 owns; the
+    # survival pipeline is rewired in Task 5, and the end-to-end
+    # with-survival path is covered by the Task 9 wiring suite.
+    payload = optimize_conquest(
+        _heroes(), _catalog(), roles, with_survival=False
+    ).to_dict()
+    assert payload["stat_family"] == "conquest"
+    assert set(payload["contributions"]) == set(payload["heroes"])
+    for contrib in payload["contributions"].values():
+        assert contrib["family"] == "conquest"
+        for share in contrib["stats"].values():
+            assert share["hero"] >= 0
+            assert share["total"] == pytest.approx(
+                share["hero"] + share["skills"] + share["gear"]
+            )
+
+
+def test_conquest_result_keeps_contributions_with_survival_attached() -> None:
+    # attach_survival rebuilds CombatFormationResult from the pre-survival
+    # result; it must forward stat_family/contributions/formation_totals
+    # rather than letting them reset to the dataclass defaults. with_survival
+    # defaults to True everywhere in the app, so this is the path real
+    # callers actually take.
+    roles = load_combat_roles("config/conquest_roles.yaml", catalog=_catalog())
+    payload = optimize_conquest(_heroes(), _catalog(), roles).to_dict()
+    assert payload["status"] == "Optimal"
+    assert "survival" in payload
+    assert payload["stat_family"] == "conquest"
+    assert payload["formation_totals"] is not None
+    assert set(payload["contributions"]) == set(payload["heroes"])

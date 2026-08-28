@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ks.heroes.gear_models import GearRecord
+from ks.heroes.gear_names import apply_canonical_name
 
 # Fields preserved from a prior record when the incoming value is None.
 _PRESERVE_IF_NONE: frozenset[str] = frozenset({
@@ -131,6 +132,15 @@ class GearStore:
         prev = self._pieces.get(piece.piece_id)
         if prev is not None:
             piece = _merge_preserved(prev, piece, overwrite=ow)
+        # Name authority is troop×slot×rarity (both JSON and SQLite).
+        canonical = apply_canonical_name(
+            name=piece.name,
+            troop=piece.troop_type,
+            slot=piece.slot,
+            rarity=piece.rarity,
+        )
+        if canonical != piece.name:
+            piece = replace(piece, name=canonical)
         self._pieces[piece.piece_id] = piece
         self._write_json()
         self._write_sqlite(piece)

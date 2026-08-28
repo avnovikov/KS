@@ -1,0 +1,14 @@
+id: molten_fort
+label: Molten Fort
+focus: governor
+active_marches: 1
+schema_marches: 1
+seed_ratio:
+  infantry: 0.60
+  cavalry: 0.15
+  archers: 0.25
+published_ratios:
+  - {infantry: 0.60, cavalry: 0.15, archers: 0.25}
+  - {infantry: 0.65, cavalry: 0.15, archers: 0.20}
+  - {infantry: 0.70, cavalry: 0.10, archers: 0.20}
+  - {infantry: 0.60, cavalry: 0.10, archers: 0.30}

@@ -71,6 +71,41 @@ class EffectTag:
     applies_to: str = "expedition"  # expedition | widget | talent
     effect_op: int | None = None  # community SkillMod identifier
     first_expedition: bool = False  # joiner-eligible first expedition skill
+    # Independent chance the effect fires (e.g. Helga Oath of Guardian).
+    # None = always-on. Incoming-damage kinds use a miss/hit mixture, not
+    # ``magnitude * proc_chance`` stacked as a second multiplicative DR layer.
+    proc_chance: float | None = None
+
+
+@dataclass(frozen=True)
+class CatalogSkill:
+    """Named skill row from hero_catalog (static); live levels live on HeroRecord."""
+
+    slot: int
+    name: str
+    family: str  # conquest | expedition | widget
+    effect_kind: str | None = None
+    # Hybrid ladders: absolute values at levels 1..N (usually 5). When set,
+    # leveled scoring uses ladder[level-1] instead of max_value * level/5.
+    ladder: tuple[float, ...] | None = None
+    hits_per_cast: int | None = None
+    cast_rate: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "slot": self.slot,
+            "name": self.name,
+            "family": self.family,
+        }
+        if self.effect_kind is not None:
+            out["effect_kind"] = self.effect_kind
+        if self.ladder is not None:
+            out["ladder"] = list(self.ladder)
+        if self.hits_per_cast is not None:
+            out["hits_per_cast"] = self.hits_per_cast
+        if self.cast_rate is not None:
+            out["cast_rate"] = self.cast_rate
+        return out
 
 
 @dataclass(frozen=True)
@@ -94,6 +129,7 @@ class CatalogEntry:
     garrison_tier: str | None = None
     joiner_tier: str | None = None
     effects: tuple[EffectTag, ...] = ()
+    skills: tuple[CatalogSkill, ...] = ()
     # Arena ILP hints (formerly config/arena_roles.yaml heroes:)
     arena_role: str | None = None
     arena_value: float | None = None
@@ -111,6 +147,20 @@ class EventProfile:
 
 
 @dataclass(frozen=True)
+class SurvivalFill:
+    """PvP troop fill: infantry wall from β√capacity, then √n leftover.
+
+    ``infantry_beta`` is calibrated so 50% infantry at an 80_280 march:
+    β = 0.5 * √80280 ≈ 141.67. Larger marches then want a thinner wall.
+    """
+
+    infantry_beta: float
+    infantry_max_frac: float = 0.6
+    infantry_min_frac: float = 0.0
+    min_type_frac: float = 0.05
+
+
+@dataclass(frozen=True)
 class Scenario:
     mode: str
     combat_rate: float
@@ -121,6 +171,7 @@ class Scenario:
     loot_expected: float = 0.0
     enemy_power_scale: float = 100_000.0
     formation_weights: dict[str, float] | None = None
+    survival_fill: SurvivalFill | None = None
     require_widget: str | None = None  # attack | defense | None
 
 
@@ -147,6 +198,9 @@ class RecommendResult:
     alternatives: tuple[dict[str, Any], ...] = ()
     troops_by_level: dict[str, dict[int, int]] | None = None
     gear_assignment: dict[str, list[dict[str, Any]]] | None = None
+    stat_family: str = "expedition"
+    formation_totals: dict[str, Any] | None = None
+    skillmod_detail: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out = {
@@ -158,6 +212,8 @@ class RecommendResult:
             "expected_personal_points": self.expected_personal_points,
             "breakdown": dict(self.breakdown),
             "alternatives": list(self.alternatives),
+            "stat_family": self.stat_family,
+            "formation_totals": self.formation_totals,
         }
         if self.troops_by_level is not None:
             out["troops_by_level"] = {
@@ -166,4 +222,6 @@ class RecommendResult:
             }
         if self.gear_assignment is not None:
             out["gear_assignment"] = self.gear_assignment
+        if self.skillmod_detail is not None:
+            out["skillmod_detail"] = self.skillmod_detail
         return out

@@ -19,7 +19,15 @@
       <span aria-disabled="true" title="Start the UI with --heroes to enable Optimiser">Optimiser</span>
       {% endif %}
     </nav>
-    <div class="header-actions">{% block actions %}{% endblock %}</div>
+    <div class="header-actions">
+      {% block actions %}{% endblock %}
+      {# POST form prevents CSRF on logout; only shown when auth is active. #}
+      {% if request.state and request.state.user is defined %}
+      <form method="post" action="/auth/logout" style="display:inline">
+        <button type="submit" class="logout-btn">Sign out</button>
+      </form>
+      {% endif %}
+    </div>
   </header>
   {% if primary == 'inventory' %}{% include "_subnav_inventory.html" %}{% endif %}
   {% if primary == 'optimiser' %}{% include "_subnav_optimiser.html" %}{% endif %}

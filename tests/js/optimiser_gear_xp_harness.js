@@ -1,8 +1,10 @@
 /* Executable coverage for the Gear XP spend planner's client logic.
  *
  * Everything below the server-rendered form is built in the browser from one
- * POST /api/optimize/gear-xp: the request body, the delta line, the ordered
- * spend rows, the leftovers, and every refusal-to-send and error path. A
+ * POST /api/optimize/gear-xp/stream: the request body, the live progress
+ * line, the delta line, the ordered spend rows, the leftovers, and every
+ * refusal-to-send and error path (both a plain 4xx before the stream opens,
+ * and an in-stream "error" event after it already committed to 200). A
  * page-render test can only see the empty form, and a source grep cannot tell
  * whether any of it works.
  *
@@ -226,6 +228,8 @@ function makePage(spec) {
   var emptyEl = el("p", "spend-empty", "empty");
   emptyEl.hidden = true;
   var leftoverEl = el("p", "leftover-line", "leftover-line");
+  var valueSummaryEl = el("p", "value-summary-line", "value-summary-line");
+  valueSummaryEl.hidden = true;
 
   var eventButtons = EVENT_SEGMENTS.map(function (seg, i) {
     var btn = new El("button");
@@ -276,6 +280,7 @@ function makePage(spec) {
     "spend-list": listEl,
     "spend-empty": emptyEl,
     "leftover-line": leftoverEl,
+    "value-summary-line": valueSummaryEl,
   };
 
   globalThis.document = {
@@ -301,19 +306,84 @@ function makePage(spec) {
   var replies = [];
   var pendingResolve = null;
 
+  /** The success shape the real /stream endpoint sends: one "start" line and
+   *  one "done" line carrying the same result payload the blocking endpoint
+   *  returns. Fixtures across this file only ever describe the *result*
+   *  (goodResult() and its variants) — this is the one place that wraps it
+   *  into the NDJSON envelope, so every suite that predates streaming needed
+   *  no changes at all. Genuine per-step progress (multiple "step" lines,
+   *  arriving one at a time) is covered separately via queueStreamingReply,
+   *  where a suite controls delivery itself. */
+  function ndjsonFor(result) {
+    var lines = [
+      JSON.stringify({
+        type: "start",
+        event: result && result.event,
+        gear_count: 1,
+        baseline_utility: (result && result.baseline_utility) || 0,
+        max_steps: 50,
+      }),
+      JSON.stringify({ type: "done", result: result, elapsed: 1.2 }),
+    ];
+    return lines.join("\n") + "\n";
+  }
+
   function replyFor() {
     var reply = replies.length ? replies.shift() : spec;
     var ok = reply.status === undefined ? true : reply.status >= 200 && reply.status < 300;
-    var body =
-      reply.body !== undefined
-        ? reply.body
-        : JSON.stringify(reply.result === undefined ? {} : reply.result);
+    var body;
+    if (reply.body !== undefined) {
+      body = reply.body;
+    } else if (ok) {
+      body = ndjsonFor(reply.result === undefined ? {} : reply.result);
+    } else {
+      body = JSON.stringify(reply.result === undefined ? {} : reply.result);
+    }
     return {
       ok: ok,
       status: reply.status === undefined ? 200 : reply.status,
       statusText: reply.statusText || "",
       text: function () {
         return Promise.resolve(body);
+      },
+    };
+  }
+
+  /** A controllable NDJSON body: `push` feeds one chunk to whichever
+   *  `reader.read()` call is currently pending (or queues it if none is),
+   *  `end` signals the stream is done. Lets a suite step through genuine
+   *  per-event delivery the way a real streamed fetch does, instead of the
+   *  whole-reply-at-once shortcut `replyFor` takes for every other suite. */
+  function makeReaderController() {
+    var queue = [];
+    var waiting = null;
+    var ended = false;
+    return {
+      push: function (text) {
+        if (waiting) {
+          var resolve = waiting;
+          waiting = null;
+          resolve({ done: false, value: text });
+        } else {
+          queue.push(text);
+        }
+      },
+      end: function () {
+        ended = true;
+        if (waiting) {
+          var resolve = waiting;
+          waiting = null;
+          resolve({ done: true, value: undefined });
+        }
+      },
+      reader: {
+        read: function () {
+          if (queue.length) return Promise.resolve({ done: false, value: queue.shift() });
+          if (ended) return Promise.resolve({ done: true, value: undefined });
+          return new Promise(function (resolve) {
+            waiting = resolve;
+          });
+        },
       },
     };
   }
@@ -325,6 +395,23 @@ function makePage(spec) {
     if (next && next.reject) {
       if (replies.length) replies.shift();
       return Promise.reject(new Error(next.reject));
+    }
+    if (next && next.stream) {
+      if (replies.length) replies.shift();
+      var ctrl = next.stream;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        statusText: "",
+        body: {
+          getReader: function () {
+            return ctrl.reader;
+          },
+        },
+        text: function () {
+          return Promise.resolve("");
+        },
+      });
     }
     var res = replyFor();
     if (pendingResolve === "hold") {
@@ -366,12 +453,21 @@ function makePage(spec) {
     listEl: listEl,
     emptyEl: emptyEl,
     leftoverEl: leftoverEl,
+    valueSummaryEl: valueSummaryEl,
     calls: calls,
     toasts: toasts,
 
     /** Queue the reply for the *next* fetch, overriding the suite default. */
     queueReply: function (reply) {
       replies.push(reply);
+    },
+    /** Queue a controllable streaming reply for the *next* fetch: returns a
+     *  {push, end} handle so a suite can feed NDJSON lines one at a time and
+     *  observe the page's reaction to each, before the stream ends. */
+    queueStreamingReply: function () {
+      var ctrl = makeReaderController();
+      replies.push({ stream: ctrl });
+      return ctrl;
     },
     holdNextFetch: function () {
       pendingResolve = "hold";
@@ -460,8 +556,12 @@ function makePage(spec) {
         listEl.deepHtmlWrites() +
         emptyEl.deepHtmlWrites() +
         leftoverEl.deepHtmlWrites() +
+        valueSummaryEl.deepHtmlWrites() +
         statusEl.deepHtmlWrites()
       );
+    },
+    valueSummary: function () {
+      return { hidden: valueSummaryEl.hidden, text: valueSummaryEl.textContent };
     },
   };
 }
@@ -530,6 +630,9 @@ function goodResult() {
       heroes: ["Hilde", "Howard", "Saul"],
       expected_personal_points: 26410.86,
     },
+    value_summary:
+      "The first 1,290 XP (80% of 1,620 XP spent) already captured 95% of the " +
+      "258.42-point gain — the rest spends spare fodder for diminishing returns.",
   };
 }
 
@@ -581,8 +684,8 @@ async function suiteHappyPath() {
   check("submitting the form does not navigate", prevented === 1, "preventDefault×" + prevented);
   check("exactly one request goes out", d.calls.length === 1, JSON.stringify(d.calls.length));
   check(
-    "to the endpoint the form declares",
-    d.calls[0].url === "/api/optimize/gear-xp",
+    "to the streaming endpoint",
+    d.calls[0].url === "/api/optimize/gear-xp/stream",
     d.calls[0].url
   );
   check("as a POST", d.calls[0].method === "POST", String(d.calls[0].method));
@@ -666,6 +769,11 @@ async function suiteHappyPath() {
     "leftovers list only what is actually left",
     d.leftoverEl.textContent === "Left in the bag: 3 Green, 1 Blue",
     d.leftoverEl.textContent
+  );
+  check(
+    "the coarse value-vs-burn summary the server composed is shown verbatim",
+    d.valueSummary().hidden === false && d.valueSummary().text === goodResult().value_summary,
+    JSON.stringify(d.valueSummary())
   );
   check(
     "the empty-result line stays out of the way",
@@ -942,6 +1050,22 @@ async function suiteNoSpendsFound() {
   );
 }
 
+async function suiteNoValueSummary() {
+  var flat = goodResult();
+  flat.value_summary = null;
+  var d = makePage({ result: flat });
+  await boot(d);
+  fillBag(d);
+  d.submit();
+  await settle();
+
+  check(
+    "no value summary from the server means the line stays out of the way",
+    d.valueSummary().hidden === true && d.valueSummary().text === "",
+    JSON.stringify(d.valueSummary())
+  );
+}
+
 async function suiteSingularAndFallbacks() {
   var one = goodResult();
   one.steps = [
@@ -1145,6 +1269,132 @@ async function suiteBusyLockout() {
   check("leaving the form usable again", d.calls.length === 2, JSON.stringify(d.calls.length));
 }
 
+/* Every other suite lets replyFor() hand back the whole NDJSON body in one
+ * shot — realistic for the *content* of a reply, but it can never show that
+ * a "step" line updates the page before the "done" line lands. This suite
+ * drives a controllable reader instead, one push per event, so it is the one
+ * place asserting the actual point of streaming: real progress mid-search,
+ * not just a correct final render. */
+async function suiteStreamsPerStepProgress() {
+  var d = makePage({ result: goodResult() });
+  await boot(d);
+  fillBag(d);
+  var ctrl = d.queueStreamingReply();
+  d.submit();
+  await settle();
+
+  check(
+    "the request goes to the streaming endpoint",
+    d.calls[0].url === "/api/optimize/gear-xp/stream",
+    d.calls[0].url
+  );
+  check(
+    "the result panel is hidden the instant the search starts",
+    d.resultEl.hidden === true,
+    d.resultEl.hidden
+  );
+
+  ctrl.push(
+    JSON.stringify({
+      type: "start",
+      event: "swordland",
+      gear_count: 7,
+      baseline_utility: 100,
+      max_steps: 50,
+    }) + "\n"
+  );
+  await settle();
+  check(
+    "a start event reports how much gear it is searching, not a static placeholder",
+    d.statusEl.textContent.indexOf("7") !== -1,
+    d.statusEl.textContent
+  );
+
+  ctrl.push(
+    JSON.stringify({
+      type: "step",
+      step_no: 1,
+      max_steps: 50,
+      chosen: {
+        piece_id: "p1",
+        label: "Judicator's Armet (helmet, mythic)",
+        from_level: 51,
+        to_level: 52,
+        delta: 0.4,
+        xp_cost: 100,
+      },
+      utility: 100.4,
+      elapsed: 3.2,
+    }) + "\n"
+  );
+  await settle();
+  check(
+    "a step event names which piece it just chose and the running utility",
+    d.statusEl.textContent.indexOf("Judicator's Armet") !== -1 &&
+      d.statusEl.textContent.indexOf("1/50") !== -1,
+    d.statusEl.textContent
+  );
+  check(
+    "the search is still running — no result rendered on a mid-search event",
+    d.resultEl.hidden === true,
+    d.resultEl.hidden
+  );
+
+  ctrl.push(JSON.stringify({ type: "done", result: goodResult(), elapsed: 9.9 }) + "\n");
+  ctrl.end();
+  await settle();
+
+  check(
+    "the done event finally renders the result, same as ever",
+    d.resultEl.hidden === false,
+    d.resultEl.hidden
+  );
+  check(
+    "and the status line reports the final count, replacing the last progress line",
+    d.statusEl.textContent === "2 spends proposed." && d.statusEl.classList.contains("ok"),
+    d.statusEl.textContent + " / " + d.statusEl.className
+  );
+}
+
+async function suiteInStreamErrorAfterTheReplyAlreadyCommittedTo200() {
+  var d = makePage({ result: goodResult() });
+  await boot(d);
+  fillBag(d);
+  var ctrl = d.queueStreamingReply();
+  d.submit();
+  await settle();
+
+  ctrl.push(
+    JSON.stringify({
+      type: "start",
+      event: "swordland",
+      gear_count: 1,
+      baseline_utility: 1,
+      max_steps: 50,
+    }) + "\n"
+  );
+  await settle();
+  ctrl.push(
+    JSON.stringify({ type: "error", detail: "baseline event utility is infeasible" }) + "\n"
+  );
+  ctrl.end();
+  await settle();
+
+  check(
+    "a failure only discovered mid-search still reaches the user, even though headers already said 200",
+    d.statusEl.textContent === "baseline event utility is infeasible" &&
+      d.statusEl.classList.contains("err"),
+    d.statusEl.textContent + " / " + d.statusEl.className
+  );
+  check("and is raised as a toast too", d.toasts.length === 1, JSON.stringify(d.toasts));
+  check(
+    "with no half-drawn result left on screen",
+    d.resultEl.hidden === true,
+    d.resultEl.hidden
+  );
+  check("and the run button comes back", d.runBtn.disabled === false, d.runBtn.disabled);
+}
+
 async function suiteWithoutGear() {
   var d = makePage({ result: goodResult(), gearEnabled: false });
   await boot(d);
@@ -1271,11 +1521,14 @@ async function suiteLocale() {
     suiteRefusesUnsendableCounts,
     suiteEmptyBag,
     suiteNoSpendsFound,
+    suiteNoValueSummary,
     suiteSingularAndFallbacks,
     suiteArenaSummary,
     suiteRequestFailure,
     suiteStaleResultsAreDropped,
     suiteBusyLockout,
+    suiteStreamsPerStepProgress,
+    suiteInStreamErrorAfterTheReplyAlreadyCommittedTo200,
     suiteWithoutGear,
     suiteInjection,
     suiteLocale,

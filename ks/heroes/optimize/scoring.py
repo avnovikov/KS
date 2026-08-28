@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from ks.heroes.exclusive_gear import (
     exclusive_gear_level_factor,
     widget_level_from_hero,
@@ -9,6 +11,9 @@ from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.events import default_kind_weights
 from ks.heroes.optimize.types import CatalogEntry, EffectTag, EventProfile
 from ks.heroes.stars_vision import PELLETS_PER_STAR
+
+if TYPE_CHECKING:  # pragma: no cover — runtime import is function-local
+    from ks.heroes.optimize.stat_contributions import StatContribution
 
 
 def star_progress_factor(stars: int | None, pellets: int | None = None) -> float:
@@ -30,6 +35,48 @@ def star_progress_factor(stars: int | None, pellets: int | None = None) -> float
 
 def _star_factor(stars: int | None, pellets: int | None = None) -> float:
     return star_progress_factor(stars, pellets)
+
+
+# Incoming-damage kinds: a proc is a miss/hit mixture, not a second DR layer.
+_REMAINING_DAMAGE_KINDS = frozenset({"damage_taken_down", "opp_damage_down"})
+
+
+def incoming_damage_factor(
+    reduction_pct: float, proc_chance: float | None
+) -> float:
+    """Expected incoming-damage multiplier for a damage-taken-down effect.
+
+    Guaranteed ``r``% DTD leaves ``1 - r/100`` of the hit.
+    A proc is a mixture: miss keeps ``1.0``, hit keeps ``1 - r/100``.
+    That is not ``(1 - r/100) * (1 - p)`` (two multiplicative DR layers).
+    """
+    r = float(reduction_pct) / 100.0
+    if r < 0.0:
+        raise ValueError(f"reduction_pct must be >= 0; got {reduction_pct}")
+    r = min(r, 1.0)
+    if proc_chance is None:
+        return 1.0 - r
+    p = float(proc_chance)
+    if not 0.0 < p <= 1.0:
+        raise ValueError(f"proc_chance must be in (0, 1]; got {p}")
+    return (1.0 - p) * 1.0 + p * (1.0 - r)
+
+
+def effect_percent_points(magnitude: float, tag: EffectTag) -> float:
+    """Catalog percent points after applying an optional proc.
+
+    Remaining-damage kinds use :func:`incoming_damage_factor` (mixture), then
+    convert back to equivalent DTD points ``100 * (1 - factor)``. Other kinds
+    with a proc contribute ``p * magnitude`` (effect on vs off).
+    """
+    mag = float(magnitude)
+    if mag < 0.0:
+        raise ValueError(f"effect magnitude must be >= 0; got {mag}")
+    if tag.kind in _REMAINING_DAMAGE_KINDS:
+        return 100.0 * (1.0 - incoming_damage_factor(mag, tag.proc_chance))
+    if tag.proc_chance is None:
+        return mag
+    return mag * float(tag.proc_chance)
 
 
 def _effect_value(tag: EffectTag, hero: HeroRecord) -> float:
@@ -99,7 +146,8 @@ def _effect_tag_value(
         weight = 0.15 * weights.get(tag.kind, 0.5)
     else:
         weight = weights.get(tag.kind, 0.5)
-    value = weight * _effect_value(tag, hero)
+    raw = _effect_value(tag, hero)
+    value = weight * effect_percent_points(raw, tag)
     if tag.effect_op is not None and tag.first_expedition:
         value *= op_weights.get(tag.effect_op, 1.0)
     return value
@@ -127,9 +175,22 @@ def hero_strength(
     mode: str,
     *,
     event: EventProfile | None = None,
-    effective_power: int | None = None,
-    gear_bonus: float = 0.0,
+    contribution: "StatContribution | None" = None,
 ) -> float:
+    """Mode-weighted effect score plus the hero's expedition contribution.
+
+    ``contribution`` must be an expedition-family ``StatContribution``; it
+    replaces the old effective-power-plus-flat-gear-bonus keyword pair, so
+    power and gear percents enter through one estimated split rather than a
+    raw scrape plus a 0.15-scaled heuristic.
+    """
+    # Local import: scoring is an ancestor of stat_contributions (via both
+    # gear_assign and skill_effects), so a module-level import is circular.
+    from ks.heroes.optimize.stat_contributions import (
+        EXPEDITION,
+        contribution_strength,
+    )
+
     weights, op_weights = _resolve_mode_weights(mode, event)
     total = sum(
         _effect_tag_value(tag, hero, mode, weights, op_weights)
@@ -137,9 +198,11 @@ def hero_strength(
     )
     total += _widget_priority_bonus(entry, mode, hero)
 
-    power = effective_power if effective_power is not None else hero.power
-    if power:
-        total += power / 1_000_000.0
-    if gear_bonus:
-        total += float(gear_bonus)
+    if contribution is not None:
+        if contribution.family != EXPEDITION:
+            raise ValueError(
+                "hero_strength needs an expedition contribution; got "
+                f"{contribution.family!r}"
+            )
+        total += contribution_strength(contribution)
     return total

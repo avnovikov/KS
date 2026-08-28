@@ -1,0 +1,58 @@
+# Canonical gear display names by troop × slot × rarity.
+# OCR titles are noisy; inventory + optimizers use this table when the
+# triple is known. Keys use normalized forms (see gear_names.py).
+
+names:
+  infantry:
+    helmet:
+      epic: "Praetorian's Helm"
+      mythic: "Champion's Helm"
+      blue: "Warrior's Helm"
+    gloves:
+      epic: "Praetorian's Gloves"
+      mythic: "Champion's Gloves"
+      blue: "Warrior's Gloves"
+    chest:
+      epic: "Praetorian's Shroud"
+      mythic: "Praetorian's Shroud"
+      blue: "Warrior's Shroud"
+    boots:
+      epic: "Praetorian's Greaves"
+      mythic: "Praetorian's Greaves"
+      blue: "Warrior's Greaves"
+
+  cavalry:
+    helmet:
+      epic: "Crusader's Armet"
+      mythic: "Judicator's Armet"
+      blue: "Cuirassier's Armet"
+    gloves:
+      epic: "Crusader's Gauntlets"
+      mythic: "Judicator's Gauntlets"
+      blue: "Cuirassier's Gauntlets"
+    chest:
+      epic: "Crusader's Breastplate"
+      mythic: "Judicator's Breastplate"
+      blue: "Cuirassier's Breastplate"
+    boots:
+      epic: "Crusader Battle Boots"
+      mythic: "Judicator's Boots"
+      blue: "Cuirassier's Boots"
+
+  archers:
+    helmet:
+      epic: "Berserker's Faceplate"
+      mythic: "Berserker's Faceplate"
+      blue: "Windbreaker Faceplate"
+    gloves:
+      epic: "Berserker's Bracers"
+      mythic: "Berserker's Bracers"
+      blue: "Windbreaker Bracers"
+    chest:
+      epic: "Berserker's Leatherwear"
+      mythic: "Berserker's Leatherwear"
+      blue: "Windbreaker Leatherwear"
+    boots:
+      epic: "Berserker's Boots"
+      mythic: "Berserker's Boots"
+      blue: "Windbreaker Boots"

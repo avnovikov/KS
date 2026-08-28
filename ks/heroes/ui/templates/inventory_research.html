@@ -1,0 +1,40 @@
+{% extends "_layout.html" %}
+{% block title %}Research · KS{% endblock %}
+
+{% block content %}
+<section class="panel">
+  <h1 class="page-title">Academy research</h1>
+  <p class="hint">
+    Same Atk / Def / Leth / HP cards as Radiant opponent bonuses.
+    Enter values the way the game shows them (e.g. <strong>160.2</strong>,
+    <strong>60.2</strong>, or <strong>0.602</strong>).
+    <strong>Squad</strong> applies to every troop; the other three cards are
+    type-specific. Radiant adds these on top of heroes + governor.
+  </p>
+  <p class="page-meta">{{ research_dir }}</p>
+  <label class="field-label" for="research-note">Note</label>
+  <input id="research-note" class="field-input" type="text" value="{{ summary.note }}" />
+  <div class="opponent-edit panel" style="margin-top:1rem">
+    <div class="bonus-edit bonus-edit--4" id="research-bonus-edit"></div>
+  </div>
+  <p class="hint" style="margin-top:0.75rem">
+    Tip: universal Battle / squad nodes on <strong>Squad</strong>; Infantry /
+    Cavalry / Archer-only nodes on the matching card.
+  </p>
+  <div class="opponent-apply-row">
+    <button type="button" class="btn" id="research-save">Save</button>
+    <span id="research-status" class="muted" aria-live="polite"></span>
+  </div>
+</section>
+<script type="application/json" id="research-initial">{{ summary.bonuses | tojson }}</script>
+<style>
+  .field-label { display:block; margin-top:0.75rem; font-size:0.85rem; }
+  .field-input { width:min(40rem, 100%); padding:0.4rem 0.6rem; }
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/formation_totals.js"></script>
+<script src="/static/optimiser_board.js"></script>
+<script src="/static/inventory_research.js"></script>
+{% endblock %}

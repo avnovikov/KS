@@ -1,0 +1,56 @@
+# Governor Gear ladder + slot map.
+# Sources (community tables; not official API dumps):
+#   - https://kingshotoptimizer.com/governor-gear/references/
+#   - https://kingshotwiki.com/governor-gear/governor-gear/
+#   - https://kingshotdata.com/database/governor-gear/
+# extracted_on: 2026-08-09
+#
+# Set-bonus rule (documented for implementers):
+#   Count pieces that share the same `tier` key (stars may differ).
+#   If >= 3 pieces share a tier → apply that tier's set_defense_pct (3pc).
+#   If >= 6 pieces share a tier → also apply that tier's set_attack_pct (6pc).
+#   If multiple tiers qualify, prefer the higher ladder rank.
+
+slots:
+  hood:
+    display_name: Hood
+    troop: cavalry
+    pair: necklace
+  necklace:
+    display_name: Necklace
+    troop: cavalry
+    pair: hood
+  cloak:
+    display_name: Cloak
+    troop: infantry
+    pair: breeches
+  breeches:
+    display_name: Breeches
+    troop: infantry
+    pair: cloak
+  ring:
+    display_name: Ring
+    troop: archers
+    pair: staff
+  staff:
+    display_name: Staff
+    troop: archers
+    pair: ring
+
+# Ordered ladder: each step is one Upgrade click from the previous.
+# attack_pct == defense_pct per piece (game tables).
+ladder:
+  - {tier: green, stars: 0, attack_pct: 9.35, defense_pct: 9.35, power: 224400, set_defense_pct: 2.0, set_attack_pct: 2.0}
+  - {tier: green, stars: 1, attack_pct: 12.75, defense_pct: 12.75, power: 306000, set_defense_pct: 2.5, set_attack_pct: 2.5}
+  - {tier: blue, stars: 0, attack_pct: 17.0, defense_pct: 17.0, power: 408000, set_defense_pct: 3.0, set_attack_pct: 3.0}
+  - {tier: blue, stars: 1, attack_pct: 21.25, defense_pct: 21.25, power: 510000, set_defense_pct: 3.5, set_attack_pct: 3.5}
+  - {tier: blue, stars: 2, attack_pct: 25.5, defense_pct: 25.5, power: 612000, set_defense_pct: 4.0, set_attack_pct: 4.0}
+  - {tier: blue, stars: 3, attack_pct: 29.75, defense_pct: 29.75, power: 714000, set_defense_pct: 4.5, set_attack_pct: 4.5}
+  - {tier: purple, stars: 0, attack_pct: 34.0, defense_pct: 34.0, power: 816000, set_defense_pct: 5.0, set_attack_pct: 5.0}
+  - {tier: purple, stars: 1, attack_pct: 36.89, defense_pct: 36.89, power: 885360, set_defense_pct: 5.0, set_attack_pct: 5.0}
+  - {tier: purple, stars: 2, attack_pct: 39.78, defense_pct: 39.78, power: 954720, set_defense_pct: 5.0, set_attack_pct: 5.0}
+  - {tier: purple, stars: 3, attack_pct: 42.67, defense_pct: 42.67, power: 1024080, set_defense_pct: 5.0, set_attack_pct: 5.0}
+  - {tier: gold, stars: 0, attack_pct: 56.78, defense_pct: 56.78, power: 1362720, set_defense_pct: 8.0, set_attack_pct: 8.0}
+  - {tier: red, stars: 0, attack_pct: 97.5, defense_pct: 97.5, power: 2340000, set_defense_pct: 12.0, set_attack_pct: 12.0}
+
+default_step: {tier: green, stars: 0}

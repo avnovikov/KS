@@ -5,7 +5,7 @@ from typing import Any
 
 import yaml
 
-from ks.heroes.optimize.types import Scenario
+from ks.heroes.optimize.types import Scenario, SurvivalFill
 
 
 def load_scenarios(path: Path | str) -> dict[str, Scenario]:
@@ -37,5 +37,22 @@ def scenario_from_dict(mode: str, meta: dict[str, Any]) -> Scenario:
         loot_expected=float(meta.get("loot_expected", 0.0)),
         enemy_power_scale=float(meta.get("enemy_power_scale", 100_000.0)),
         formation_weights={str(k): float(v) for k, v in weights.items()},
+        survival_fill=_survival_fill_from_meta(mode, meta),
         require_widget=meta.get("require_widget"),
+    )
+
+
+def _survival_fill_from_meta(mode: str, meta: dict[str, Any]) -> SurvivalFill | None:
+    raw = meta.get("survival_fill")
+    if not raw:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(f"scenario {mode!r} survival_fill must be a mapping")
+    if "infantry_beta" not in raw:
+        raise ValueError(f"scenario {mode!r} survival_fill requires infantry_beta")
+    return SurvivalFill(
+        infantry_beta=float(raw["infantry_beta"]),
+        infantry_max_frac=float(raw.get("infantry_max_frac", 0.6)),
+        infantry_min_frac=float(raw.get("infantry_min_frac", 0.0)),
+        min_type_frac=float(raw.get("min_type_frac", 0.05)),
     )

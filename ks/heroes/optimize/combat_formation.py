@@ -13,14 +13,26 @@ from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.gear_assign import (
     assign_exclusive_sets,
     assignment_to_dict,
-    load_profile_weights,
-    piece_score,
 )
 from ks.heroes.optimize.scoring import (
     normalize_troop,
     star_progress_factor,
 )
+from ks.heroes.optimize.stat_contributions import (
+    CONQUEST,
+    StatContribution,
+    contribution_strength,
+    family_for_event,
+    formation_contribution,
+    hero_contribution,
+)
+from ks.heroes.optimize.conquest_combat import conquest_hero_score
 from ks.heroes.optimize.types import CatalogEntry
+from ks.heroes.governor_models import GovernorTroopBonuses
+
+# Keep sim-lite scores in the same order of magnitude as contribution_strength.
+_SIM_LITE_SCORE_SCALE = 1_000_000.0
+_POWER_SCALE = 1_000_000.0
 
 try:
     import pulp
@@ -45,6 +57,9 @@ class CombatFormationResult:
     reasons: dict[str, str]
     status: str = "Optimal"
     explanations: dict[str, dict[str, Any]] | None = None
+    stat_family: str = CONQUEST
+    contributions: dict[str, dict[str, Any]] | None = None
+    formation_totals: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -55,11 +70,17 @@ class CombatFormationResult:
             "gear_assignment": self.gear_assignment,
             "reasons": dict(self.reasons),
             "status": self.status,
+            "stat_family": self.stat_family,
+            "contributions": self.contributions,
+            "formation_totals": self.formation_totals,
         }
         if self.side is not None:
             out["side"] = self.side
         if self.explanations is not None:
             out["explanations"] = self.explanations
+        survival = (self.explanations or {}).get("survival")
+        if survival is not None:
+            out["survival"] = survival
         return out
 
 
@@ -100,18 +121,41 @@ def hero_base_score(
     roles: dict[str, Any],
     *,
     effective_power: int | None,
-    gear_bonus: float,
+    contribution: StatContribution | None,
     side: str,
+    governor: GovernorTroopBonuses | None = None,
 ) -> float:
-    """Compute a hero's base ILP score before placement multipliers."""
+    """Compute a hero's base ILP score before placement multipliers.
+
+    Strength comes from ``contribution`` power plus Conquest **sim-lite**
+    skill DPS×toughness when the hero has leveled Conquest coeff skills.
+    Falls back to flat contribution_strength (power + Attack/Def/Health)
+    when sim-lite has no skill DPS yet. ``effective_power`` remains only as
+    the fallback for callers with no contribution to hand.
+    """
     meta = _meta_for(hero.name, roles)
     if entry is not None and entry.arena_value is not None:
         arena_value = float(entry.arena_value)
     else:
         arena_value = float(meta.get("arena_value") or 40.0)
     star = star_progress_factor(hero.stars, hero.pellets)
-    power = effective_power if effective_power is not None else hero.power
-    power_term = (float(power) / 1_000_000.0) if power else 0.0
+    if contribution is not None:
+        if contribution.family != CONQUEST:
+            raise ValueError(
+                "hero_base_score needs a conquest contribution; got "
+                f"{contribution.family!r}"
+            )
+        breakdown = conquest_hero_score(hero, entry, governor=governor)
+        if not breakdown.incomplete and breakdown.skill_dps > 0.0:
+            strength_term = 40.0 * (
+                contribution.power.total / _POWER_SCALE
+                + breakdown.score / _SIM_LITE_SCORE_SCALE
+            )
+        else:
+            strength_term = 40.0 * contribution_strength(contribution)
+    else:
+        power = effective_power if effective_power is not None else hero.power
+        strength_term = 40.0 * (float(power) / 1_000_000.0) if power else 0.0
     rarity_bonus = 0.0
     rarity = (entry.rarity if entry else hero.rarity) or ""
     rarity = rarity.lower()
@@ -119,7 +163,7 @@ def hero_base_score(
         rarity_bonus = 8.0
     elif rarity == "epic":
         rarity_bonus = 4.0
-    base = arena_value * star + 40.0 * power_term + gear_bonus + rarity_bonus
+    base = arena_value * star + strength_term + rarity_bonus
 
     if side == "defense":
         place = roles.get("defense_placement") or roles.get("placement") or {}
@@ -169,18 +213,79 @@ def placement_mult(
     return mult
 
 
-def _provisional_gear_bonus(
+def contributions_from_assignment(
+    gear_asg: dict[str, dict[str, GearRecord]],
+    *,
+    catalog: dict[str, CatalogEntry],
+    heroes_by_name: dict[str, HeroRecord],
+    power_by_name: dict[str, int | None] | None = None,
+    family: str = CONQUEST,
+) -> dict[str, StatContribution]:
+    """Contributions from an *already assigned* gear map.
+
+    Must not flatten pieces back into a pool and re-assign by roster power —
+    that clobbers explicit exclusive assignments (PR #26 invariant 1). The
+    passed map is authoritative: each hero is scored with exactly the pieces
+    it holds.
+    """
+    powers = power_by_name or {}
+    out: dict[str, StatContribution] = {}
+    for name, slots in gear_asg.items():
+        hero = heroes_by_name.get(name)
+        if hero is None:
+            continue
+        out[name] = hero_contribution(
+            hero,
+            catalog.get(name),
+            family=family,
+            gear_pieces=slots,
+            power=powers.get(name, hero.power),
+            catalog=catalog,
+        )
+    return out
+
+
+def _provisional_contributions(
     usable: list[HeroRecord],
     catalog: dict[str, CatalogEntry],
     gear: list[GearRecord] | None,
     gear_profile: str,
-) -> dict[str, float]:
-    gear_bonus_by_hero: dict[str, float] = {h.name: 0.0 for h in usable}
+    *,
+    family: str = CONQUEST,
+    power_by_name: dict[str, int | None] | None = None,
+) -> dict[str, StatContribution]:
+    """Contributions under a provisional exclusive gear assignment.
+
+    The ILP needs a strength signal before it knows the formation, so gear is
+    provisionally claimed best-first by *sanitized* power (PR #26 invariant 5).
+    The final assignment — and the final contributions — are recomputed once
+    the formation is solved.
+    """
+    powers = power_by_name or {}
+    heroes_by_name = {h.name: h for h in usable}
+
+    def _claim_power(row: HeroRecord) -> int:
+        value = powers.get(row.name)
+        if value is not None:
+            return int(value)
+        return int(row.power or 0)
+
+    bare = {
+        h.name: hero_contribution(
+            h,
+            catalog.get(h.name),
+            family=family,
+            gear_pieces=None,
+            power=powers.get(h.name, h.power),
+            catalog=catalog,
+        )
+        for h in usable
+    }
     if not gear:
-        return gear_bonus_by_hero
-    weights = load_profile_weights(gear_profile)
+        return bare
+
     score_priority = [
-        h.name for h in sorted(usable, key=lambda row: -(row.power or 0))
+        h.name for h in sorted(usable, key=lambda row: -_claim_power(row))
     ]
     provisional = assign_exclusive_sets(
         usable,
@@ -190,12 +295,16 @@ def _provisional_gear_bonus(
         priority=score_priority,
         profile=gear_profile,
     )
-    for name, slots in provisional.items():
-        gear_bonus_by_hero[name] = 0.15 * sum(
-            piece_score(piece, profile=gear_profile, weights=weights)
-            for piece in slots.values()
-        )
-    return gear_bonus_by_hero
+    return {
+        **bare,
+        **contributions_from_assignment(
+            provisional,
+            catalog=catalog,
+            heroes_by_name=heroes_by_name,
+            power_by_name=powers,
+            family=family,
+        ),
+    }
 
 
 def _reason(
@@ -248,13 +357,14 @@ def solve_combat_formation(
     placement_mult_fn: Callable[..., float] | None = None,
     with_explanations: bool = True,
     explain_fn: Callable[..., dict[str, dict[str, Any]]] | None = None,
+    governor: GovernorTroopBonuses | None = None,
 ) -> CombatFormationResult:
     """Solve the 5-hero 2F+3B placement ILP for any combat mode.
 
     ``side`` is passed to scoring helpers; Arena uses "attack"/"defense".
     When omitted, scoring defaults to "attack" behaviour.
 
-    ``base_score_fn`` is called as ``fn(hero, entry, roles, *, effective_power, gear_bonus)``.
+    ``base_score_fn`` is called as ``fn(hero, entry, roles, *, effective_power, contribution)``.
     ``placement_mult_fn`` is called as ``fn(troop, slot, hero_name, roles)``.
     """
     effective_side = side or "attack"
@@ -268,14 +378,27 @@ def solve_combat_formation(
         or "infantry"
         for h in usable
     }
-    gear_bonus_by_hero = _provisional_gear_bonus(usable, catalog, gear, gear_profile)
+    # Sanitize OCR power blow-ups before gear claim priority and the ILP objective.
+    from ks.heroes.optimize.survival_pipeline import sanitize_hero_powers
+
+    power_by_name = sanitize_hero_powers(usable, roles=roles)
+    family = family_for_event(mode)
+    contributions = _provisional_contributions(
+        usable,
+        catalog,
+        gear,
+        gear_profile,
+        family=family,
+        power_by_name=power_by_name,
+    )
 
     _base_score_fn = base_score_fn or (
-        lambda h, entry, roles, *, effective_power, gear_bonus: hero_base_score(
+        lambda h, entry, roles, *, effective_power, contribution: hero_base_score(
             h, entry, roles,
             effective_power=effective_power,
-            gear_bonus=gear_bonus,
+            contribution=contribution,
             side=effective_side,
+            governor=governor,
         )
     )
     _placement_mult_fn = placement_mult_fn or (
@@ -290,8 +413,8 @@ def solve_combat_formation(
             h,
             catalog.get(h.name),
             roles,
-            effective_power=h.power,
-            gear_bonus=float(gear_bonus_by_hero.get(h.name, 0.0)),
+            effective_power=power_by_name.get(h.name, h.power),
+            contribution=contributions.get(h.name),
         )
 
     prob = pulp.LpProblem(f"{mode}_{effective_side}", pulp.LpMaximize)
@@ -333,6 +456,7 @@ def solve_combat_formation(
         for name in ordered
     }
     gear_assignment = None
+    assigned: dict[str, dict[str, GearRecord]] = {}
     if gear:
         priority = [formation.get(slot) for slot in gear_slot_order]
         priority_names = [n for n in priority if n]
@@ -345,6 +469,20 @@ def solve_combat_formation(
             profile=gear_profile,
         )
         gear_assignment = assignment_to_dict(assigned)
+
+    final_contributions = contributions_from_assignment(
+        {name: (assigned or {}).get(name, {}) for name in ordered},
+        catalog=catalog,
+        heroes_by_name={h.name: h for h in usable},
+        power_by_name=power_by_name,
+        family=family,
+    )
+    formation_totals = formation_contribution(
+        list(final_contributions.values())
+    ).to_dict()
+    contributions_payload = {
+        name: c.to_dict() for name, c in final_contributions.items()
+    }
 
     objective = pulp.value(prob.objective)
     if objective is None:
@@ -408,4 +546,7 @@ def solve_combat_formation(
         reasons=reasons,
         status="Optimal",
         explanations=explanations,
+        stat_family=family,
+        contributions=contributions_payload,
+        formation_totals=formation_totals,
     )
