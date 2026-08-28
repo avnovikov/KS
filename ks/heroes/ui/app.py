@@ -1551,6 +1551,7 @@ def create_app(
         catalog_skills = enrich_catalog_skills(
             name,
             [s.to_dict() for s in entry.skills] if entry is not None else [],
+            widget_march_skill=entry.widget_march_skill if entry is not None else None,
         )
         return {
             "hero": {**hero.to_dict(), "icon_url": icon_url},
@@ -1583,6 +1584,7 @@ def create_app(
         catalog_skills = enrich_catalog_skills(
             name,
             [s.to_dict() for s in entry.skills] if entry is not None else [],
+            widget_march_skill=entry.widget_march_skill if entry is not None else None,
         )
         return {
             "ok": True,

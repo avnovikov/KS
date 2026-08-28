@@ -72,6 +72,9 @@ def test_get_hero_includes_skill_descriptions(tmp_path: Path) -> None:
     assert tidal.get("description")
     assert "tidal" in tidal["description"].lower()
     assert tidal.get("upgrade_preview")
+    widget = next(s for s in res.json()["catalog_skills"] if s["family"] == "widget")
+    assert widget["name"] == "Mistweaver"
+    assert widget.get("description") or widget.get("upgrade_preview")
 
 
 def test_patch_skills_overwrites_levels(tmp_path: Path) -> None:

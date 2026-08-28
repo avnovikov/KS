@@ -13,6 +13,11 @@ mentions fall back to ``_DEFAULT_KIND_FAMILY``. ``widget`` effects are march
 
 from __future__ import annotations
 
+from ks.heroes.exclusive_gear import (
+    exclusive_gear_level_factor,
+    widget_level_from_hero,
+    widget_max_level_from_hero,
+)
 from ks.heroes.models import HeroRecord
 from ks.heroes.optimize.scoring import effect_percent_points, star_progress_factor
 from ks.heroes.optimize.types import CatalogEntry, CatalogSkill, EffectTag
@@ -57,7 +62,6 @@ _DEFAULT_KIND_FAMILY: dict[str, str] = {
 
 _WIDGET = "widget"
 
-# Economy / QoL expedition tags — never feed combat percents or SkillMod.
 _UTILITY_KINDS = frozenset(
     {
         "stamina_cost_down",
@@ -225,16 +229,32 @@ def leveled_catalog_percents(
     return out
 
 
-_DEFAULT_EFFECT_MAX: dict[str, float] = {
-    "attack_up": 25.0,
-    "defense_up": 25.0,
-    "health_up": 25.0,
-    "lethality_up": 25.0,
-    "damage_taken_down": 20.0,
-    "damage_up": 25.0,
-    "aoe_damage_up": 25.0,
-    "enemy_damage_taken_up": 25.0,
-}
+def widget_skill_percents(
+    hero: HeroRecord,
+    entry: CatalogEntry | None,
+) -> dict[str, float]:
+    """Widget-family catalog skills scaled by exclusive gear level."""
+    if entry is None:
+        return {}
+    factor = exclusive_gear_level_factor(
+        widget_level_from_hero(hero),
+        max_level=widget_max_level_from_hero(hero),
+    )
+    if factor <= 0.0:
+        return {}
+    out: dict[str, float] = {}
+    for cskill in entry.skills:
+        if cskill.family != _WIDGET or not cskill.effect_kind:
+            continue
+        max_value = _effect_max_for_skill(entry, cskill)
+        if max_value is None:
+            continue
+        value = float(max_value) * factor
+        tag = _effect_tag_for_skill(entry, cskill)
+        if tag is not None:
+            value = effect_percent_points(value, tag)
+        out[cskill.effect_kind] = out.get(cskill.effect_kind, 0.0) + value
+    return out
 
 
 def _effect_max_for_skill(entry: CatalogEntry, cskill: CatalogSkill) -> float | None:

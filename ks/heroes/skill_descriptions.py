@@ -62,28 +62,63 @@ def load_skill_descriptions_by_hero(
     return {}
 
 
+def _widget_description_fallback(
+    hero_name: str,
+    skill_name: str,
+    by_skill: dict[str, dict[str, str | None]],
+    *,
+    widget_march_skill: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Resolve widget text when the weapon name differs from the skill name."""
+    meta = by_skill.get(skill_name)
+    if meta:
+        return meta.get("description"), meta.get("upgrade_preview")
+    # Kingshotdata often names the widget skill differently (e.g. Helga → Zeal).
+    for candidate in by_skill.values():
+        preview = candidate.get("upgrade_preview") or ""
+        low = preview.lower()
+        if "rally squad" in low or "defender squad" in low:
+            return candidate.get("description"), preview
+    if widget_march_skill:
+        return widget_march_skill, None
+    return None, None
+
+
 def enrich_catalog_skills(
     hero_name: str,
     catalog_skills: list[dict[str, Any]],
     *,
     descriptions_path: str | None = None,
+    widget_march_skill: str | None = None,
 ) -> list[dict[str, Any]]:
     """Attach kingshotdata description fields to catalog skill dicts."""
     by_hero = load_skill_descriptions_by_hero(descriptions_path)
     by_skill = by_hero.get(hero_name) or {}
-    if not by_skill:
-        return catalog_skills
 
     enriched: list[dict[str, Any]] = []
     for skill in catalog_skills:
         row = dict(skill)
-        meta = by_skill.get(str(skill.get("name") or ""))
-        if meta:
-            desc = meta.get("description")
-            preview = meta.get("upgrade_preview")
+        name = str(skill.get("name") or "")
+        family = str(skill.get("family") or "").lower()
+        if family == "widget":
+            desc, preview = _widget_description_fallback(
+                hero_name,
+                name,
+                by_skill,
+                widget_march_skill=widget_march_skill,
+            )
             if desc:
                 row["description"] = desc
             if preview:
                 row["upgrade_preview"] = preview
+        else:
+            meta = by_skill.get(name)
+            if meta:
+                desc = meta.get("description")
+                preview = meta.get("upgrade_preview")
+                if desc:
+                    row["description"] = desc
+                if preview:
+                    row["upgrade_preview"] = preview
         enriched.append(row)
     return enriched

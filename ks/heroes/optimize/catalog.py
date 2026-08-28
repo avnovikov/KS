@@ -199,6 +199,39 @@ def _merge_yaml_heroes(
     return by_name
 
 
+def _widget_effect_kind(effects: list[EffectTag]) -> str | None:
+    for tag in effects:
+        if tag.applies_to == "widget":
+            return tag.kind
+    return None
+
+
+def _ensure_widget_skill(
+    skills: list[CatalogSkill],
+    *,
+    widget_name: str | None,
+    effects: list[EffectTag],
+) -> list[CatalogSkill]:
+    """Append a widget skill row when metadata exists but YAML omitted one."""
+    if not widget_name:
+        return skills
+    if any(s.family == "widget" for s in skills):
+        return skills
+    kind = _widget_effect_kind(effects)
+    if kind is None:
+        return skills
+    next_slot = max((s.slot for s in skills), default=-1) + 1
+    return [
+        *skills,
+        CatalogSkill(
+            slot=next_slot,
+            name=widget_name,
+            family="widget",
+            effect_kind=kind,
+        ),
+    ]
+
+
 def _build_catalog_entry(name: str, data: dict[str, Any]) -> CatalogEntry:
     effects = data.get("effects") or []
     if effects and isinstance(effects[0], dict):
@@ -206,6 +239,13 @@ def _build_catalog_entry(name: str, data: dict[str, Any]) -> CatalogEntry:
     skills = data.get("skills") or ()
     if skills and isinstance(skills[0], dict):
         skills = _parse_skills(skills, hero_name=name)
+    else:
+        skills = list(skills)
+    skills = _ensure_widget_skill(
+        skills,
+        widget_name=data.get("widget_name"),
+        effects=list(effects),
+    )
     return CatalogEntry(
         name=name,
         gen=int(data["gen"]) if data.get("gen") is not None else None,
