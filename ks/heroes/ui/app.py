@@ -37,7 +37,6 @@ from ks.heroes.ui.trust import (
     summarize_flags,
 )
 from ks.heroes.ui.setup_content import (
-    FIRST_STEP_SLUG,
     HELP_CHAPTERS,
     OPTIMISER_HELP,
     SETUP_STEPS,
@@ -605,6 +604,11 @@ def create_app(
             )
         return resolved_heroes, hero_store
 
+    def _default_inventory_path() -> str:
+        if resolved_gear is not None:
+            return "/inventory/gear"
+        return "/inventory/heroes"
+
     def _shell_page(
         request: Request,
         template: str,
@@ -621,6 +625,7 @@ def create_app(
             "gear_enabled": resolved_gear is not None,
             "heroes_enabled": resolved_heroes is not None,
             "setup_step_id": setup_step_id,
+            "default_inventory_path": _default_inventory_path(),
         }
         context.update(extra)
         response = templates.TemplateResponse(request, template, context)
@@ -640,6 +645,7 @@ def create_app(
             "gear_enabled": resolved_gear is not None,
             "heroes_enabled": resolved_heroes is not None,
             "setup_step_id": None,
+            "default_inventory_path": _default_inventory_path(),
         }
         context.update(extra)
         response = templates.TemplateResponse(request, template, context)
@@ -652,9 +658,9 @@ def create_app(
             return RedirectResponse(url="/inventory/gear", status_code=302)
         return RedirectResponse(url="/inventory/heroes", status_code=302)
 
-    @app.get("/setup", include_in_schema=False)
-    def setup_home() -> RedirectResponse:
-        return RedirectResponse(url=f"/setup/{FIRST_STEP_SLUG}", status_code=302)
+    @app.get("/setup", response_class=HTMLResponse)
+    def setup_home(request: Request) -> HTMLResponse:
+        return _guide_page(request, "setup/resume.html", primary="setup")
 
     @app.get("/setup/done", response_class=HTMLResponse)
     def setup_done_page(request: Request) -> HTMLResponse:

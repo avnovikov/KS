@@ -22,6 +22,7 @@
 
   <h2 class="section-title">{{ optimiser.title }}</h2>
   <p class="hint">{{ optimiser.summary }}</p>
+  {% if heroes_enabled %}
   <ul class="help-chapter-list">
     {% for label, href, blurb in optimiser.entries %}
     <li>
@@ -30,6 +31,9 @@
     </li>
     {% endfor %}
   </ul>
+  {% else %}
+  <p class="hint">Start the UI with <code>--heroes</code> to enable optimiser tools.</p>
+  {% endif %}
 
   <p class="help-foot">
     <a href="/setup">Start setup wizard →</a>

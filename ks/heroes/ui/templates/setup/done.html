@@ -13,12 +13,11 @@
     <a class="btn primary" href="/optimiser/events">Open Event lineups</a>
     {% endif %}
     <a class="btn" href="/help">Help reference</a>
-    <a class="btn ghost" href="/inventory/heroes">Back to Inventory</a>
+    <a class="btn ghost" href="{{ default_inventory_path }}">Back to Inventory</a>
   </div>
 </section>
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/setup.js"></script>
 <script>window.SetupPage.initDone();</script>
 {% endblock %}

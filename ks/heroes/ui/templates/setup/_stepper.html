@@ -2,7 +2,8 @@
 <nav class="setup-stepper" aria-label="Setup progress">
   <ol class="setup-stepper-list">
     {% for s in steps %}
-    <li class="setup-stepper-item{% if s.number == step.number %} is-current{% elif s.number < step.number %} is-done{% endif %}">
+    <li class="setup-stepper-item{% if s.number == step.number %} is-current{% endif %}"
+        data-step-id="{{ s.id }}">
       {% if s.number < step.number %}
       <a href="/setup/{{ s.slug }}" class="setup-stepper-link">{{ s.number }}. {{ s.title }}</a>
       {% else %}

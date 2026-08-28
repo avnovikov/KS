@@ -1963,3 +1963,31 @@ select.stack-input {
 .help-foot {
   margin-top: 1.25rem;
 }
+
+.setup-welcome {
+  margin: 0 calc(var(--gutter) + var(--safe-r)) 0.75rem
+    calc(var(--gutter) + var(--safe-l));
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+}
+
+.setup-welcome-text {
+  margin: 0 0 0.65rem;
+  font-size: 0.9rem;
+}
+
+.setup-welcome-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.setup-stepper-item.is-done .setup-stepper-label,
+.setup-stepper-item.is-done .setup-stepper-link {
+  color: var(--ok-text);
+}
+
+.setup-resume {
+  padding: 2rem calc(var(--gutter) + var(--safe-r)) 0
+    calc(var(--gutter) + var(--safe-l));
+}

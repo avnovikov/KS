@@ -89,7 +89,16 @@ SETUP_STEPS: tuple[SetupStep, ...] = (
 
 STEP_BY_SLUG = {step.slug: step for step in SETUP_STEPS}
 STEP_BY_ID = {step.id: step for step in SETUP_STEPS}
+STEP_BY_NUMBER = {step.number: step for step in SETUP_STEPS}
 FIRST_STEP_SLUG = SETUP_STEPS[0].slug
+
+
+def resume_slug(*, current_step: int) -> str:
+    """Setup URL slug for a stored current_step (1–4), or done when past step 4."""
+    if current_step >= 5:
+        return "done"
+    step = STEP_BY_NUMBER.get(current_step)
+    return step.slug if step is not None else FIRST_STEP_SLUG
 
 HELP_CHAPTERS: tuple[dict[str, str], ...] = (
     {

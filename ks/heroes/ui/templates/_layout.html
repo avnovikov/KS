@@ -8,7 +8,8 @@
   <title>{% block title %}KS{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css" />
 </head>
-<body{% if setup_step_id %} data-setup-step="{{ setup_step_id }}"{% endif %}>
+<body{% if setup_step_id %} data-setup-step="{{ setup_step_id }}"{% endif %}
+      data-default-inventory="{{ default_inventory_path }}">
   <header class="app-header">
     <div class="brand">KS</div>
     <nav class="primary-nav" aria-label="Primary">
@@ -27,6 +28,7 @@
   </header>
   {% if primary == 'inventory' %}
   {% include "_subnav_inventory.html" %}
+  {% include "_setup_welcome_banner.html" %}
   {% include "_setup_nudge.html" %}
   {% endif %}
   {% if primary == 'optimiser' %}{% include "_subnav_optimiser.html" %}{% endif %}

@@ -2,6 +2,29 @@
   "use strict";
 
   var STORAGE_KEY = "ks.setup.v1";
+  var SESSION_DISMISS = "ks.setup.dismiss_welcome";
+
+  var slugById = {
+    heroes: "1-heroes",
+    gear: "2-gear",
+    troops: "3-troops",
+    governor: "4-governor",
+  };
+
+  var slugByNumber = {
+    1: "1-heroes",
+    2: "2-gear",
+    3: "3-troops",
+    4: "4-governor",
+  };
+
+  function defaultInventoryPath() {
+    var body = document.body;
+    if (body && body.getAttribute("data-default-inventory")) {
+      return body.getAttribute("data-default-inventory");
+    }
+    return "/inventory/heroes";
+  }
 
   function defaultState() {
     return {
@@ -58,13 +81,14 @@
   function refreshHeaderPill(state) {
     var el = document.getElementById("setup-pill");
     if (!el) return;
-    var done = completedCount(state);
-    if (done >= 4) {
+    state = state || loadState();
+    if (state.skipped || completedCount(state) >= 4) {
       el.textContent = "Setup complete";
       el.classList.add("is-complete");
       return;
     }
-    el.textContent = "Setup " + done + "/4";
+    var cur = Math.min(4, Math.max(1, state.current_step || 1));
+    el.textContent = "Step " + cur + " of 4";
     el.classList.remove("is-complete");
   }
 
@@ -85,6 +109,12 @@
     var nextLink = document.getElementById("setup-next");
     var skipBtn = document.getElementById("setup-skip");
 
+    var state = loadState();
+    if (stepNumber > state.current_step) {
+      state.current_step = stepNumber;
+      saveState(state);
+    }
+
     function revealNext() {
       if (nextLink) nextLink.hidden = false;
     }
@@ -99,16 +129,17 @@
 
     if (skipBtn) {
       skipBtn.addEventListener("click", function () {
-        var state = loadState();
-        state.skipped = true;
-        saveState(state);
-        window.location.href = "/inventory/heroes";
+        var s = loadState();
+        s.skipped = true;
+        saveState(s);
+        window.location.href = defaultInventoryPath();
       });
     }
 
-    var state = loadState();
+    state = loadState();
     if (state.completed[stepId] && nextLink) nextLink.hidden = false;
     refreshHeaderPill(state);
+    applyStepperProgress(state);
   }
 
   function bindDonePage() {
@@ -120,15 +151,55 @@
     saveState(state);
   }
 
-  function maybeRedirectToSetup() {
+  function redirectToResume() {
+    var state = loadState();
+    if (state.skipped || completedCount(state) >= 4) {
+      window.location.replace(defaultInventoryPath());
+      return;
+    }
+    var step = Math.min(4, Math.max(1, state.current_step || 1));
+    var slug = slugByNumber[step] || slugById.heroes;
+    if (completedCount(state) >= 4) {
+      window.location.replace("/setup/done");
+      return;
+    }
+    window.location.replace("/setup/" + slug);
+  }
+
+  function applyStepperProgress(state) {
+    state = state || loadState();
+    var items = document.querySelectorAll(".setup-stepper-item[data-step-id]");
+    items.forEach(function (item) {
+      var id = item.getAttribute("data-step-id");
+      if (id && state.completed[id]) {
+        item.classList.add("is-done");
+      }
+    });
+  }
+
+  function maybeShowWelcomeBanner() {
     var state = loadState();
     if (state.skipped || completedCount(state) >= 4) return;
-    if (sessionStorage.getItem("ks.setup.dismiss_redirect")) return;
+    if (sessionStorage.getItem(SESSION_DISMISS)) return;
     var path = window.location.pathname || "";
     if (path.indexOf("/setup") === 0 || path.indexOf("/help") === 0) return;
-    if (path === "/" || path.indexOf("/inventory") === 0) {
-      sessionStorage.setItem("ks.setup.dismiss_redirect", "1");
-      window.location.replace("/setup");
+    if (path !== "/" && path.indexOf("/inventory") !== 0) return;
+    var banner = document.getElementById("setup-welcome");
+    if (!banner) return;
+    banner.hidden = false;
+    var start = document.getElementById("setup-welcome-start");
+    var dismiss = document.getElementById("setup-welcome-dismiss");
+    if (start) {
+      start.addEventListener("click", function () {
+        sessionStorage.setItem(SESSION_DISMISS, "1");
+        window.location.href = "/setup";
+      });
+    }
+    if (dismiss) {
+      dismiss.addEventListener("click", function () {
+        sessionStorage.setItem(SESSION_DISMISS, "1");
+        banner.hidden = true;
+      });
     }
   }
 
@@ -155,13 +226,6 @@
     }
   }
 
-  var slugById = {
-    heroes: "1-heroes",
-    gear: "2-gear",
-    troops: "3-troops",
-    governor: "4-governor",
-  };
-
   function bindInventoryNudgeByBody() {
     var stepId = document.body && document.body.getAttribute("data-setup-step");
     if (!stepId) return;
@@ -172,19 +236,18 @@
       governor: "Governor charms",
     };
     bindInventoryNudge(stepId, labels[stepId] || stepId);
-    var link = document.getElementById("setup-nudge-link");
-    if (link && slugById[stepId]) link.href = "/setup/" + slugById[stepId];
   }
 
   document.addEventListener("DOMContentLoaded", function () {
     refreshHeaderPill(loadState());
     bindInventoryNudgeByBody();
-    maybeRedirectToSetup();
+    maybeShowWelcomeBanner();
   });
 
   window.SetupPage = {
     initStep: bindStepPage,
     initDone: bindDonePage,
+    redirectToResume: redirectToResume,
     markSetupStep: markStep,
   };
   window.markSetupStep = markStep;
