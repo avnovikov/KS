@@ -1,0 +1,995 @@
+{
+  "_meta": {
+    "source": "kingshotdata.com",
+    "derived_from": "data/heroes/catalog_cache/kingshotdata_stats.json",
+    "scraped_at": "2026-08-10T19:07:31.448576Z",
+    "hero_count": 34,
+    "note": "Skill flavor text and upgrade preview lines for hero detail UI."
+  },
+  "heroes": {
+    "Alcar": {
+      "Glorious Mark": {
+        "description": "A Praetorian's glory is his strength. Alcar enters an invulnerable state (unable to move or cast skills, immune to control effects) and reduces Damage Taken by",
+        "upgrade_preview": "Friendly Damage Taken Down: 30% / 40% / 50% / 60% / 70%"
+      },
+      "Boneshatter": {
+        "description": "Alcar spears a line of enemies, dealing Attack*",
+        "upgrade_preview": "Damage Up: 70% / 77% / 84% / 91% / 98%"
+      },
+      "Second Wind": {
+        "description": "Alcar's loyalty to the old ways give him strength. \"Glorious Mark\" restores Attack*",
+        "upgrade_preview": "Heal Up: 30% / 33% / 36% / 39% / 42%"
+      },
+      "Rescuing Hands": {
+        "description": "Alcar's utter dedication to keeping his men safe is well-proved. Reduces Infantry and Archer's Damage Taken by",
+        "upgrade_preview": "Damage Taken Down: 14% / 28% / 42% / 56% / 70%"
+      },
+      "Praetorian Will": {
+        "description": "The fighting belligerence of a Praetorian is something for others to study. Increases Infantry Damage Dealt by",
+        "upgrade_preview": "Infantry Damage Up: 20% / 40% / 60% / 80% / 100%"
+      },
+      "Carpe Diem": {
+        "description": "Years of training have taught Alcar how to exploit enemy weakness, increasing Infantry Damage Dealt per attack by",
+        "upgrade_preview": "Extra Damage Up: 12% / 24% / 36% / 48% / 60%"
+      },
+      "Flagbearer": {
+        "description": "Glory is best shared. Glory Mark increases friendly Squads' Attack by",
+        "upgrade_preview": "Attack Up: 30% / 33% / 36% / 39% / 42%"
+      },
+      "Vow of Honor": {
+        "description": "There is power in the steadfast vow. Alcar increases Defender Squads' Health by",
+        "upgrade_preview": "Defender Health Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Amadeus": {
+      "Combo Slash": {
+        "description": "Amadeus casts enemies in the target area upward followed by three powerful slashes, each dealing Attack*",
+        "upgrade_preview": "Damage Up: 160% / 176% / 192% / 208% / 224%"
+      },
+      "Arcane Swordship": {
+        "description": "Amadeus releases a burst of arcane energy with each sword slash, dealing Attack*",
+        "upgrade_preview": "Defense Up: 15% / 17% / 19% / 21% / 23%"
+      },
+      "Onslaught": {
+        "description": "Amadeus is a master at pressing his advantage, increasing Attack by",
+        "upgrade_preview": "Attack Up: 16% / 24% / 32% / 40% / 48%"
+      },
+      "Battle Ready": {
+        "description": "Young ranger Amadeus excels in boosting morale, increasing the total Squads' Lethality by",
+        "upgrade_preview": "Lethality Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Way of the Blade": {
+        "description": "Amadeus imparts the secrets of swordsmanship, increasing the total Squads' Attack by",
+        "upgrade_preview": "Attack Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Unrighteous Strike": {
+        "description": "Amadeus' unique swordplay has a",
+        "upgrade_preview": "Damage Dealt Chance Up: 8% / 16% / 24% / 32% / 40%"
+      },
+      "Double Parry": {
+        "description": "Amadeus is a skillful parrier, reducing damage taken by",
+        "upgrade_preview": "Damage Taken Down: 10% / 15% / 20% / 25% / 30%"
+      },
+      "Discernment": {
+        "description": "Amadeus attacks in a sword-tailored formation, increasing Rally Squad's Attack by",
+        "upgrade_preview": "Rally Attack Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Amane": {
+      "Sakura Blossom": {
+        "description": "Amane summons a protective enchantment, increasing all Hero and Escorts' Attack by",
+        "upgrade_preview": "Attack Up: 1.5% / 2% / 2.5% / 3% / 3.5%"
+      },
+      "Fire Sigil": {
+        "description": "Amane lobs a fiery sigil against the enemy, dealing Attack*",
+        "upgrade_preview": "Damage Up: 150% / 165% / 180% / 195% / 210%"
+      },
+      "Divine Melody": {
+        "description": "The dance of the umbrella is the dance of the Blade. Every 3 basic attacks increases Amane's Attack Speed by",
+        "upgrade_preview": "Attack Speed Up: 1% / 2% / 3% / 4% / 5%"
+      },
+      "Tri-Phalanx": {
+        "description": "Amane's trademark formation increases all Squads' total Attack by",
+        "upgrade_preview": "Attack Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Exorcism": {
+        "description": "Amane's skill at warding off evil increases Infirmary Healing Speed by",
+        "upgrade_preview": "Healing Speed Up: 10% / 20% / 30% / 40% / 50%"
+      }
+    },
+    "Ava": {
+      "Color Bomb": {
+        "description": "Some of the most visible colors can be the most poisonous. Ava's color bomb envelops an area, dealing Attack*",
+        "upgrade_preview": "Area of Effect Damage Up: 50% / 55% / 60% / 65% / 70%"
+      },
+      "Corruption Bomb": {
+        "description": "Ava detonates a corrosive pigment combo in the target's face, dealing Attack*",
+        "upgrade_preview": "Damage Up: 25% / 27.5% / 30% / 32.5% / 35%"
+      },
+      "Disguise Pigment": {
+        "description": "The right color combo will confuse enemies, granting Ava",
+        "upgrade_preview": "Defense Up: 25% / 37.5% / 50% / 62.5% / 75%"
+      },
+      "Dissolution": {
+        "description": "An artist sees what others cannot. Ava's deconstructive gaze sees vulnerabilities, reducing total Enemy Squad's Defense by",
+        "upgrade_preview": "Enemy Defense Down: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Chiaroscuro": {
+        "description": "Bright light and dark shadow can blind enemies who do not expect it. All enemy soldiers receive",
+        "upgrade_preview": "Enemy Damage Taken Up: 10% / 20% / 30% / 40% / 50%"
+      },
+      "Light and Cold": {
+        "description": "Ava's weapons are like twin beacons for all to follow, increasing total Squad's Lethality by",
+        "upgrade_preview": "Lethality Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Irradiance": {
+        "description": "Young Ava's pigment arsenal increases her damage dealt by",
+        "upgrade_preview": "Attack Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Color Storm": {
+        "description": "Ava's unique color dispatching system increases Rally Squad's Lethality by",
+        "upgrade_preview": "Rally Lethality Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Charles": {
+      "Vengeance": {
+        "description": "Charles unleashes a Vengeance strike from the Angel of Justice against enemies in a fan-shaped area ahead, dealing Attack*",
+        "upgrade_preview": "Damage Up: 100% / 110% / 120% / 130% / 140%"
+      },
+      "Parting Gift": {
+        "description": "Charles minefields the area after his mech's destruction, dealing Attack*",
+        "upgrade_preview": "Damage Up: 200% / 220% / 240% / 260% / 280%"
+      },
+      "Nimble Soul": {
+        "description": "Charles has always been gifted with lightning-fast reactions, granting a",
+        "upgrade_preview": "Probability Up: 10% / 20% / 30% / 40% / 50%"
+      },
+      "Intimidation": {
+        "description": "The terrifying presence of the massive Angel of Justice on the battlefield reduces enemy Squad's Total Lethality by",
+        "upgrade_preview": "Enemy Lethality Down: 4% / 8% / 12% / 16% / 20%"
+      },
+      "Iron Bodies": {
+        "description": "Superior metal armor forging blunts the impact of conventional weapons, reducing Squad's Damage Taken by",
+        "upgrade_preview": "Damage Taken Down: 4% / 8% / 12% / 16% / 20%"
+      },
+      "Great Justice": {
+        "description": "The Angel of Justice comes outfitted with state-of-the-art battlefield medkits, increasing Squad's total Health by",
+        "upgrade_preview": "Health Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Mechanic": {
+        "description": "Charles takes good care of Angel and restores a certain amount of health (",
+        "upgrade_preview": "Heal Up: 15% / 20% / 25% / 30% / 35%"
+      },
+      "Shock and Awe": {
+        "description": "Charles knows how to make a roaring entrance worthy of the massive Angel of Justice mech, increasing Defender Squad's Health by",
+        "upgrade_preview": "Defender Squad Health Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Chenko": {
+      "Burst Fire": {
+        "description": "Unleashes a rapid barrage, dealing Attack*",
+        "upgrade_preview": "Area of Effect Damage Up: 55% / 60% / 65% / 70% / 75%"
+      },
+      "Defense Upgrade": {
+        "description": "Chenko upgrades her armor, increasing Defense by",
+        "upgrade_preview": "Defense Up: 25% / 37.5% / 50% / 62.5% / 70%"
+      },
+      "Weapon Upgrade": {
+        "description": "Chenko's upgraded weapon boosts Attack by",
+        "upgrade_preview": "Attack Up: 8% / 12% / 16% / 20% / 24%"
+      },
+      "Stand of Arms": {
+        "description": "Chenko implements advanced weaponry for our soldiers, increasing the total Squathality by",
+        "upgrade_preview": "Lethality Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Shield Wall": {
+        "description": "Enhances troop armor with a keen engineering eye, reducing damage taken by",
+        "upgrade_preview": "Damage Taken Down: 4% / 8% / 12% / 16% / 20%"
+      }
+    },
+    "Diana": {
+      "Incendiary Arrows": {
+        "description": "Diana fires an Incendiary Shot, dealing Attack*",
+        "upgrade_preview": "Damage Up: 210% / 230% / 250% / 270% / 290%"
+      },
+      "Sharpshooter": {
+        "description": "Increases Attack Speed by",
+        "upgrade_preview": "Attack Speed Up: 10% / 15% / 20% / 25% / 30%"
+      },
+      "Iron Constitution": {
+        "description": "The unique arts of the wilderness rangers reduce Governor Stamina Cost by",
+        "upgrade_preview": "Stamina Cost Down: 10% / 12% / 15% / 18% / 20%"
+      },
+      "Quick Paced": {
+        "description": "Diana takes care of tough enemies with ease, increasing Hunting March Speed by",
+        "upgrade_preview": "Wilderness March Speed: 20% / 40% / 60% / 80% / 100%"
+      }
+    },
+    "Edwin": {
+      "Shrapnel Load": {
+        "description": "Edwin throws out a homemade explosive, dealing Attack *",
+        "upgrade_preview": "Area of Effect Damage Up: 140% / 154% / 168% / 182% / 196%"
+      },
+      "Detonate": {
+        "description": "Edwin's explosives have a",
+        "upgrade_preview": "Stun Chance: 10% / 15% / 15% / 20% / 20%"
+      },
+      "Demolitions Expert": {
+        "description": "Edwin uses his knowledge of minerals, increasing the Town's Quarry Output by",
+        "upgrade_preview": "Quarry Income: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Stone Mining": {
+        "description": "Edwin's expert quarrying techniques increases his Stone Mining Speed in the Wilderness by",
+        "upgrade_preview": "Stone Gathering Speed: 5% / 10% / 15% / 20% / 25%"
+      }
+    },
+    "Eric": {
+      "Ground Shock": {
+        "description": "Eric imperils the ground with an almighty smash of his blessed hammer, dealing Attack*",
+        "upgrade_preview": "Damage Up: 120% / 132% / 144% / 156% / 168%"
+      },
+      "Veterancy": {
+        "description": "Battle blows and armor scars are naught but glory for a paladin. Attacks against Eric have a",
+        "upgrade_preview": "Probability Up: 8% / 10% / 12% / 14% / 16%"
+      },
+      "Hammer of Justice": {
+        "description": "Eric casts his warhammer into the ground, dealing Attack*",
+        "upgrade_preview": "Damage Up: 80% / 88% / 96% / 104% / 112%"
+      },
+      "Holy Warrior": {
+        "description": "The purity of Eric's faith can cause even his enemies to stumble, reducing total Enemy Squads' Attack by",
+        "upgrade_preview": "Enemy Squad Attack Down: 4% / 8% / 12% / 16% / 20%"
+      },
+      "Conviction": {
+        "description": "Conviction is a shield for the righteous, reducing Squads' Damage Taken by",
+        "upgrade_preview": "Damage Taken Down: 4% / 8% / 12% / 16% / 20%"
+      },
+      "Exhortation": {
+        "description": "An inspiring leader can unlock new reserves of vitality. Eric increases total Squads' Health by",
+        "upgrade_preview": "Health Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Blessed Hammer": {
+        "description": "Eric trusts not himself but his blessed warhammer, increasing damage by",
+        "upgrade_preview": "Damage Up: 10% / 15% / 20% / 25% / 30%"
+      },
+      "Vanguard": {
+        "description": "A paladin must always lead by example from the front. Eric increases Defender Squad Defense by",
+        "upgrade_preview": "Defender Defense Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Fahd": {
+      "Sandstorm": {
+        "description": "The blinding sandstorm reduces all Enemy Squads' Attack by",
+        "upgrade_preview": "Reduces enemy Attack: 1% / 2% / 3% / 4% / 5%"
+      },
+      "Eagle Wings": {
+        "description": "After unleashing the \"Sandstorm\", Fahd's eagle directs allies' attack, increasing his and nearby friendly Squads' Attack by",
+        "upgrade_preview": "Attack Up: 15% / 20% / 25% / 30% / 35%"
+      },
+      "Dune General": {
+        "description": "The harsh desert has given Fahd a strong sense for when to pounce, increasing his Attack Speed by",
+        "upgrade_preview": "Attack Speed Up: 10% / 15% / 20% / 25% / 30%"
+      },
+      "Desert Eclipse": {
+        "description": "A rising cloud of sand is terrible for visibility, reducing Enemy Squad's Damage Dealt by",
+        "upgrade_preview": "Enemy Damage Down: 4% / 8% / 12% / 16% / 20%"
+      },
+      "Pathfinder": {
+        "description": "Fahd has always been a pathfinder for his warriors, increasing Solo Hunting March Speed by",
+        "upgrade_preview": "Hunting March Speed: 20% / 40% / 60% / 80% / 100%"
+      }
+    },
+    "Forrest": {
+      "Axe Whirl": {
+        "description": "Forrest's axe pirouette deals damage of Attack*",
+        "upgrade_preview": "Area of Effect Damage Up: 80% / 88% / 96% / 104% / 110%"
+      },
+      "Razor Sharp": {
+        "description": "Forrest's sharpened axe deals",
+        "upgrade_preview": "Damage Up: 10% / 15% / 20% / 25% / 30%"
+      },
+      "Woodland Inheritor": {
+        "description": "Forrest's expert lumberjack skills increase the Town's Sawmill Output by",
+        "upgrade_preview": "Logging Income: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Master Woodcutter": {
+        "description": "Forrest utilizes his logging expertise, increasing Wood Gathering Speed in the Wilderness by",
+        "upgrade_preview": "Wood Gathering Speed: 5% / 10% / 15% / 20% / 25%"
+      }
+    },
+    "Gordon": {
+      "BBQ Feast": {
+        "description": "Gordon prepares a lavish feast, restoring Health by Attack*",
+        "upgrade_preview": "Heal Up: 200% / 220% / 240% / 260% / 280%"
+      },
+      "Culinary Chaos": {
+        "description": "Gordon's life in a chaotic kitchen reduces his damage taken by",
+        "upgrade_preview": "Damage Taken Down: 10% / 15% / 20% / 25% / 30%"
+      },
+      "Emergency Snack": {
+        "description": "Gordon's regular snacking restores Health equal to Attack*",
+        "upgrade_preview": "Health Up: 50% / 55% / 60% / 65% / 70%"
+      },
+      "Super Nutrients": {
+        "description": "Gordon's culinary masterpieces invigorate our soldiers, increasing total Squads' Health by",
+        "upgrade_preview": "Health Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Trash Talk": {
+        "description": "Beyond delicious meals, Gordon's trash talk increases the total Squads' Attack by",
+        "upgrade_preview": "Attack Up: 5% / 10% / 15% / 20% / 25%"
+      }
+    },
+    "Helga": {
+      "Antler Assault": {
+        "description": "Performs an antler charge, dealing Attack*",
+        "upgrade_preview": "Area of Effect Damage Up: 160% / 176% / 192% / 208% / 224%"
+      },
+      "Spear Charge": {
+        "description": "Deals Attack*",
+        "upgrade_preview": "Damage Up: 150% / 165% / 180% / 195% / 210%"
+      },
+      "Fury": {
+        "description": "When taking damage, there is a 10% chance of increasing Attack by",
+        "upgrade_preview": "Attack Up: 4% / 6% / 8% / 10% / 12%"
+      },
+      "Oath of Guardian": {
+        "description": "Helga has a",
+        "upgrade_preview": "Damage Taken Chance Down: 8% / 16% / 24% / 32% / 40%"
+      },
+      "Echoes of Valhalla": {
+        "description": "Helga blows the horn to motivate the squad, increasing the total Squads' Attack by",
+        "upgrade_preview": "Attack Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Nature's Balance": {
+        "description": "Helga invites everyone to embrace nature, increasing the total Squads' Lethality by",
+        "upgrade_preview": "Lethality Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Valiant Fury": {
+        "description": "Fueled by fury, Helga increases her damage dealt by",
+        "upgrade_preview": "Damage Dealt Up: 10% / 15% / 20% / 25% / 30%"
+      },
+      "Zeal": {
+        "description": "Helga initiates the rally, increasing Rally Squad's Lethality by",
+        "upgrade_preview": "Rally Squads' Lethality Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Hilde": {
+      "Rejuvenating Plea": {
+        "description": "Immediately restores Health equal to her Attack*",
+        "upgrade_preview": "Heal Up: 200% / 220% / 240% / 260% / 280%"
+      },
+      "Redeemer": {
+        "description": "Injury is no match for Hilde's redeeming invocations. Immediately restores Health equal to her Attack*",
+        "upgrade_preview": "Heal Up: 100% / 110% / 120% / 130% / 140%"
+      },
+      "Intimidation": {
+        "description": "Psychological warfare is an age-old tactic. Disables the enemy target for 1s while dealing Attack*",
+        "upgrade_preview": "Damage Up: 140% / 154% / 168% / 182% / 196%"
+      },
+      "Noble Path": {
+        "description": "Hilde's exhaustive discipline develops soldiers into true weapons, increasing the total Squads' Attack and Defense by",
+        "upgrade_preview": "Attack Up: 3% / 6% / 9% / 12% / 15%"
+      },
+      "Elixir oftrength": {
+        "description": "Hilde uses her secret tonic to enhance the warriors' strength, granting all squads' attack a 25% chance of dealing",
+        "upgrade_preview": "Values: 120% / 140% / 160% / 180% / 200%"
+      },
+      "Trial by Fire": {
+        "description": "Hilde's devout prayer has a",
+        "upgrade_preview": "Damage Taken Chance Down: 8% / 16% / 24% / 32% / 40%"
+      },
+      "Fortitude": {
+        "description": "Hilde's pious confidence in her cause is infectious, increasing Defender Squads' Health by",
+        "upgrade_preview": "Defender Squads' Health Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Howard": {
+      "Shielded Strike": {
+        "description": "Howard gives an enemy a solid whack with his heavy shield, knocking the target back while dealing Attack*",
+        "upgrade_preview": "Area of Effect Damage Up: 200% / 220% / 240% / 260% / 280%"
+      },
+      "Joint Defense": {
+        "description": "Howard leads the effort to fortify defenses, increasing Defense by",
+        "upgrade_preview": "Defense Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      },
+      "Shield Block": {
+        "description": "Howard trades in his shield for an upgraded model, reducing damage taken by",
+        "upgrade_preview": "Damage Taken Down: 10% / 15% / 20% / 25% / 30%"
+      },
+      "Defenders' Edge": {
+        "description": "Howard guards our troops with his shield, reducing damage taken by",
+        "upgrade_preview": "Damage Taken Down: 4% / 8% / 12% / 16% / 20%"
+      },
+      "Weaken": {
+        "description": "Howard's intimidating presence reduces the total Enemy Squads' Attack by",
+        "upgrade_preview": "Enemy Squads Attack Down: 4% / 8% / 12% / 16% / 20%"
+      }
+    },
+    "Jabel": {
+      "Gallant Throw": {
+        "description": "Throws a spear that pierces defenses, dealing Attack*",
+        "upgrade_preview": "Area of Effect Damage Up: 180% / 198% / 216% / 234% / 252%"
+      },
+      "Brave the Storm": {
+        "description": "A true knight bravely confronts enemies, dealing Attack*",
+        "upgrade_preview": "Damage Up: 150% / 165% / 180% / 195% / 210%"
+      },
+      "Persistence": {
+        "description": "Adversity ignites endless potential, increasing Attack Speed by",
+        "upgrade_preview": "Attack Speed Up: 20% / 30% / 40% / 50% / 60%"
+      },
+      "Rally Flag": {
+        "description": "Jabel, with her banner-like red armor, has a",
+        "upgrade_preview": "Damage Taken Chance Down: 8% / 16% / 24% / 32% / 40%"
+      },
+      "Hero's Domain": {
+        "description": "Jabel, a fearless knight, grants all squads a 50% chance of dealing",
+        "upgrade_preview": "Damage Up: 10% / 20% / 30% / 40% / 50%"
+      },
+      "Youthful Rage": {
+        "description": "Jabel's valiant spirit inspires everyone, increasing Squads' Lethality by",
+        "upgrade_preview": "Lethality Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Crimson Spirit": {
+        "description": "Jabel's will to win helps to breakthrough her limitations, increasing damage dealt by",
+        "upgrade_preview": "Damage Dealt Up: 10% / 15% / 20% / 25% / 30%"
+      },
+      "Divine Strength": {
+        "description": "Based on steadfast faith, Defender Squads' Lethality is increased by",
+        "upgrade_preview": "Defender Squads' Lethality Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Jaeger": {
+      "Fatal Attraction": {
+        "description": "Like a siren's deadly song, Jaeger deals Attack*",
+        "upgrade_preview": "Area of Effect Damage Up: 160% / 176% / 192% / 208% / 224%"
+      },
+      "Game of Chance": {
+        "description": "Jaeger's deadliest performances are also his most unpredictable. If successful, Jaeger deals Attack*",
+        "upgrade_preview": "Damage Up: 220% / 240% / 260% / 280% / 300%"
+      },
+      "Rumormonger": {
+        "description": "A wandering bard's knows how to take advantage of loose lips, increasing Enemy Damage Taken by",
+        "upgrade_preview": "Enemy Damage Taken Up: 10% / 15% / 20% / 25% / 30%"
+      },
+      "The Tempest": {
+        "description": "Jaeger's triumphant music is a fine tool of intimidation, granting a 20% chance of increasing Squads' damage dealt by",
+        "upgrade_preview": "Damage Up: 8% / 16% / 24% / 32% / 40%"
+      },
+      "The Resistance": {
+        "description": "Music focuses the soldier's mind. Jaeger grants all squads a 20% chance of reducing the total Enemy Squads' Lethality by",
+        "upgrade_preview": "Enemy Lethality Down: 10% / 20% / 30% / 40% / 50%"
+      },
+      "The Celebration": {
+        "description": "A rousing song unlocks new reserves of strength. Increases total Squads' Health by",
+        "upgrade_preview": "Health Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Sound of Silence": {
+        "description": "\"Hush now and watch the master worsilences and prevents the target from using skills for",
+        "upgrade_preview": "Effect Duration: 3 / 3.5 / 4 / 4.5 / 5"
+      },
+      "Hymn to Survival": {
+        "description": "No ease or luxury can be enjoyed unless the lives of soldiers are well-guarded. Jaeger increases Defender Squads' Health by",
+        "upgrade_preview": "Defender Squads' Health Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Long Fei": {
+      "Ambrosia": {
+        "description": "Long Fei becomes one with the battlefield upon drinking his signature ambrosia, gaining",
+        "upgrade_preview": "Attack Speed Up: 80% / 90% / 100% / 110% / 120%"
+      },
+      "Above And Beyond": {
+        "description": "The overconfidence of Long Fei's enemies is their weakness. Damage taken by Long Fei reduces by",
+        "upgrade_preview": "Damage Taken Down: 20% / 30% / 40% / 50% / 60%"
+      },
+      "Mountain Mover": {
+        "description": "The warriors of the ancient way have taught Long Fei many secrets to survival. Long Fei gains",
+        "upgrade_preview": "Attack Up: 16% / 24% / 32% / 40% / 48%"
+      },
+      "Mighty Paragon": {
+        "description": "Long Fei's courage in the teeth of the enemy points the way toward the warrior within, granting a 40% chance of reducing damage taken by all squads by",
+        "upgrade_preview": "Damage Taken Down: 10% / 20% / 30% / 40% / 50%"
+      },
+      "Celestial Sustenance": {
+        "description": "The sweet nectar of Long Fei's potions have born fruit in soldiers' vitality, increasing total Squad's Defense by",
+        "upgrade_preview": "Defense Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Art of War": {
+        "description": "\"All warfare is based on deception\". Long Fei's war wisdom is ingrained in his soldiers, granting all squads' attacks a 25% chance of dealing",
+        "upgrade_preview": "Damage Up: 120% / 140% / 160% / 180% / 200%"
+      },
+      "Strong Brew": {
+        "description": "Extends Ambrosia by 1.5s and restores Long Fei's health by",
+        "upgrade_preview": "Health Up: 7% / 9% / 11% / 13% / 15%"
+      },
+      "Strategic Strike": {
+        "description": "\"Appear unable when able; appear inactive when active.\" Long Fei's war wisdom increases Defender Squads' Attack by",
+        "upgrade_preview": "Defender Attack Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Margot": {
+      "Ambush": {
+        "description": "Margot ambushes an enemy with bombs, dealing Attack*",
+        "upgrade_preview": "Area of Effect Damage Up: 300% / 330% / 360% / 390% / 420%"
+      },
+      "Parry": {
+        "description": "Swords can be used offensively and defensively. Margot has",
+        "upgrade_preview": "Dodge Probability Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Stiletto": {
+        "description": "Margot head-gouges the enemy (heroes first), dealing Attack*",
+        "upgrade_preview": "Damage Up: 100% / 110% / 120% / 130% / 140%"
+      },
+      "Warbringer": {
+        "description": "Margot is a destructive princess of war, increasing total Squad's Attack by",
+        "upgrade_preview": "Attack Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Subterfuge": {
+        "description": "Within Margot's haphazard positioning lies careful strategy. Her presence grants all Squads a",
+        "upgrade_preview": "Dodge Probability Up: 4% / 8% / 12% / 16% / 20%"
+      },
+      "Sleight Hand": {
+        "description": "Margot's Cavalry have a 25% chance of performing an extra attack, dealing",
+        "upgrade_preview": "Damage Up: 120% / 140% / 160% / 180% / 200%"
+      },
+      "Indefensible": {
+        "description": "\"You can't duck both blades\". Margot has a 40% chance of launching a second attack with each Normal Attack, dealing Attack*",
+        "upgrade_preview": "Damage Up: 25% / 30% / 35% / 40% / 45%"
+      },
+      "Pugilist": {
+        "description": "Margot never lets her guard down on the battlements even for a moment, increasing Defender Squads' Lethality by",
+        "upgrade_preview": "Defender Lethality Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Marlin": {
+      "Tidal Rush": {
+        "description": "Marlin is a tidal force on the battlefield, literally and figuratively, when he unleashes a pulse dealing",
+        "upgrade_preview": "Damage Up: 200% / 220% / 240% / 260% / 280%"
+      },
+      "Fermented Blow": {
+        "description": "Marlin's deadly airborne concoction deals Attack*",
+        "upgrade_preview": "Area of Effect Damage Up: 50% / 55% / 60% / 65% / 70%"
+      },
+      "Lucky Hit": {
+        "description": "Good fortune inevitably follows bad. Marlin stuns targets for",
+        "upgrade_preview": "of Attacks: 8 / 7 / 7 / 6 / 5"
+      },
+      "Wild Card": {
+        "description": "Marlin, being unpredictable, has a",
+        "upgrade_preview": "Damage Dealt Chance Up: 8% / 16% / 24% / 32% / 40%"
+      },
+      "Rumhead": {
+        "description": "\"Stiff rum can drown 'most any battlefield sorrow\". Marlin grants all squads a 20% chance of reducing the total Enemy Squads' Lethality by",
+        "upgrade_preview": "Enemy Lethality Down: 10% / 20% / 30% / 40% / 50%"
+      },
+      "Servant of Wine": {
+        "description": "There's no battlefield pick-me-up like Marlin's special brew, healing your weakest hero by Attack*",
+        "upgrade_preview": "Weakest Hero Health Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      },
+      "Admiral of the Line": {
+        "description": "A true admiral leads from the front. Increases Rally Squad's Lethality by",
+        "upgrade_preview": "Rally Squads' Lethality Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Olive": {
+      "Rain of Arrows": {
+        "description": "Olive launches a hail of arrows, dealing Attack*",
+        "upgrade_preview": "Area of Effect Damage Up: 180% / 198% / 216% / 234% / 252%"
+      },
+      "Target Lock": {
+        "description": "Olive paints a bullseye on a target, raising damage inflicted on the target by",
+        "upgrade_preview": "Damage Up: 10% / 15% / 20% / 25% / 30%"
+      },
+      "Green Thumb": {
+        "description": "Olive' unmatched baking skills increase the Town's Mill Output by",
+        "upgrade_preview": "Mill Income: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Forager's Luck": {
+        "description": "Olive's expertise in logistics increases her Bread Gathering Speed in the Wilderness by",
+        "upgrade_preview": "Bread Gathering Speed: 5% / 10% / 15% / 20% / 25%"
+      }
+    },
+    "Petra": {
+      "Dichotomy": {
+        "description": "Petra throws a tarot card at an enemy, dealing Attack*",
+        "upgrade_preview": "Values: 270% / 297% / 324% / 351% / 378%"
+      },
+      "Change of Fate": {
+        "description": "Petra curses an enemy, dealing floating damage based on a base value of Petra's Attack*",
+        "upgrade_preview": "Damage Up: 50% / 55% / 60% / 65% / 70%"
+      },
+      "Turn Card": {
+        "description": "Petra reverses misfortune by healing a friendly hero with the lowest percentage of Health remaining based on a base value of Petra's Attack*",
+        "upgrade_preview": "Heal Up: 100% / 110% / 120% / 130% / 140%"
+      },
+      "Evil Eye": {
+        "description": "Grants all Squads' Attack a 50% chance of cursing the target, increasing Enemy Squad's Damage Taken by",
+        "upgrade_preview": "Enemy Damage Taken Up: 10% / 20% / 30% / 40% / 50%"
+      },
+      "The Favor": {
+        "description": "Petra is known as a lucky fortune-teller to her soldiers, granting a 50% chance of increasing Squads' Attack by",
+        "upgrade_preview": "Damage Up: 10% / 20% / 30% / 40% / 50%"
+      },
+      "The Shield": {
+        "description": "Petra's divination navigates bad outcomes with a 40% chance of reducing damage taken by",
+        "upgrade_preview": "Damage Taken Down: 10% / 20% / 30% / 40% / 50%"
+      },
+      "Weighted Deck": {
+        "description": "Petra has become more skilled at weighting the cards of fate in her favor, increasing the upper and lower limit of her fluctuating skills by",
+        "upgrade_preview": "Fluctuating Skills' Effects Up: 30% / 60% / 90% / 120% / 150%"
+      },
+      "Cosmic Eye": {
+        "description": "\"Strike!\" The cards never fail to inform Petra of the right time to act.",
+        "upgrade_preview": "Rally Squad Attack Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Quinn": {
+      "Headshot": {
+        "description": "The upgraded Crossbow deals Attack *",
+        "upgrade_preview": "Damage Up: 400% / 440% / 480% / 520% / 560%"
+      },
+      "Quick Shot": {
+        "description": "Years of training increases Quinn's Attack Speed by",
+        "upgrade_preview": "Attack Speed Up: 10% / 15% / 20% / 25% / 30%"
+      },
+      "Natural Selection": {
+        "description": "Quinn's expert survival skills increase his damage dealt by",
+        "upgrade_preview": "Damage Up: 10% / 15% / 20% / 25% / 30%"
+      },
+      "Sixth Sense": {
+        "description": "Senses for dangers ahead, reducing damage taken by",
+        "upgrade_preview": "Damage Taken Down: 4% / 8% / 12% / 16% / 20%"
+      },
+      "Precision Shot": {
+        "description": "Quinn grants all soldiers a 50% chance of dealing",
+        "upgrade_preview": "Damage Up: 10% / 20% / 30% / 40% / 50%"
+      }
+    },
+    "Rosa": {
+      "Battle Focus": {
+        "description": "A voluptuous figure, Rosa is used to drawing battlefield attention. Rosa clears all debuffs (control effects, etc.) for all squads and increases their Attack by",
+        "upgrade_preview": "Attack Up: 3% / 4% / 5% / 6% / 7%"
+      },
+      "Flutterfang": {
+        "description": "Rosa spins her fan blade out with dazzling ferocity, dealing Attack*",
+        "upgrade_preview": "Damage Up: 220% / 240% / 260% / 280% / 300%"
+      },
+      "Swoon Chakra": {
+        "description": "Rosa's dancing is a wonderful distraction from the tyranny of the battlefield, reducing' Attack Speed by",
+        "upgrade_preview": "Enemy Attack Speed Down: 100% / 1.5% / 2% / 2.5% / 3%"
+      },
+      "Chaos Gambit": {
+        "description": "Well-placed chaos is prologue to success. Rosa grants a 40% chance of increasing all Squads' Damage Dealt by",
+        "upgrade_preview": "Damage Up: 10% / 20% / 30% / 40% / 50%"
+      },
+      "Rose of War": {
+        "description": "No soldier wishes to harm this wild rose of war, reducing damage dealt by",
+        "upgrade_preview": "Enemy Damage Down: 4% / 8% / 12% / 16% / 20%"
+      },
+      "Golden Rhythm": {
+        "description": "A dance of distraction is the perfect complement to archer fire, increasing Archers' total Attack by",
+        "upgrade_preview": "Attack Up: 6% / 12% / 18% / 24% / 30%"
+      },
+      "Night Reverie": {
+        "description": "Upon casting Battle Focus, Rosa increases her Attack by",
+        "upgrade_preview": "Attack Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      },
+      "Perihelion": {
+        "description": "Rosa's performances greatly increase your soldiers' willingness to fight, increasing Rally Squad's Lethality by",
+        "upgrade_preview": "Rally Squads' Lethality Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Saul": {
+      "Rapid Fire": {
+        "description": "Delivers multiple hits, each dealing Attack*",
+        "upgrade_preview": "Damage Up: 55% / 60% / 65% / 70% / 75%"
+      },
+      "Final Prayer": {
+        "description": "When Health is below 50%, Saul's Defense is increased by",
+        "upgrade_preview": "Defense Up: 50% / 75% / 100% / 125% / 150%"
+      },
+      "Superior Techniques": {
+        "description": "Increases Attack Speed by",
+        "upgrade_preview": "Attack Speed Up: 10% / 15% / 20% / 25% / 30%"
+      },
+      "Taskforce Training": {
+        "description": "As a member of the task force, Saul's unique training program is highly empowering, increasing the total Squads' Defense and Health by",
+        "upgrade_preview": "Defense Up: 2% / 4% / 6% / 8% / 10%"
+      },
+      "Resourceful": {
+        "description": "Saul's efficient construction management increases Construction Speed by",
+        "upgrade_preview": "Construction Speed Up: 3% / 6% / 9% / 12% / 15%"
+      },
+      "Positional Battler": {
+        "description": "Saul masterfully manipulates the battlefield, increasing the total Squads' Lethality by",
+        "upgrade_preview": "Lethality Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Fearless Advance": {
+        "description": "Saul's burst of strong determination under extreme situation increases his attack by",
+        "upgrade_preview": "Attack Up: 6% / 12% / 16% / 20% / 24%"
+      },
+      "Defend to Attack": {
+        "description": "Increases Defender Squads Attack by",
+        "upgrade_preview": "Defender Squads' Attack Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Seth": {
+      "Hammer Burn": {
+        "description": "Seth swings his hammer forward in a devastating arc, dealing Attack*",
+        "upgrade_preview": "Area of Effect Damage Up: 200% / 220% / 240% / 260% / 280%"
+      },
+      "Armor Enhancement": {
+        "description": "Seth upgrades his armor to reduce damage taken by",
+        "upgrade_preview": "Damage Taken Down: 10% / 15% / 20% / 25% / 30%"
+      },
+      "Burnished Iron": {
+        "description": "Seth passes on his passion for iron mining to everyone, increasing the Town's Iron Output by",
+        "upgrade_preview": "Iron Mine Income: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Craftsmanship": {
+        "description": "Seth has a special bond with Iron, increasing his Iron Mining Speed in the Wilderness by",
+        "upgrade_preview": "Iron Mining Speed: 5% / 10% / 15% / 20% / 25%"
+      }
+    },
+    "Sophia": {
+      "Puppet Master": {
+        "description": "Sophia's subtle rose-magic saps enemy soldiers' resolve, dealing Attack *",
+        "upgrade_preview": "Damage Up: 100% / 110% / 120% / 130% / 140%"
+      },
+      "Scalding Mark": {
+        "description": "Sophia attacks with her enchanted rose, dealing Attack *",
+        "upgrade_preview": "Damage Up: 50% / 55% / 60% / 65% / 70%"
+      },
+      "Scalding Mark - Lash": {
+        "description": "Scalding Marks boost Sophia's Attack by",
+        "upgrade_preview": "Attack Up: 8% / 12% / 16% / 20% / 24%"
+      },
+      "Arcane Pact": {
+        "description": "The arcane pact grants Sophia the protection of night, and a",
+        "upgrade_preview": "Probability Up: 8% / 16% / 24% / 32% / 40%"
+      },
+      "Terror - Deathblow": {
+        "description": "Sophia radiates a fearsome aura that has a chance to inflict Terror on enemy targets. Enemy targets suffer the effects of Terror every 2 turns and will receive",
+        "upgrade_preview": "Extra Damage Up: 40% / 80% / 120% / 160% / 200%"
+      },
+      "Terror - Annihilation": {
+        "description": "Terror increases fragility. All Squads deal",
+        "upgrade_preview": "Damage Up: 15% / 30% / 45% / 60% / 75%"
+      },
+      "Eyes of Obedience": {
+        "description": "\"Loyalty to your Queen is your one and only purpose.\" Sophia's attacks have a",
+        "upgrade_preview": "Chance to Confuse: 2% / 3.5% / 5% / 6.5% / 8%"
+      },
+      "Queen of Night": {
+        "description": "Sophia draws upon her avatar as Queen of the Night to enhance soldiers' Attack, increasing Defender Squad's Lethality by",
+        "upgrade_preview": "Defender Lethality Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Thrud": {
+      "Axe Flurry": {
+        "description": "Thrud hurls five axes at random targets (heroes first), dealing Attack*",
+        "upgrade_preview": "Area of Effect Damage Up: 60% / 66% / 72% / 78% / 84%"
+      },
+      "Brutal Throw": {
+        "description": "Thrud throws a spinning axe, dealing Attack*",
+        "upgrade_preview": "Damage Up: 50% / 55% / 60% / 65% / 70%"
+      },
+      "Feast of the Pack": {
+        "description": "Thrud lets out a primal howl, increasing all squads' attack by",
+        "upgrade_preview": "Attack Up: 3% / 3.5% / 4% / 4.5% / 5%"
+      },
+      "Battle Hunger": {
+        "description": "Thrud's battle fever inspires her Infantry and Archers, reducing their damage taken by",
+        "upgrade_preview": "Damage Taken Down: 3% / 6% / 9% / 12% / 15%"
+      },
+      "Reckless Charge": {
+        "description": "No plans. No finesse. Just brutally charging into battle. Thrud's Cavalry has a 20% chance of dealing",
+        "upgrade_preview": "Extra Damage Up: 20% / 40% / 60% / 80% / 100%"
+      },
+      "Ancestral Guidance": {
+        "description": "Ancestral spirits guide the brave to Valhalla. For every 4 attacks made by Cavalry, all squads' damage dealt is increased by",
+        "upgrade_preview": "Damage Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Berserker's Edge": {
+        "description": "While releasing Axe Flurry, Thrud has a",
+        "upgrade_preview": "Stun Chance: 25% / 27.5% / 30% / 32.5% / 35%"
+      },
+      "Wolf-Kissed": {
+        "description": "Thrud lives up to her title, \"Wolf-Kissed.\" Increases Rally Squad's Lethality by",
+        "upgrade_preview": "Rally Lethality Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Triton": {
+      "Tidewill": {
+        "description": "Triton surrounds himself with a barrier of waves that surges forward, gaining invulnerability for 2s before dealing Attack *",
+        "upgrade_preview": "Area of Effect Damage Up: 100% / 110% / 120% / 130% / 140%"
+      },
+      "Regal Wrath": {
+        "description": "Triton channels the rage of the ruler within, increasing Attack by",
+        "upgrade_preview": "Attack Up: 8% / 12% / 16% / 20% / 24%"
+      },
+      "Striking Hit": {
+        "description": "Triton lashes the disobedient with shattering violence, dealing Attack *",
+        "upgrade_preview": "Damage Up: 20% / 22% / 24% / 26% / 28%"
+      },
+      "Command of Power": {
+        "description": "Acceptance of Triton's authority enables the fruits to be shared thereof, increasing total Squads' Defense by",
+        "upgrade_preview": "Defense Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Warfare of Power": {
+        "description": "The power of warfare lies in shared fearlessness in the face of battle, increasing total Squads' skill damage dealt by",
+        "upgrade_preview": "Skill Damage Up: 6% / 12% / 18% / 24% / 30%"
+      },
+      "Oath of Power": {
+        "description": "Great power stems from a willingness to keep oaths, increasing Infantry Health by",
+        "upgrade_preview": "Infantry Health Up: 4% / 8% / 12% / 16% / 20%"
+      },
+      "Magnetic Reformation": {
+        "description": "An artifice of ancient modification, the scepter grants Triton",
+        "upgrade_preview": "Damage Up: 10% / 15% / 20% / 25% / 30%"
+      },
+      "Whale Call": {
+        "description": "Triton's ancient whale-calls echo through the barricades, filling soldiers with unshakable resolve and increasing Defender Squad Defense by",
+        "upgrade_preview": "Defender Defense Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Vivian": {
+      "Gilded Barrage": {
+        "description": "Vivian fires a coin bullet at the enemy back row (heroes first), dealing Attack*",
+        "upgrade_preview": "Area of Effect Damage Up: 180% / 198% / 216% / 234% / 252%"
+      },
+      "Lucky Strike": {
+        "description": "Luck can turn the tide. Vivian fires at an enemy (heroes first), dealing Attack*",
+        "upgrade_preview": "Damage Up: 100% / 110% / 120% / 130% / 140%"
+      },
+      "Priceless Shot": {
+        "description": "Vivian unleashes a devastating hail of massive coin bullets, dealing Attack*",
+        "upgrade_preview": "Damage Up: 35% / 38.5% / 42% / 45.5% / 49%"
+      },
+      "Crouching Tiger": {
+        "description": "Vivian is a patient commander willing to wait for just the right moment to strike. All squads' attacks increase enemy damage taken by",
+        "upgrade_preview": "Enemy Damage Taken Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Focus Fire": {
+        "description": "Vivian's sharp focus exposes enemy weaknesses, granting all squads' attack",
+        "upgrade_preview": "Extra Damage Up: 20% / 40% / 60% / 80% / 100%"
+      },
+      "Trap of Greed": {
+        "description": "Vivian equips her Archers with custom coin traps, her Archers deals",
+        "upgrade_preview": "Extra Damage Up: 12% / 24% / 36% / 48% / 60%"
+      },
+      "Refined Gunplay": {
+        "description": "Vivian's refined shooting style lets her deal Attack*",
+        "upgrade_preview": "Damage Up: 50% / 55% / 60% / 65% / 70%"
+      },
+      "Money Driven": {
+        "description": "Big rewards fuel great bravery, increasing Defender Squad Defense by",
+        "upgrade_preview": "Defender Squads' Defense Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Wee &amp; Woo": {
+      "High Ground": {
+        "description": "Wee & Woo follow the artillery principle of \"high ground, long shots\" to the letter, dealing Attack*",
+        "upgrade_preview": "Damage Up: 300% / 330% / 360% / 390% / 420%"
+      },
+      "Incendiaries": {
+        "description": "Wee & Woo fire a special incendiary round from the Royal Foundry, dealing Attack*",
+        "upgrade_preview": "Damage Up: 60% / 66% / 72% / 78% / 84%"
+      },
+      "Frontal Support": {
+        "description": "Article 30 of the artilleryman's code provides a role for non-essential personnel at the front when necessary, increasing Attack by",
+        "upgrade_preview": "Attack Up: 10% / 14% / 18% / 22% / 26%"
+      },
+      "Artillerymen": {
+        "description": "The inclusion of the artillerymen has an overall helpful effect of increasing Squad's total Attack by",
+        "upgrade_preview": "Attack Up: 3% / 6% / 9% / 12% / 15%"
+      },
+      "Chain Shelling": {
+        "description": "Wee & Woo's devastating back-to-back rounds tear shreds through the enemy lines, increasing Squad's Damage Dealt to Archer by",
+        "upgrade_preview": "Damage to Archer Up: 6% / 12% / 18% / 24% / 30%"
+      },
+      "Boom Boom": {
+        "description": "\"There's always someone in every cannon duo who can aim well.\" Wee & Woo's presence gives Squad's Attack a",
+        "upgrade_preview": "Probability Up: 10% / 20% / 30% / 40% / 50%"
+      },
+      "Zero Sympathy": {
+        "description": "Truly, Wee & Woo's knowledge of modern ranged techniques has boosted morale. Wee & Woo also increase the Attack Speeds by",
+        "upgrade_preview": "Attack Speed Up: 6% / 8% / 10% / 12% / 14%"
+      },
+      "Landmines": {
+        "description": "Smart artillerymen always keep mines in reserve in case of unwelcome friends. Wee & Woo increase Defender Squad's Attack by",
+        "upgrade_preview": "Defender Squads' Attack Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Yang": {
+      "Kin Throw": {
+        "description": "Yang delivers a rip-roaring Frostkin in a straight line against enemies, dealing Attack *",
+        "upgrade_preview": "Damage Up: 100% / 110% / 120% / 130% / 140%"
+      },
+      "Combo": {
+        "description": "Yang's special firearm has a",
+        "upgrade_preview": "Extra Attack Chance: 15% / 20% / 25% / 30% / 35%"
+      },
+      "Deadshot": {
+        "description": "Any bullet can inflict the critical blow to a hunter's prey when aimed just right. Yang enjoys a",
+        "upgrade_preview": "Crit Rate: 3% / 6% / 9% / 12% / 15%"
+      },
+      "Avalanche": {
+        "description": "An avalanche for Yang is just another weaponn her arsenal, resulting in an additional strike against a target by all Squads every 4 turns for",
+        "upgrade_preview": "Damage Up: 20% / 40% / 60% / 80% / 100%"
+      },
+      "Ice Zone": {
+        "description": "Years of arctic adversity have taught Yang to seize advantages, granting Yang's archers a 40% chance of dealing",
+        "upgrade_preview": "Extra Damage Up: 20% / 40% / 60% / 80% / 100%"
+      },
+      "Ambush": {
+        "description": "Yang is an advanced thinker who can easily grasp the principles of almost any phenomena, granting a",
+        "upgrade_preview": "Probability Up: 8% / 16% / 24% / 32% / 40%"
+      },
+      "Quick Draw": {
+        "description": "Yang's impressive muscle memory enables a five-shot barrage, dealing Attack *",
+        "upgrade_preview": "Damage Up: 40% / 44% / 48% / 52% / 56%"
+      },
+      "Offensive Defense": {
+        "description": "Yang puts the maxim that the best defense is a good offense to good use, increasing Rally Squad's Lethality by",
+        "upgrade_preview": "Rally Squads Lethality Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    },
+    "Yeonwoo": {
+      "Petalbloom": {
+        "description": "Yeonwoo arcs Petalbloom outward in three waves, dealing Attack *100%, Attack *",
+        "upgrade_preview": "nd Wave Damage Up: 125% / 137.5% / 150% / 162.5% / 175%"
+      },
+      "Falling Swallow": {
+        "description": "The Falling Swallow technique weaves confusion in enemy ranks, dealing Attack*",
+        "upgrade_preview": "Damage Up: 100% / 110% / 120% / 130% / 140%"
+      },
+      "Twin Fangs": {
+        "description": "Yeonwoo's unusual duel form is devilishly difficult to defend against, increasing Attack by",
+        "upgrade_preview": "Attack Up: 8% / 12% / 16% / 20% / 24%"
+      },
+      "On Guard": {
+        "description": "\"My blade and I are one\". Yeonwoo's sword skills increases all Squads' total Lethality by",
+        "upgrade_preview": "Lethality Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Well-Traveled": {
+        "description": "Yeonwoo's travels have secured a technological edge, increasing Research Speed by",
+        "upgrade_preview": "Increases Research Speed: 3% / 6% / 9% / 12% / 15%"
+      }
+    },
+    "Zoe": {
+      "Shield Strike": {
+        "description": "Zoe's unpredictable attacks easily enweb foes, dealing Attack*",
+        "upgrade_preview": "Damage Up: 60% / 66% / 72% / 78% / 84%"
+      },
+      "Agony Rush": {
+        "description": "Zoe requires pain to reach peak physical performance. Zoe immediately regains",
+        "upgrade_preview": "Heal Up: 20% / 25% / 30% / 35% / 40%"
+      },
+      "Holy Might": {
+        "description": "Zoe inspires her fellow warriors to battle, boosting your heroes' Attack Speed by",
+        "upgrade_preview": "Attack Speed Up: 3% / 4% / 5% / 6% / 7%"
+      },
+      "Sundering Wound": {
+        "description": "Your squads' attacks gain a 20% chance of inflicting Sunder, dealing",
+        "upgrade_preview": "Damage Up: 8% / 16% / 24% / 32% / 40%"
+      },
+      "Charisma": {
+        "description": "Zoe is a gifted female orator, and her rousing battle speeches increase the total Squad's Attack by",
+        "upgrade_preview": "Attack Up: 5% / 10% / 15% / 20% / 25%"
+      },
+      "Infinite Arsenal": {
+        "description": "Zoe strikes the enemy so completely and utterly that your squads' attacks gain a 50% chance of amplifying enemy squads' damage taken by",
+        "upgrade_preview": "Enemy Damage Taken Up: 10% / 20% / 30% / 40% / 50%"
+      },
+      "Death Or Glory": {
+        "description": "Zoe's inner demon is awakened only by pain. Gaining",
+        "upgrade_preview": "Attack Up: 8% / 12% / 16% / 20% / 24%"
+      },
+      "Dark Lady": {
+        "description": "Zoe is a relentlessly demanding garrison commander, increasing Defender Squads' Attack by",
+        "upgrade_preview": "Defender Squads' Attack Up: 5% / 7.5% / 10% / 12.5% / 15%"
+      }
+    }
+  }
+}

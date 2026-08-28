@@ -67,6 +67,12 @@
   function skillCardHtml(cs) {
     var level = levelBySlot[String(cs.slot)];
     var levelLabel = level == null ? "—" : String(level);
+    var descHtml = cs.description
+      ? '<p class="skill-desc">' + esc(cs.description) + "</p>"
+      : "";
+    var previewHtml = cs.upgrade_preview
+      ? '<p class="skill-preview muted">' + esc(cs.upgrade_preview) + "</p>"
+      : "";
     return (
       '<article class="skill-card" data-slot="' +
       esc(cs.slot) +
@@ -78,6 +84,8 @@
       esc(cs.family) +
       (cs.effect_kind ? " · " + esc(cs.effect_kind) : "") +
       "</p>" +
+      descHtml +
+      previewHtml +
       '<div class="skill-level-row">' +
       '<button type="button" class="btn skill-dec" data-slot="' +
       esc(cs.slot) +
@@ -134,6 +142,8 @@
       ".skill-col-title{margin:0;font-size:.95rem;letter-spacing:.02em;text-transform:uppercase;opacity:.85;}" +
       ".skill-card{border:1px solid var(--border,#444);border-radius:8px;padding:.75rem;}" +
       ".skill-card h4{margin:0 0 .25rem;font-size:1rem;}" +
+      ".skill-desc{margin:.35rem 0 0;font-size:.85rem;line-height:1.35;opacity:.92;}" +
+      ".skill-preview{margin:.25rem 0 0;font-size:.78rem;line-height:1.3;font-style:italic;}" +
       ".skill-level-row{display:flex;align-items:center;gap:.5rem;margin-top:.5rem;}" +
       ".skill-level{min-width:3.5rem;text-align:center;font-variant-numeric:tabular-nums;}" +
       "@media (max-width:520px){.skill-grid{grid-template-columns:1fr;}}" +
