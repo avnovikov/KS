@@ -257,6 +257,18 @@ def widget_skill_percents(
     return out
 
 
+_DEFAULT_EFFECT_MAX: dict[str, float] = {
+    "attack_up": 25.0,
+    "defense_up": 25.0,
+    "health_up": 25.0,
+    "lethality_up": 25.0,
+    "damage_taken_down": 20.0,
+    "damage_up": 25.0,
+    "aoe_damage_up": 25.0,
+    "enemy_damage_taken_up": 25.0,
+}
+
+
 def _effect_max_for_skill(entry: CatalogEntry, cskill: CatalogSkill) -> float | None:
     """Resolve max_value for a skill's effect_kind.
 
