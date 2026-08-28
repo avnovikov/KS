@@ -1,0 +1,31 @@
+{% extends "_layout.html" %}
+{% block title %}Help · {{ chapter.title }} · KS{% endblock %}
+
+{% block content %}
+<section class="panel help-panel">
+  <p class="help-crumb"><a href="/help">Help</a></p>
+  <h1 class="page-title">{{ chapter.title }}</h1>
+  <p class="hint">{{ chapter.summary }}</p>
+
+  <h2 class="section-title">Do this</h2>
+  <ol class="setup-list">
+    {% for item in step.do_this %}
+    <li>{{ item }}</li>
+    {% endfor %}
+  </ol>
+
+  {% if step.tips %}
+  <div class="setup-tip">
+    <strong>Tip.</strong>
+    {% for tip in step.tips %}
+    <span>{{ tip }}</span>{% if not loop.last %} {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="setup-actions">
+    <a class="btn primary" href="{{ step.inventory_path }}">{{ step.inventory_label }}</a>
+    <a class="btn" href="/setup/{{ chapter.setup_slug }}">Repeat setup step →</a>
+  </div>
+</section>
+{% endblock %}

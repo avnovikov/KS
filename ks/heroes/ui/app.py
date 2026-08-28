@@ -36,6 +36,15 @@ from ks.heroes.ui.trust import (
     hero_row_incomplete,
     summarize_flags,
 )
+from ks.heroes.ui.setup_content import (
+    FIRST_STEP_SLUG,
+    HELP_CHAPTERS,
+    OPTIMISER_HELP,
+    SETUP_STEPS,
+    STEP_BY_ID,
+    STEP_BY_SLUG,
+    step_context,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
@@ -602,6 +611,7 @@ def create_app(
         *,
         primary: str,
         subtab: str,
+        setup_step_id: str | None = None,
         **extra: Any,
     ) -> HTMLResponse:
         """Render a page inside the Inventory/Optimiser shell (never cached)."""
@@ -610,6 +620,26 @@ def create_app(
             "subtab": subtab,
             "gear_enabled": resolved_gear is not None,
             "heroes_enabled": resolved_heroes is not None,
+            "setup_step_id": setup_step_id,
+        }
+        context.update(extra)
+        response = templates.TemplateResponse(request, template, context)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    def _guide_page(
+        request: Request,
+        template: str,
+        *,
+        primary: str,
+        **extra: Any,
+    ) -> HTMLResponse:
+        context: dict[str, Any] = {
+            "primary": primary,
+            "subtab": "",
+            "gear_enabled": resolved_gear is not None,
+            "heroes_enabled": resolved_heroes is not None,
+            "setup_step_id": None,
         }
         context.update(extra)
         response = templates.TemplateResponse(request, template, context)
@@ -621,6 +651,57 @@ def create_app(
         if resolved_gear is not None:
             return RedirectResponse(url="/inventory/gear", status_code=302)
         return RedirectResponse(url="/inventory/heroes", status_code=302)
+
+    @app.get("/setup", include_in_schema=False)
+    def setup_home() -> RedirectResponse:
+        return RedirectResponse(url=f"/setup/{FIRST_STEP_SLUG}", status_code=302)
+
+    @app.get("/setup/done", response_class=HTMLResponse)
+    def setup_done_page(request: Request) -> HTMLResponse:
+        return _guide_page(request, "setup/done.html", primary="setup")
+
+    _SETUP_TEMPLATES = {
+        "1-heroes": "setup/step_heroes.html",
+        "2-gear": "setup/step_gear.html",
+        "3-troops": "setup/step_troops.html",
+        "4-governor": "setup/step_governor.html",
+    }
+
+    @app.get("/setup/{step_slug}", response_class=HTMLResponse)
+    def setup_step_page(request: Request, step_slug: str) -> HTMLResponse:
+        step = STEP_BY_SLUG.get(step_slug)
+        if step is None:
+            raise HTTPException(status_code=404, detail="unknown setup step")
+        return _guide_page(
+            request,
+            _SETUP_TEMPLATES[step_slug],
+            primary="setup",
+            **step_context(step),
+        )
+
+    @app.get("/help", response_class=HTMLResponse)
+    def help_index_page(request: Request) -> HTMLResponse:
+        return _guide_page(
+            request,
+            "help/index.html",
+            primary="help",
+            chapters=HELP_CHAPTERS,
+            optimiser=OPTIMISER_HELP,
+        )
+
+    @app.get("/help/{chapter_id}", response_class=HTMLResponse)
+    def help_chapter_page(request: Request, chapter_id: str) -> HTMLResponse:
+        chapter = next((c for c in HELP_CHAPTERS if c["id"] == chapter_id), None)
+        if chapter is None:
+            raise HTTPException(status_code=404, detail="unknown help chapter")
+        step = STEP_BY_ID[chapter_id]
+        return _guide_page(
+            request,
+            "help/chapter.html",
+            primary="help",
+            chapter=chapter,
+            step=step,
+        )
 
     # Legacy paths kept for bookmarks; the IA lives under /inventory and
     # /optimiser now.
@@ -659,6 +740,7 @@ def create_app(
             "inventory_gear.html",
             primary="inventory",
             subtab="gear",
+            setup_step_id="gear",
             pieces=pieces,
             icons=icon_map,
             gear_dir=str(gear_path),
@@ -711,6 +793,7 @@ def create_app(
             "inventory_heroes.html",
             primary="inventory",
             subtab="heroes",
+            setup_step_id="heroes",
             heroes=heroes,
             icons=icon_map,
             heroes_dir=str(heroes_path),
@@ -747,6 +830,7 @@ def create_app(
             "inventory_troops.html",
             primary="inventory",
             subtab="troops",
+            setup_step_id="troops",
             form=troops_form_model(raw),
             troops_path=str(troop_store.path),
             load_error=load_error,
@@ -760,6 +844,7 @@ def create_app(
             "inventory_governor_gear.html",
             primary="inventory",
             subtab="governor",
+            setup_step_id="governor",
             summary=summary,
             governor_dir=str(resolved_governor),
         )

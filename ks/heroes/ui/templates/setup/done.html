@@ -1,0 +1,24 @@
+{% extends "_layout.html" %}
+{% block title %}Setup complete · KS{% endblock %}
+
+{% block content %}
+<section class="panel setup-panel setup-done">
+  <h1 class="page-title">Inventory ready</h1>
+  <p class="hint">
+    Heroes, gear, troops, and governor charms are set up. You can spot-check any
+    time from Inventory, then run the optimisers.
+  </p>
+  <div class="setup-actions">
+    {% if heroes_enabled %}
+    <a class="btn primary" href="/optimiser/events">Open Event lineups</a>
+    {% endif %}
+    <a class="btn" href="/help">Help reference</a>
+    <a class="btn ghost" href="/inventory/heroes">Back to Inventory</a>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/setup.js"></script>
+<script>window.SetupPage.initDone();</script>
+{% endblock %}

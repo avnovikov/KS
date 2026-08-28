@@ -212,6 +212,13 @@
       }
       lastSavedBody = body;
       savedOnce = true;
+      if (
+        data.totals &&
+        data.totals.march_capacity > 0 &&
+        typeof window.markSetupStep === "function"
+      ) {
+        window.markSetupStep("troops");
+      }
       if (data.totals) {
         Object.keys(data.totals).forEach(function (key) {
           if (form.querySelector('[data-total-for="' + key + '"]')) {

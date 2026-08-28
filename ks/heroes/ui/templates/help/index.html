@@ -1,0 +1,38 @@
+{% extends "_layout.html" %}
+{% block title %}Help · KS{% endblock %}
+
+{% block content %}
+<section class="panel help-panel">
+  <h1 class="page-title">Help</h1>
+  <p class="hint">
+    Follow the setup guide in order — heroes, gear, troops, governor charms —
+    then use the optimisers.
+  </p>
+
+  <h2 class="section-title">Setup guide</h2>
+  <ul class="help-chapter-list">
+    {% for ch in chapters %}
+    <li>
+      <a href="/help/{{ ch.id }}">{{ ch.title }}</a>
+      <span class="muted"> — {{ ch.summary }}</span>
+      <a class="help-setup-link" href="/setup/{{ ch.setup_slug }}">Run step →</a>
+    </li>
+    {% endfor %}
+  </ul>
+
+  <h2 class="section-title">{{ optimiser.title }}</h2>
+  <p class="hint">{{ optimiser.summary }}</p>
+  <ul class="help-chapter-list">
+    {% for label, href, blurb in optimiser.entries %}
+    <li>
+      <a href="{{ href }}">{{ label }}</a>
+      <span class="muted"> — {{ blurb }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+
+  <p class="help-foot">
+    <a href="/setup">Start setup wizard →</a>
+  </p>
+</section>
+{% endblock %}

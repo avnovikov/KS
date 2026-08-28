@@ -1,5 +1,5 @@
-{# Apple-light shell. Expects: primary ("inventory"|"optimiser"), subtab,
-   gear_enabled, heroes_enabled. #}
+{# Apple-light shell. Expects: primary ("inventory"|"optimiser"|"setup"|"help"),
+   subtab, gear_enabled, heroes_enabled; optional setup_step_id on body. #}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -8,7 +8,7 @@
   <title>{% block title %}KS{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css" />
 </head>
-<body>
+<body{% if setup_step_id %} data-setup-step="{{ setup_step_id }}"{% endif %}>
   <header class="app-header">
     <div class="brand">KS</div>
     <nav class="primary-nav" aria-label="Primary">
@@ -19,14 +19,22 @@
       <span aria-disabled="true" title="Start the UI with --heroes to enable Optimiser">Optimiser</span>
       {% endif %}
     </nav>
-    <div class="header-actions">{% block actions %}{% endblock %}</div>
+    <div class="header-actions">
+      <a href="/setup" class="setup-pill" id="setup-pill">Setup</a>
+      <a href="/help" class="help-link" title="Help" aria-label="Help">?</a>
+      {% block actions %}{% endblock %}
+    </div>
   </header>
-  {% if primary == 'inventory' %}{% include "_subnav_inventory.html" %}{% endif %}
+  {% if primary == 'inventory' %}
+  {% include "_subnav_inventory.html" %}
+  {% include "_setup_nudge.html" %}
+  {% endif %}
   {% if primary == 'optimiser' %}{% include "_subnav_optimiser.html" %}{% endif %}
   <main>{% block content %}{% endblock %}</main>
   <div id="toast" role="status" hidden></div>
   {# Shared helpers first: page scripts call window.showToast/HeroesTrust. #}
   <script src="/static/app.js"></script>
+  <script src="/static/setup.js"></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

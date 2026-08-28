@@ -1,0 +1,15 @@
+{# Step indicator for /setup/* pages. Expects: step, steps #}
+<nav class="setup-stepper" aria-label="Setup progress">
+  <ol class="setup-stepper-list">
+    {% for s in steps %}
+    <li class="setup-stepper-item{% if s.number == step.number %} is-current{% elif s.number < step.number %} is-done{% endif %}">
+      {% if s.number < step.number %}
+      <a href="/setup/{{ s.slug }}" class="setup-stepper-link">{{ s.number }}. {{ s.title }}</a>
+      {% else %}
+      <span class="setup-stepper-label">{{ s.number }}. {{ s.title }}</span>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  <p class="setup-stepper-meta">Step {{ step.number }} of {{ steps|length }}</p>
+</nav>

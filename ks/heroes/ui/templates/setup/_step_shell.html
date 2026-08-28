@@ -1,0 +1,57 @@
+{% extends "_layout.html" %}
+{% block title %}Setup · {{ step.title }} · KS{% endblock %}
+
+{% block content %}
+{% include "setup/_stepper.html" %}
+
+<section class="panel setup-panel">
+  <h1 class="page-title">{{ step.headline }}</h1>
+  <p class="hint setup-lead">{{ step.title }} inventory — get this trustworthy before running optimisers.</p>
+
+  <h2 class="section-title">Do this</h2>
+  <ol class="setup-list">
+    {% for item in step.do_this %}
+    <li>{{ item }}</li>
+    {% endfor %}
+  </ol>
+
+  {% if step.tips %}
+  <div class="setup-tip">
+    <strong>Tip.</strong>
+    {% for tip in step.tips %}
+    <span>{{ tip }}</span>{% if not loop.last %} {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div class="setup-actions">
+    <a class="btn primary" href="{{ step.inventory_path }}">{{ step.inventory_label }}</a>
+    <button type="button" class="btn" id="setup-mark-done" data-step-id="{{ step.id }}">
+      Mark step complete
+    </button>
+  </div>
+</section>
+
+<footer class="setup-footer">
+  <div class="setup-footer-nav">
+    {% if prev_slug %}
+    <a href="/setup/{{ prev_slug }}" class="btn ghost">Back</a>
+    {% else %}
+    <span></span>
+    {% endif %}
+    <button type="button" class="btn ghost" id="setup-skip">Skip setup</button>
+    {% if next_slug %}
+    <a href="/setup/{{ next_slug }}" class="btn" id="setup-next" hidden>Next</a>
+    {% else %}
+    <a href="/setup/done" class="btn" id="setup-next" hidden>Finish</a>
+    {% endif %}
+  </div>
+</footer>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/setup.js"></script>
+<script>
+  window.SetupPage.initStep({{ step.number }}, "{{ step.id }}");
+</script>
+{% endblock %}

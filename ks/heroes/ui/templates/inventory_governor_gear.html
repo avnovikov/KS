@@ -57,6 +57,9 @@
           btn.disabled = false;
           return;
         }
+        if (typeof window.markSetupStep === "function") {
+          window.markSetupStep("governor");
+        }
         location.reload();
       } catch (err) {
         alert(String(err));
