@@ -203,6 +203,11 @@ def host_skillmod_buckets(
     Includes ``expedition`` and ``widget`` applies_to (host skills fire).
     Values are star-scaled catalog ``max_value`` percent points.
     """
+    from ks.heroes.exclusive_gear import (
+        exclusive_gear_level_factor,
+        widget_level_from_hero,
+        widget_max_level_from_hero,
+    )
     from ks.heroes.optimize.scoring import effect_percent_points, star_progress_factor
     from ks.heroes.optimize.types import CatalogEntry, EffectTag
     from ks.heroes.models import HeroRecord
@@ -216,7 +221,7 @@ def host_skillmod_buckets(
     for hero, entry in heroes_with_entries:
         if not isinstance(hero, HeroRecord) or not isinstance(entry, CatalogEntry):
             raise TypeError("heroes_with_entries must be (HeroRecord, CatalogEntry)")
-        scale = star_progress_factor(hero.stars, hero.pellets)
+        star_scale = star_progress_factor(hero.stars, hero.pellets)
         for tag in entry.effects:
             if not isinstance(tag, EffectTag):
                 continue
@@ -227,6 +232,15 @@ def host_skillmod_buckets(
                 continue
             family, default_op = meta
             op = int(tag.effect_op) if tag.effect_op is not None else default_op
+            if tag.applies_to == "widget":
+                scale = exclusive_gear_level_factor(
+                    widget_level_from_hero(hero),
+                    max_level=widget_max_level_from_hero(hero),
+                )
+                if scale <= 0.0:
+                    continue
+            else:
+                scale = star_scale
             pct = effect_percent_points(float(tag.max_value) * float(scale), tag)
             if pct <= 0:
                 continue

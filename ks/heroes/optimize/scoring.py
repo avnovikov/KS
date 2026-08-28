@@ -192,10 +192,18 @@ def hero_strength(
     )
 
     weights, op_weights = _resolve_mode_weights(mode, event)
+    has_widget_skill = any(s.family == "widget" for s in entry.skills)
     total = sum(
         _effect_tag_value(tag, hero, mode, weights, op_weights)
         for tag in entry.effects
+        if not (tag.applies_to == "widget" and has_widget_skill)
     )
+    if has_widget_skill and mode not in ("solo", "joiner"):
+        from ks.heroes.optimize.skill_effects import widget_skill_percents
+
+        for kind, pct in widget_skill_percents(hero, entry).items():
+            weight = weights.get(kind, 0.5)
+            total += weight * pct
     total += _widget_priority_bonus(entry, mode, hero)
 
     if contribution is not None:

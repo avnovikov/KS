@@ -23,6 +23,7 @@ from ks.heroes.name_ocr import DEFAULT_CATALOG_YAML
 from ks.heroes.optimize.catalog import load_catalog
 from ks.heroes.optimize.types import CatalogEntry
 from ks.heroes.optimize.troops import troops_config_from_dict
+from ks.heroes.skill_descriptions import enrich_catalog_skills
 from ks.heroes.store import HeroStore
 from ks.heroes.ui.hero_icons import ensure_all_hero_icons
 from ks.heroes.ui.hero_power import scale_power_for_star_change
@@ -1545,12 +1546,12 @@ def create_app(
         icon_url = with_cache_bust(
             ensure_all_hero_icons([hero], heroes_path).get(name), bust
         )
-        from ks.heroes.optimize.catalog import load_catalog
-
         catalog = load_catalog(None, REPO_ROOT / "config" / "hero_catalog.yaml")
         entry = catalog.get(name)
-        catalog_skills = (
-            [s.to_dict() for s in entry.skills] if entry is not None else []
+        catalog_skills = enrich_catalog_skills(
+            name,
+            [s.to_dict() for s in entry.skills] if entry is not None else [],
+            widget_march_skill=entry.widget_march_skill if entry is not None else None,
         )
         return {
             "hero": {**hero.to_dict(), "icon_url": icon_url},
@@ -1578,12 +1579,12 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         icon_url = ensure_all_hero_icons([updated], heroes_path).get(name)
-        from ks.heroes.optimize.catalog import load_catalog
-
         catalog = load_catalog(None, REPO_ROOT / "config" / "hero_catalog.yaml")
         entry = catalog.get(name)
-        catalog_skills = (
-            [s.to_dict() for s in entry.skills] if entry is not None else []
+        catalog_skills = enrich_catalog_skills(
+            name,
+            [s.to_dict() for s in entry.skills] if entry is not None else [],
+            widget_march_skill=entry.widget_march_skill if entry is not None else None,
         )
         return {
             "ok": True,

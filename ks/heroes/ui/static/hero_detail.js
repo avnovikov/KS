@@ -57,40 +57,69 @@
   }
 
   function skillsPayload() {
-    return catalogSkills.map(function (cs) {
-      var level = levelBySlot[String(cs.slot)];
-      if (level == null) level = 1;
-      return { slot: cs.slot, name: cs.name, level: level };
-    });
+    return catalogSkills
+      .filter(function (cs) {
+        return (cs.family || "").toLowerCase() !== "widget";
+      })
+      .map(function (cs) {
+        var level = levelBySlot[String(cs.slot)];
+        if (level == null) level = 1;
+        return { slot: cs.slot, name: cs.name, level: level };
+      });
+  }
+
+  function widgetLevelLabel() {
+    var eg = currentHero && currentHero.exclusive_gear;
+    if (!eg || eg.level == null) return "—";
+    var max = eg.max_level == null ? 10 : eg.max_level;
+    return String(eg.level) + "/" + String(max);
   }
 
   function skillCardHtml(cs) {
+    var fam = (cs.family || "").toLowerCase();
+    var isWidget = fam === "widget";
     var level = levelBySlot[String(cs.slot)];
     var levelLabel = level == null ? "—" : String(level);
+    var descHtml = cs.description
+      ? '<p class="skill-desc">' + esc(cs.description) + "</p>"
+      : "";
+    var previewHtml = cs.upgrade_preview
+      ? '<p class="skill-preview muted">' + esc(cs.upgrade_preview) + "</p>"
+      : "";
+    var levelRow = isWidget
+      ? '<div class="skill-level-row"><span class="skill-level">Widget Lv ' +
+        esc(widgetLevelLabel()) +
+        "</span><span class=\"muted\">Set on roster grid</span></div>"
+      : '<div class="skill-level-row">' +
+        '<button type="button" class="btn skill-dec" data-slot="' +
+        esc(cs.slot) +
+        '" aria-label="Decrease level">−</button>' +
+        '<span class="skill-level" data-slot="' +
+        esc(cs.slot) +
+        '">Lv ' +
+        esc(levelLabel) +
+        "</span>" +
+        '<button type="button" class="btn skill-inc" data-slot="' +
+        esc(cs.slot) +
+        '" aria-label="Increase level">+</button>' +
+        "</div>";
     return (
-      '<article class="skill-card" data-slot="' +
+      '<article class="skill-card' +
+      (isWidget ? " skill-card-widget" : "") +
+      '" data-slot="' +
       esc(cs.slot) +
       '">' +
       "<h4>" +
       esc(cs.name) +
       "</h4>" +
       '<p class="muted">' +
-      esc(cs.family) +
+      esc(isWidget ? "widget" : cs.family) +
       (cs.effect_kind ? " · " + esc(cs.effect_kind) : "") +
       "</p>" +
-      '<div class="skill-level-row">' +
-      '<button type="button" class="btn skill-dec" data-slot="' +
-      esc(cs.slot) +
-      '" aria-label="Decrease level">−</button>' +
-      '<span class="skill-level" data-slot="' +
-      esc(cs.slot) +
-      '">Lv ' +
-      esc(levelLabel) +
-      "</span>" +
-      '<button type="button" class="btn skill-inc" data-slot="' +
-      esc(cs.slot) +
-      '" aria-label="Increase level">+</button>' +
-      "</div></article>"
+      descHtml +
+      previewHtml +
+      levelRow +
+      "</article>"
     );
   }
 
@@ -100,10 +129,12 @@
     }
     var conquest = [];
     var expedition = [];
+    var widget = [];
     catalogSkills.forEach(function (cs) {
       var fam = (cs.family || "").toLowerCase();
       if (fam === "conquest") conquest.push(cs);
-      else expedition.push(cs); // expedition + widget on the right
+      else if (fam === "widget") widget.push(cs);
+      else expedition.push(cs);
     });
     function col(title, list) {
       if (!list.length) {
@@ -123,17 +154,21 @@
     }
     return (
       '<h3 class="section-title">Skills</h3>' +
-      '<p class="hint">Catalog skills · levels 1–5 overwrite OCR.</p>' +
+      '<p class="hint">Catalog skills · levels 1–5 overwrite OCR. Widget level is set on the roster grid.</p>' +
       '<div class="skill-grid" id="skill-grid">' +
       col("Conquest", conquest) +
       col("Expedition", expedition) +
+      (widget.length ? col("Widget", widget) : "") +
       "</div>" +
       "<style>" +
-      ".skill-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin-top:.5rem;align-items:start;}" +
+      ".skill-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;margin-top:.5rem;align-items:start;}" +
       ".skill-col{display:flex;flex-direction:column;gap:.75rem;}" +
       ".skill-col-title{margin:0;font-size:.95rem;letter-spacing:.02em;text-transform:uppercase;opacity:.85;}" +
       ".skill-card{border:1px solid var(--border,#444);border-radius:8px;padding:.75rem;}" +
+      ".skill-card-widget{border-color:var(--accent,#6a9);}" +
       ".skill-card h4{margin:0 0 .25rem;font-size:1rem;}" +
+      ".skill-desc{margin:.35rem 0 0;font-size:.85rem;line-height:1.35;opacity:.92;}" +
+      ".skill-preview{margin:.25rem 0 0;font-size:.78rem;line-height:1.3;font-style:italic;}" +
       ".skill-level-row{display:flex;align-items:center;gap:.5rem;margin-top:.5rem;}" +
       ".skill-level{min-width:3.5rem;text-align:center;font-variant-numeric:tabular-nums;}" +
       "@media (max-width:520px){.skill-grid{grid-template-columns:1fr;}}" +

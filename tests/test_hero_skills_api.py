@@ -47,6 +47,36 @@ def test_get_hero_includes_catalog_skills(tmp_path: Path) -> None:
     assert any(s["name"] == "Stand of Arms" for s in body["catalog_skills"])
 
 
+def test_get_hero_includes_skill_descriptions(tmp_path: Path) -> None:
+    heroes = tmp_path / "heroes"
+    heroes.mkdir()
+    (heroes / "heroes.json").write_text('{"heroes":[]}', encoding="utf-8")
+    store = HeroStore(heroes)
+    store.upsert(
+        HeroRecord(
+            name="Marlin",
+            power=100,
+            troop_type="archers",
+            rarity="legendary",
+            stars=3,
+            pellets=0,
+            roster_page=0,
+            roster_index=1,
+            scraped_at="2026-08-09T00:00:00Z",
+        )
+    )
+    client = TestClient(create_app(gear_dir=None, heroes_dir=heroes))
+    res = client.get("/api/heroes/Marlin")
+    assert res.status_code == 200
+    tidal = next(s for s in res.json()["catalog_skills"] if s["name"] == "Tidal Rush")
+    assert tidal.get("description")
+    assert "tidal" in tidal["description"].lower()
+    assert tidal.get("upgrade_preview")
+    widget = next(s for s in res.json()["catalog_skills"] if s["family"] == "widget")
+    assert widget["name"] == "Mistweaver"
+    assert widget.get("description") or widget.get("upgrade_preview")
+
+
 def test_patch_skills_overwrites_levels(tmp_path: Path) -> None:
     client = _client(tmp_path)
     payload = {
