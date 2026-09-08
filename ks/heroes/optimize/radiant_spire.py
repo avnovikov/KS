@@ -530,6 +530,8 @@ def optimize_radiant(
     remaining = list(ranked)
     marches: list[MarchResult] = []
     remaining_owned = dict(owned)
+    remaining_gear = list(gear_pieces)
+    claimed_gear_ids: set[str] = set()
     saved_list = list(saved_opponents or ())
 
     from ks.heroes.optimize.mystic_trial.enemy_proxy import (
@@ -575,14 +577,25 @@ def optimize_radiant(
         pick_names = [h.name for h in pick]
         remaining = [(h, t, r) for h, t, r in remaining if h.name not in pick_names]
 
+        # Physical gear is exclusive across marches (one faceplate cannot equip
+        # on both). Claim from the remaining inventory pool each march.
         gear_by_hero = assign_exclusive_sets(
             list(heroes),
             dict(catalog),
-            list(gear_pieces),
+            remaining_gear,
             selected=pick_names,
             priority=pick_names,
             profile="early_game_growth",
         )
+        for slots in gear_by_hero.values():
+            for piece in slots.values():
+                pid = getattr(piece, "piece_id", None)
+                if pid:
+                    claimed_gear_ids.add(str(pid))
+        if claimed_gear_ids:
+            remaining_gear = [
+                p for p in remaining_gear if str(p.piece_id) not in claimed_gear_ids
+            ]
         gear_assignment = assignment_to_dict(gear_by_hero)
         hero_atk, hero_def, hero_leth, hero_hp, hero_shares = _lineup_troop_percents(
             pick, catalog, gear_by_hero

@@ -163,6 +163,52 @@ def test_coliseum_fills_two_marches_with_six_heroes() -> None:
     assert names0.isdisjoint(names1)
 
 
+def test_coliseum_faceplate_is_exclusive_across_marches() -> None:
+    """One physical Inf helmet can equip only one Coliseum march."""
+    from ks.heroes.gear_models import GearRecord
+
+    catalog = load_catalog(None, ROOT / "config" / "hero_catalog.yaml")
+    names = [
+        ("Helga", "infantry"),
+        ("Howard", "infantry"),
+        ("Jabel", "cavalry"),
+        ("Chenko", "cavalry"),
+        ("Diana", "archers"),
+        ("Saul", "archers"),
+    ]
+    missing = [n for n, _ in names if n not in catalog]
+    if missing:
+        pytest.skip(f"catalog missing fixtures: {missing}")
+    heroes = [_hero(n, t, attack=20.0 + i) for i, (n, t) in enumerate(names)]
+    faceplate = GearRecord(
+        piece_id="fp-once",
+        name="Judicator Faceplate",
+        troop_type="infantry",
+        slot="helmet",
+        rarity="mythic",
+        enhancement_level=5,
+        mastery_level=0,
+        power=100_000,
+    )
+    result = optimize_coliseum(
+        heroes,
+        catalog,
+        gear_pieces=[faceplate],
+        governor=_gov(atk=0.0),
+        troops=_troops(),
+        troop_stats=_table(),
+    )
+    filled = [m for m in result.to_dict()["marches"] if m]
+    assert len(filled) == 2
+    wears = 0
+    for march in filled:
+        for name in march["hero_names"]:
+            pieces = (march.get("gear_assignment") or {}).get(name) or []
+            if any(p.get("piece_id") == "fp-once" for p in pieces):
+                wears += 1
+    assert wears == 1
+
+
 def test_coliseum_uses_player_event_troops_not_inventory_mix() -> None:
     catalog = load_catalog(None, ROOT / "config" / "hero_catalog.yaml")
     heroes = _fixture_heroes()
