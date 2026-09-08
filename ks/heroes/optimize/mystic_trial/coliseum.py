@@ -2,7 +2,8 @@
 
 Uses the Radiant Spire search pipeline (exclusive dual marches + layered ratio
 search) with Coliseum room ratios and ``governor_weight=0`` — heroes/gear
-drive the proxy; governor percents stay off unless callers opt in.
+drive the proxy; governor percents stay off unless callers opt in. Physical
+gear is exclusive across marches (one faceplate cannot equip on both).
 """
 
 from __future__ import annotations
