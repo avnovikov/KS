@@ -37,7 +37,8 @@ def test_coliseum_html_has_stage_round_inputs() -> None:
     assert "opponent-apply" in text
     assert "opponent-copy-other" in text
     assert "optimiser_board.js" in text
-    assert "160.2" in text
+    assert "percent-points" in text
+    assert "115" in text
 
 
 def test_coliseum_js_renders_opponent_picker() -> None:
