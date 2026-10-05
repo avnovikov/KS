@@ -6,10 +6,13 @@ from dataclasses import dataclass
 from pathlib import Path
 import shutil
 
+from ks.auth.google_identity import email_path_segment
+from ks.auth.session_user import PROVIDER_DISCORD, PROVIDER_GOOGLE, SessionUser
+
 
 @dataclass(frozen=True, slots=True)
 class UserInventoryPaths:
-    """Resolved filesystem locations for one Discord user."""
+    """Resolved filesystem locations for one signed-in user."""
 
     root: Path
     gear_dir: Path
@@ -19,13 +22,14 @@ class UserInventoryPaths:
     research_dir: Path
 
 
-def paths_for(users_root: Path, discord_user_id: str) -> UserInventoryPaths:
-    """Build the per-user layout rooted under ``users_root``."""
+def paths_for(users_root: Path, user: SessionUser | str) -> UserInventoryPaths:
+    """Build the per-user layout rooted under ``users_root``.
 
-    if not discord_user_id:
-        raise ValueError("discord_user_id must be a non-empty string")
+    A Discord id string, or a Discord ``SessionUser``, stays at
+    ``{users_root}/{discord_id}``. A Google user is ``{users_root}/google/{email}``.
+    """
 
-    root = users_root / discord_user_id
+    root = _inventory_root(users_root, user)
     return UserInventoryPaths(
         root=root,
         gear_dir=root / "gear" / "full-run",
@@ -34,6 +38,20 @@ def paths_for(users_root: Path, discord_user_id: str) -> UserInventoryPaths:
         governor_dir=root / "governor" / "full-run",
         research_dir=root / "research" / "full-run",
     )
+
+
+def _inventory_root(users_root: Path, user: SessionUser | str) -> Path:
+    if isinstance(user, str):
+        if not user:
+            raise ValueError("discord_user_id must be a non-empty string")
+        return users_root / user
+    if user.provider == PROVIDER_GOOGLE:
+        return users_root / "google" / email_path_segment(user.email)
+    if user.provider == PROVIDER_DISCORD:
+        if not user.id:
+            raise ValueError("discord_user_id must be a non-empty string")
+        return users_root / user.id
+    raise ValueError(f"unknown auth provider: {user.provider}")
 
 
 def ensure_layout(paths: UserInventoryPaths, *, troops_seed: Path) -> None:

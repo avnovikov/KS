@@ -22,7 +22,7 @@ import httpx
 
 from ks.auth.config import AuthConfig
 from ks.auth.routes import build_auth_router
-from ks.auth.session_user import get_session_user
+from ks.auth.session_user import SessionUser, get_session_user
 
 try:
     from starlette.middleware.base import BaseHTTPMiddleware
@@ -67,7 +67,7 @@ class ProtectRoutesMiddleware(BaseHTTPMiddleware):
         self,
         request: "Request",
         call_next: Callable,
-        user: object,
+        user: SessionUser,
         users_root: Path,
         troops_seed: Path,
     ) -> object:
@@ -78,7 +78,7 @@ class ProtectRoutesMiddleware(BaseHTTPMiddleware):
             build_inventory_bundle,
         )
 
-        paths = paths_for(users_root, user.id)  # type: ignore[attr-defined]
+        paths = paths_for(users_root, user)
         bundle = build_inventory_bundle(paths, troops_seed=troops_seed)
         request.state.inventory = bundle
         token = _REQUEST_INVENTORY.set(bundle)

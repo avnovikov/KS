@@ -48,7 +48,7 @@ def test_session_user_helpers_round_trip():
     user = SessionUser(id="123", username="alex")
     payload = session_user_to_dict(user)
 
-    assert payload == {"id": "123", "username": "alex"}
+    assert payload == {"provider": "discord", "id": "123", "username": "alex"}
     assert session_user_from_dict(payload) == user
 
     session: dict[str, object] = {}

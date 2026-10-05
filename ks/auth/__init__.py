@@ -1,10 +1,11 @@
-"""Discord auth helpers."""
+"""Auth helpers for Discord and Google sign-in."""
 
 from __future__ import annotations
 
 from ks.auth.config import AuthConfig, load_auth_config
 from ks.auth.deps import require_user
 from ks.auth.discord_oauth import discord_authorize_url, exchange_code, fetch_discord_user
+from ks.auth.google_oauth import fetch_google_user, google_authorize_url
 from ks.auth.gate import user_has_ui_access
 from ks.auth.inventory import UserInventoryPaths, ensure_layout, paths_for
 from ks.auth.middleware import ProtectRoutesMiddleware, install_auth
@@ -34,6 +35,8 @@ __all__ = [
     "ensure_layout",
     "exchange_code",
     "fetch_discord_user",
+    "fetch_google_user",
+    "google_authorize_url",
     "get_current_inventory",
     "get_session_user",
     "install_auth",
