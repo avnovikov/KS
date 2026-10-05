@@ -6,6 +6,8 @@
 # - KS_SESSION_SECRET
 # - DISCORD_BOT_TOKEN
 # - KS_PUBLIC_BASE_URL
+# - GOOGLE_OAUTH_CLIENT_ID      (optional; both Google vars or neither)
+# - GOOGLE_OAUTH_CLIENT_SECRET  (optional)
 #
 # Non-secret defaults live here so they can be reviewed and committed.
 guild_id: null

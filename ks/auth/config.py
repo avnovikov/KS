@@ -23,6 +23,12 @@ class AuthConfig:
     guild_id: str | None
     ui_role: str
     bot_token: str
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+
+    @property
+    def google_configured(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret)
 
 
 def _required_env(name: str) -> str:
@@ -52,6 +58,18 @@ def load_auth_config(path: Path | None = None) -> AuthConfig:
     if public_base_url is None:
         raise ValueError("KS_PUBLIC_BASE_URL is required")
 
+    google_client_id = _optional_text(os.environ.get("GOOGLE_OAUTH_CLIENT_ID"))
+    google_client_secret = _optional_text(os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET"))
+    if (google_client_id is None) != (google_client_secret is None):
+        missing = (
+            "GOOGLE_OAUTH_CLIENT_SECRET"
+            if google_client_secret is None
+            else "GOOGLE_OAUTH_CLIENT_ID"
+        )
+        raise ValueError(
+            f"{missing} is required when the other Google OAuth setting is set"
+        )
+
     return AuthConfig(
         client_id=_required_env("DISCORD_OAUTH_CLIENT_ID"),
         client_secret=_required_env("DISCORD_OAUTH_CLIENT_SECRET"),
@@ -60,5 +78,7 @@ def load_auth_config(path: Path | None = None) -> AuthConfig:
         guild_id=_optional_text(data.get("guild_id")),
         ui_role=_optional_text(data.get("ui_role")) or "ks-ui",
         bot_token=_required_env("DISCORD_BOT_TOKEN"),
+        google_client_id=google_client_id,
+        google_client_secret=google_client_secret,
     )
 

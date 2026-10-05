@@ -37,6 +37,23 @@
       transition: background 0.15s;
     }
     a.discord-btn:hover { background: #4752c4; }
+    .signin-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      align-items: center;
+    }
+    a.google-btn {
+      display: inline-block;
+      background: #fff;
+      color: #1a1a2e;
+      text-decoration: none;
+      padding: 0.75rem 1.75rem;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+    a.google-btn:hover { background: #e8e8e8; }
     .error-banner {
       background: #7d1c1c;
       border: 1px solid #c62828;
@@ -50,13 +67,18 @@
 <body>
   <div class="card">
     <h1>KS Inventory</h1>
-    <p>Sign in with your Discord account to access the inventory.</p>
+    <p>Sign in to access the inventory.</p>
     {% if request.query_params.get("error") %}
     <div class="error-banner">
       Login failed — please try again.
     </div>
     {% endif %}
-    <a class="discord-btn" href="{{ auth_url }}">Sign in with Discord</a>
+    <div class="signin-actions">
+      <a class="discord-btn" href="{{ auth_url }}">Sign in with Discord</a>
+      {% if google_auth_url %}
+      <a class="google-btn" href="{{ google_auth_url }}">Sign in with Google</a>
+      {% endif %}
+    </div>
   </div>
 </body>
 </html>

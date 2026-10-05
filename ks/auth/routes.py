@@ -12,7 +12,9 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from ks.auth.config import AuthConfig
 from ks.auth.discord_oauth import discord_authorize_url, exchange_code, fetch_discord_user
 from ks.auth.gate import user_has_ui_access
-from ks.auth.session_user import clear_session_user, set_session_user
+from ks.auth.google_identity import UnverifiedGoogleEmail
+from ks.auth.google_oauth import exchange_google_code, fetch_google_user, google_authorize_url
+from ks.auth.session_user import PROVIDER_DISCORD, PROVIDER_GOOGLE, clear_session_user, set_session_user
 
 try:
     from fastapi import APIRouter, Request
@@ -36,19 +38,28 @@ def _state_serializer(cfg: AuthConfig) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(cfg.session_secret, salt=_OAUTH_STATE_SALT)
 
 
-def make_oauth_state(cfg: AuthConfig) -> str:
+def make_oauth_state(cfg: AuthConfig, provider: str = PROVIDER_DISCORD) -> str:
     """Signed OAuth state (stateless — survives Discord's in-app browser)."""
-    return _state_serializer(cfg).dumps({"n": secrets.token_urlsafe(8)})
+    if provider not in {PROVIDER_DISCORD, PROVIDER_GOOGLE}:
+        raise ValueError(f"unknown auth provider: {provider}")
+    return _state_serializer(cfg).dumps({"n": secrets.token_urlsafe(8), "p": provider})
 
 
-def verify_oauth_state(cfg: AuthConfig, state: str) -> bool:
+def verify_oauth_state(
+    cfg: AuthConfig, state: str, *, provider: str = PROVIDER_DISCORD
+) -> bool:
     if not state:
         return False
+    if provider not in {PROVIDER_DISCORD, PROVIDER_GOOGLE}:
+        raise ValueError(f"unknown auth provider: {provider}")
     try:
-        _state_serializer(cfg).loads(state, max_age=_OAUTH_STATE_MAX_AGE_S)
-        return True
+        payload = _state_serializer(cfg).loads(state, max_age=_OAUTH_STATE_MAX_AGE_S)
     except (BadSignature, SignatureExpired):
         return False
+    if not isinstance(payload, dict):
+        return False
+    claimed = payload.get("p", PROVIDER_DISCORD)
+    return claimed == provider
 
 
 def build_auth_router(
@@ -73,10 +84,16 @@ def build_auth_router(
     async def login(request: Request) -> HTMLResponse:
         # State is signed into the Discord URL; no session cookie required for
         # CSRF (Discord often completes OAuth in a different browser context).
-        state = make_oauth_state(cfg)
+        state = make_oauth_state(cfg, provider=PROVIDER_DISCORD)
         auth_url = discord_authorize_url(cfg, state)
+        google_auth_url = None
+        if cfg.google_configured:
+            google_state = make_oauth_state(cfg, provider=PROVIDER_GOOGLE)
+            google_auth_url = google_authorize_url(cfg, google_state)
         return templates.TemplateResponse(
-            request, "login.html", {"auth_url": auth_url}
+            request,
+            "login.html",
+            {"auth_url": auth_url, "google_auth_url": google_auth_url},
         )
 
     @router.get("/callback", response_model=None)
@@ -110,6 +127,38 @@ def build_auth_router(
                 "server must have <code>guild_id</code> configured.</p>",
                 status_code=403,
             )
+
+        set_session_user(request.session, user)
+        return RedirectResponse(url="/", status_code=302)
+
+    @router.get("/google/callback", response_model=None)
+    async def google_callback(
+        request: Request,
+        code: str = "",
+        state: str = "",
+    ) -> "RedirectResponse":
+        if not cfg.google_configured:
+            return RedirectResponse(url="/auth/login?error=google", status_code=302)
+        if not verify_oauth_state(cfg, state, provider=PROVIDER_GOOGLE):
+            return RedirectResponse(url="/auth/login?error=state", status_code=302)
+
+        async with _client_factory() as http:
+            try:
+                token_payload = await exchange_google_code(cfg, code, http)
+                access_token = token_payload.get("access_token")
+                if not isinstance(access_token, str) or not access_token:
+                    return RedirectResponse(
+                        url="/auth/login?error=no_token", status_code=302
+                    )
+                user = await fetch_google_user(access_token, http)
+            except UnverifiedGoogleEmail:
+                return RedirectResponse(
+                    url="/auth/login?error=unverified", status_code=302
+                )
+            except (httpx.HTTPStatusError, httpx.HTTPError, ValueError):
+                return RedirectResponse(
+                    url="/auth/login?error=oauth", status_code=302
+                )
 
         set_session_user(request.session, user)
         return RedirectResponse(url="/", status_code=302)
